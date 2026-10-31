@@ -26,7 +26,6 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
     closeAllFlyouts,
     files,
     showDesktopLabels,
-    addNotification,
   } = useOS()
 
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
