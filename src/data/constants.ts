@@ -60,6 +60,15 @@ export const APP_DEFINITIONS: Record<string, AppDefinition> = {
     defaultSize: { width: 900, height: 620 },
     minSize: { width: 560, height: 400 },
   },
+  recycle: {
+    id: 'recycle',
+    name: 'Corbeille',
+    icon: 'recycle',
+    description: 'Restaurer ou supprimer définitivement les éléments supprimés',
+    pinned: false,
+    defaultSize: { width: 720, height: 500 },
+    minSize: { width: 480, height: 320 },
+  },
   notepad: {
     id: 'notepad',
     name: 'Bloc-notes',
