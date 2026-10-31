@@ -183,17 +183,14 @@ export const StartMenu: React.FC = () => {
           }}
         >
           <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Nos recommandations
+            Accès rapide aux fichiers
           </span>
-          <span
-            style={{
-              fontSize: '11.5px',
-              color: 'var(--win-accent-cyan)',
-              cursor: 'pointer',
-            }}
+          <button
+            onClick={() => { openWindow('explorer'); closeAllFlyouts() }}
+            style={{ fontSize: '11.5px', color: 'var(--win-accent-cyan)', cursor: 'pointer', border: 'none', background: 'transparent' }}
           >
-            Plus &gt;
-          </span>
+            Ouvrir l’Explorateur &gt;
+          </button>
         </div>
 
         {/* Recommended Items Grid */}
@@ -247,7 +244,7 @@ export const StartMenu: React.FC = () => {
                 >
                   {rf.name}
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Récemment ouvert</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Disponible dans vos fichiers</div>
               </div>
             </div>
           ))}
