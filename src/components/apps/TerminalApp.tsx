@@ -27,7 +27,7 @@ const KNOWN_COMMANDS = [
 ]
 
 export const TerminalApp: React.FC = () => {
-  const { files, createFolder, createFile, closeWindow } = useOS()
+  const { files, createFolder, createFile } = useOS()
 
   const createInitialTab = (): TerminalTab => ({
     id: `tab-${Date.now()}`,
