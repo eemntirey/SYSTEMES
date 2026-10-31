@@ -149,7 +149,7 @@ export const LockScreen: React.FC = () => {
           </div>
 
           <h2 style={{ fontSize: '24px', fontWeight: 600, marginBottom: '20px' }}>
-            Utilisateur Windows
+            Utilisateur SYSTEMES
           </h2>
 
           <form
@@ -167,7 +167,7 @@ export const LockScreen: React.FC = () => {
             <input
               autoFocus
               type="password"
-              placeholder="Code PIN ou mot de passe"
+              placeholder="Code PIN de démonstration"
               value={pin}
               onChange={e => { setPin(e.target.value.replace(/\D/g, '').slice(0, 8)); setPinError('') }}
               style={{
@@ -193,6 +193,9 @@ export const LockScreen: React.FC = () => {
               <FluentIcon name="arrow-right" size={16} />
             </button>
           </form>
+          <div role="note" style={{ maxWidth: 280, marginTop: 12, padding: '9px 12px', borderRadius: 6, background: 'rgba(255, 255, 255, 0.12)', border: '1px solid rgba(255, 255, 255, 0.2)', color: 'rgba(255,255,255,0.88)', fontSize: 11, lineHeight: 1.45, textAlign: 'center' }}>
+            Mode démonstration : le code <strong>1234</strong> est fixe. Ce verrouillage ne constitue pas une authentification réelle et ne protège aucun compte ni donnée.
+          </div>
           {pinError && <span role="alert" style={{ color: '#fecaca', fontSize: 12, marginTop: 10 }}>{pinError}</span>}
 
           <span
