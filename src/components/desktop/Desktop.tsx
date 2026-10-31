@@ -103,11 +103,10 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
         const el = iconRefs.current[sc.id]
         if (el) {
           const rect = el.getBoundingClientRect()
-          const cx = rect.left + rect.width / 2
-          const cy = rect.top + rect.height / 2
-          if (cx >= left && cx <= right && cy >= top && cy <= bottom) {
-            selected.push(sc.id)
-          }
+          // Intersection (pas uniquement le centre) : les icônes partiellement
+          // couvertes par le rectangle de sélection sont aussi sélectionnées.
+          const intersects = rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom
+          if (intersects) selected.push(sc.id)
         }
       }
       setSelectedIconIds(selected)
