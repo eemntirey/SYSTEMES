@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { WALLPAPERS } from '../../data/constants'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
@@ -12,7 +12,13 @@ export const PhotosApp: React.FC = () => {
   const [showDetails, setShowDetails] = useState(true)
   const active = useMemo(() => WALLPAPERS.find(item => item.id === activeId) || WALLPAPERS[0], [activeId])
 
-  React.useEffect(() => {
+  const changeBy = useCallback((direction: number) => {
+    const index = WALLPAPERS.findIndex(item => item.id === activeId)
+    const next = (index + direction + WALLPAPERS.length) % WALLPAPERS.length
+    changePhoto(WALLPAPERS[next].id)
+  }, [activeId])
+
+  useEffect(() => {
     if (!slideshow) return
     const timer = window.setInterval(() => {
       setActiveId(current => {
@@ -32,9 +38,17 @@ export const PhotosApp: React.FC = () => {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--window-bg)', color: 'var(--text-primary)' }}>
+    <div tabIndex={0} onKeyDown={event => {
+      if (event.key === 'ArrowLeft') { event.preventDefault(); changeBy(-1) }
+      if (event.key === 'ArrowRight') { event.preventDefault(); changeBy(1) }
+      if (event.key === '0') { setZoom(1); setRotation(0) }
+      if (event.key === 'Escape') setSlideshow(false)
+    }} aria-label="Galerie Photos. Flèches gauche et droite pour naviguer, zéro pour réinitialiser." style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--window-bg)', color: 'var(--text-primary)', outline: 'none' }}> 
       <header style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--window-border)', flexWrap: 'wrap' }}>
         <strong style={{ marginRight: 'auto', fontSize: 14 }}>Collection</strong>
+        <button onClick={() => changeBy(-1)} title="Photo précédente" aria-label="Photo précédente" style={buttonStyle}><FluentIcon name="chevron-left" size={15} /></button>
+        <button onClick={() => changeBy(1)} title="Photo suivante" aria-label="Photo suivante" style={buttonStyle}><FluentIcon name="chevron-right" size={15} /></button>
+        <button onClick={() => { setZoom(1); setRotation(0) }} title="Réinitialiser l’affichage" style={buttonStyle}>100 %</button>
         <button onClick={() => setZoom(value => Math.max(.5, Math.round((value - .25) * 100) / 100))} title="Dézoomer" style={buttonStyle}><FluentIcon name="minus" size={15} /></button>
         <span style={{ minWidth: 42, textAlign: 'center', fontSize: 12 }}>{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom(value => Math.min(3, Math.round((value + .25) * 100) / 100))} title="Zoomer" style={buttonStyle}><FluentIcon name="plus" size={15} /></button>
