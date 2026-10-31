@@ -7,6 +7,42 @@ export const PaintApp: React.FC = () => {
   const [tool, setTool] = useState<'pen' | 'eraser'>('pen')
   const [color, setColor] = useState('#0078d4')
   const [brushSize, setBrushSize] = useState(4)
+  const undoStack = useRef<string[]>([])
+  const redoStack = useRef<string[]>([])
+
+  const saveHistory = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    undoStack.current.push(canvas.toDataURL())
+    if (undoStack.current.length > 30) undoStack.current.shift()
+    redoStack.current = []
+  }
+
+  const restoreSnapshot = (snapshot: string) => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
+    const image = new Image()
+    image.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+    }
+    image.src = snapshot
+  }
+
+  const undo = () => {
+    const canvas = canvasRef.current
+    if (!canvas || !undoStack.current.length) return
+    redoStack.current.push(canvas.toDataURL())
+    restoreSnapshot(undoStack.current.pop() as string)
+  }
+
+  const redo = () => {
+    const canvas = canvasRef.current
+    if (!canvas || !redoStack.current.length) return
+    undoStack.current.push(canvas.toDataURL())
+    restoreSnapshot(redoStack.current.pop() as string)
+  }
 
   const PALETTE = [
     '#000000',
@@ -43,6 +79,7 @@ export const PaintApp: React.FC = () => {
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
+    saveHistory()
     ctx.beginPath()
     ctx.moveTo(x, y)
     setIsDrawing(true)
@@ -77,6 +114,7 @@ export const PaintApp: React.FC = () => {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    saveHistory()
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   }
@@ -192,6 +230,8 @@ export const PaintApp: React.FC = () => {
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+          <button onClick={undo} disabled={!undoStack.current.length} style={{ padding: '5px 10px', borderRadius: '4px', border: '1px solid var(--window-border)', background: 'transparent', color: 'var(--text-primary)', fontSize: '12px', cursor: undoStack.current.length ? 'pointer' : 'not-allowed', opacity: undoStack.current.length ? 1 : .45 }}>Annuler</button>
+          <button onClick={redo} disabled={!redoStack.current.length} style={{ padding: '5px 10px', borderRadius: '4px', border: '1px solid var(--window-border)', background: 'transparent', color: 'var(--text-primary)', fontSize: '12px', cursor: redoStack.current.length ? 'pointer' : 'not-allowed', opacity: redoStack.current.length ? 1 : .45 }}>Rétablir</button>
           <button
             onClick={clearCanvas}
             style={{
