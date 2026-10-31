@@ -1,12 +1,12 @@
-// @ts-nocheck
 import React, { useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { AppTile } from './AppTile'
+import { APP_DEFINITIONS } from '../../data/constants'
 import { AppId } from '../../types'
 
 interface AppGridItem {
-  id: AppId | 'folder' | 'file'
+  id: AppId
   name: string
   icon: string
 }
@@ -45,12 +45,11 @@ export const StartMenu: React.FC = () => {
   ]
 
   // Liste complète de toutes les applications du système (épinglées + fichiers)
-  const allUniqueApps = Array.from(
-    new Map([
-      ...pinnedApps.map(a => [a.name, a]),
-      ...files.map(f => [f.name, { id: f.type === 'folder' ? 'folder' : 'file', name: f.name, icon: f.type === 'folder' ? 'folder' : 'file-text' } as AppGridItem]),
-    ]).values()
-  )
+  const allUniqueApps: AppGridItem[] = Object.values(APP_DEFINITIONS).map(app => ({
+    id: app.id,
+    name: app.name,
+    icon: app.icon,
+  }))
 
   const filteredApps = (searchFilter.trim()
     ? (viewAllApps
