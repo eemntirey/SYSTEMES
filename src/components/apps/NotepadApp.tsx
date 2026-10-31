@@ -26,7 +26,7 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 })
 
   useEffect(() => {
-    if (initialFileId) {
+    if (initialFileId && content === '') {
       const target = files.find(f => f.id === initialFileId)
       if (target) {
         setContent(target.content || '')
@@ -35,7 +35,7 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
         setIsSaved(true)
       }
     }
-  }, [initialFileId, files])
+  }, [initialFileId])
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setContent(e.target.value)
@@ -63,8 +63,11 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
   const handleSaveAsSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (newFileName.trim()) {
-      createFile('C:/Users/eemntirey/Documents', newFileName.trim(), content)
-      setFilePath(`C:/Users/eemntirey/Documents/${newFileName.trim()}`)
+      const newFileObj = createFile('C:/Users/eemntirey/Documents', newFileName.trim(), content)
+      if (newFileObj) {
+        setFileId(newFileObj.id)
+        setFilePath(newFileObj.path)
+      }
       setIsSaved(true)
       setShowSavePrompt(false)
       addNotification('Bloc-notes', `Fichier "${newFileName.trim()}" créé avec succès !`, 'Bloc-notes')

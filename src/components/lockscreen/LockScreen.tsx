@@ -51,9 +51,16 @@ export const LockScreen: React.FC = () => {
 
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault()
-    unlockOS()
-    setShowPinInput(false)
-    setPin('')
+    if (pin === '1234') {
+      unlockOS()
+      setShowPinInput(false)
+      setPin('')
+    } else if (pin === '') {
+      setPin('')
+    } else {
+      setPin('')
+    }
+  }
   }
 
   return (

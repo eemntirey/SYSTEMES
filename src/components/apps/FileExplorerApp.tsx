@@ -467,7 +467,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           {isCreatingFolder && (
             <form onSubmit={handleCreateFolderSubmit} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: 'var(--radius-sm)', background: 'rgba(139, 92, 246, 0.2)', border: 'none' }}>
               <FluentIcon name="folder" size={26} />
-              <input autoFocus type="text" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Nom du nouveau dossier..." style={{ flex: 1, padding: '6px 10px',                 borderRadius: '4px', border: 'none', background: 'var(--flyout-input-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '13px' }} onBlur={() => setIsCreatingFolder(false)} />
+              <input autoFocus type="text" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Nom du nouveau dossier..." onBlur={() => setTimeout(() => { if (newFolderName.trim()) setIsCreatingFolder(false) }, 200)} style={{ flex: 1, padding: '6px 10px',                 borderRadius: '4px', border: 'none', background: 'var(--flyout-input-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '13px' }} />
               <button type="submit" style={{ padding: '6px 14px', borderRadius: '4px', border: 'none', background: 'var(--win-accent-cyan)', color: '#000', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>Créer</button>
             </form>
           )}
@@ -475,7 +475,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           {isCreatingFile && (
             <form onSubmit={handleCreateFileSubmit} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: 'var(--radius-sm)', background: 'rgba(139, 92, 246, 0.2)', border: 'none' }}>
               <FluentIcon name="file-text" size={26} />
-              <input autoFocus type="text" value={newFileName} onChange={(e) => setNewFileName(e.target.value)} placeholder="nouveau_fichier.txt..." style={{ flex: 1, padding: '6px 10px',                 borderRadius: '4px', border: 'none', background: 'var(--flyout-input-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '13px' }} onBlur={() => setIsCreatingFile(false)} />
+              <input autoFocus type="text" value={newFileName} onChange={(e) => setNewFileName(e.target.value)} placeholder="nouveau_fichier.txt..." style={{ flex: 1, padding: '6px 10px',                 borderRadius: '4px', border: 'none', background: 'var(--flyout-input-bg)', color: 'var(--text-primary)', outline: 'none', fontSize: '13px' }} />
               <button type="submit" style={{ padding: '6px 14px', borderRadius: '4px', border: 'none', background: 'var(--win-accent-cyan)', color: '#000', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>Créer</button>
             </form>
           )}

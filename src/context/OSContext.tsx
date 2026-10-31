@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react'
 import {
   AppId,
@@ -147,7 +146,7 @@ interface OSContextType {
   // File System
   files: FileItem[]
   createFolder: (parentPath: string, name: string) => void
-  createFile: (parentPath: string, name: string, content?: string) => void
+  createFile: (parentPath: string, name: string, content?: string) => FileItem
   updateFileContent: (id: string, content: string) => void
   deleteItem: (id: string) => void
   renameItem: (id: string, newName: string) => void
@@ -404,14 +403,26 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
   const closeWindow = useCallback((id: string) => {
     setWindows(prev => prev.filter(w => w.id !== id))
-    setActiveWindowId(prev => (prev === id ? null : prev))
+    setActiveWindowId(prev => {
+      if (prev === id) {
+        const otherOpen = windows.find(w => w.id !== id && !w.isMinimized)
+        return otherOpen ? otherOpen.id : (windows.filter(w => w.id !== id).find(w => !w.isMinimized)?.id || null)
+      }
+      return prev
+    })
   }, [])
 
   const minimizeWindow = useCallback((id: string) => {
     setWindows(prev =>
       prev.map(w => (w.id === id ? { ...w, isMinimized: true } : w))
     )
-    setActiveWindowId(prev => (prev === id ? null : prev))
+    setActiveWindowId(prev => {
+      if (prev === id) {
+        const otherOpen = windows.find(w => w.id !== id && !w.isMinimized)
+        return otherOpen ? otherOpen.id : (windows.filter(w => w.id !== id).find(w => !w.isMinimized)?.id || null)
+      }
+      return prev
+    })
   }, [])
 
   const maximizeWindow = useCallback((id: string) => {
@@ -570,6 +581,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       modified: new Date().toLocaleString('fr-FR'),
     }
     setFiles(prev => [...prev, newFile])
+    return newFile
   }, [])
 
   const updateFileContent = useCallback((id: string, content: string) => {
@@ -588,24 +600,29 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   }, [])
 
   const deleteItem = useCallback((id: string) => {
-    setFiles(prev => prev.filter(f => f.id !== id))
+    setFiles(prev => {
+      const target = prev.find(f => f.id === id)
+      if (!target) return prev
+      const folderPath = target.path + '/'
+      return prev.filter(f => f.id !== id && !f.path.startsWith(folderPath))
+    })
   }, [])
 
   const renameItem = useCallback((id: string, newName: string) => {
-    setFiles(prev =>
-      prev.map(f => {
-        if (f.id !== id) return f
-        const parts = f.path.split('/')
-        parts.pop()
-        const newPath = [...parts, newName].join('/')
-        return {
-          ...f,
-          name: newName,
-          path: newPath,
-          modified: new Date().toLocaleString('fr-FR'),
-        }
+    setFiles(prev => {
+      const target = prev.find(f => f.id === id)
+      if (!target) return prev
+      const oldPath = target.path
+      const parts = oldPath.split('/')
+      parts.pop()
+      const newPath = [...parts, newName].join('/')
+      const folderPath = oldPath + '/'
+      return prev.map(f => {
+        if (f.id === id) return { ...f, name: newName, path: newPath, modified: new Date().toLocaleString('fr-FR') }
+        if (f.path.startsWith(folderPath)) return { ...f, path: f.path.replace(oldPath, newPath), modified: new Date().toLocaleString('fr-FR') }
+        return f
       })
-    )
+    })
   }, [])
 
   // Notifications Operations
