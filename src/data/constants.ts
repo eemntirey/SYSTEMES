@@ -51,14 +51,14 @@ export const APP_DEFINITIONS: Record<string, AppDefinition> = {
     defaultSize: { width: 850, height: 550 },
     minSize: { width: 500, height: 350 },
   },
-  edge: {
-    id: 'edge',
-    name: 'Microsoft Edge',
-    icon: 'globe',
-    description: 'Naviguer sur le Web avec Microsoft Edge',
+  photos: {
+    id: 'photos',
+    name: 'Photos',
+    icon: 'image',
+    description: 'Afficher et organiser la collection d’images',
     pinned: true,
-    defaultSize: { width: 920, height: 600 },
-    minSize: { width: 600, height: 400 },
+    defaultSize: { width: 900, height: 620 },
+    minSize: { width: 560, height: 400 },
   },
   notepad: {
     id: 'notepad',
@@ -127,9 +127,9 @@ Ce système a été recréé avec soin avec React, TypeScript et l'esthétique F
 • Menu Démarrer avec recherche dynamique et liste des applications.
 • Barre des tâches moderne centrée avec indicateurs d'état et animations.
 • Explorateur de fichiers interactif (navigation, création de dossiers/fichiers).
-• Microsoft Edge avec onglets, favoris et recherche.
+• Photos avec galerie, zoom, rotation et diaporama.
 • Bloc-notes Windows 11 complet avec sauvegarde dans le système de fichiers.
-• Terminal Windows PowerShell fonctionnel avec commandes complètes.
+• Terminal simulé avec commandes système documentées.
 • Calculatrice Windows 11 réaliste avec historique de calcul.
 • Paramètres complets (Thème Sombre/Clair, choix des fonds d'écran, réglages audio/luminosité).
 • Centre de contrôle rapide (Quick Settings Wi-Fi, Son, Luminosité, Batterie, Veilleuse).
