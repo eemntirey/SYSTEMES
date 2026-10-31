@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -9,18 +8,18 @@ namespace Systemes.Native.Core
     {
         public static void Start()
         {
-            // stdout is reserved for one JSON response per request; diagnostics go to stderr.
             Console.Error.WriteLine("SYSTEMES Native Server ready.");
             while (true)
             {
+                string? line = Console.ReadLine();
+                if (line == null) break;
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                JToken? id = null;
                 try
                 {
-                    string? line = Console.ReadLine();
-                    if (line == null) break;
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-
                     var request = JObject.Parse(line);
-                    var id = request["id"]?.DeepClone();
+                    id = request["id"]?.DeepClone();
                     var args = request["params"] as JObject ?? request;
                     var method = request["method"]?.Value<string>() ?? "";
                     object result;
@@ -61,7 +60,7 @@ namespace Systemes.Native.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(JsonConvert.SerializeObject(new { error = ex.Message, id = (string?)null }));
+                    Console.WriteLine(JsonConvert.SerializeObject(new { error = ex.Message, id }));
                     Console.Out.Flush();
                 }
             }
