@@ -9,7 +9,7 @@ interface CommandOutput {
 }
 
 export const TerminalApp: React.FC = () => {
-  const { files, createFolder } = useOS()
+  const { files, createFolder, createFile } = useOS()
 
   const [currentPath, setCurrentPath] = useState('C:\\Users\\eemntirey')
   const [inputVal, setInputVal] = useState('')
@@ -18,7 +18,7 @@ export const TerminalApp: React.FC = () => {
   const [outputs, setOutputs] = useState<CommandOutput[]>([
     {
       id: 'init-1',
-      output: `Windows PowerShell\nCopyright (C) Microsoft Corporation. Tous droits réservés.\n\nInstallez la dernière version de PowerShell pour découvrir de nouvelles fonctionnalités et améliorations !\nTapez "help" pour voir la liste des commandes disponibles.\n`,
+      output: `Windows PowerShell\nCopyright (C) Microsoft Corporation. Tous droits réservés.\n\nCe terminal est une simulation du système de fichiers SYSTEMES. Il n’exécute aucune commande Windows réelle et n’accède pas au réseau.\nTapez "help" pour voir les commandes disponibles.\n`,
     },
   ])
 
@@ -75,7 +75,7 @@ export const TerminalApp: React.FC = () => {
   help           - Affiche ce menu d'aide
   dir, ls        - Liste les fichiers et sous-dossiers
   cd <dossier>   - Change de répertoire de travail
-  mkdir <nom>    - Crée un nouveau dossier
+  mkdir <nom>    - Crée un nouveau dossier\n  touch <nom>    - Crée un fichier texte vide\n  pwd            - Affiche le dossier courant
   cat, type <f>  - Affiche le contenu d'un fichier texte
   echo <texte>   - Affiche le texte saisi
   ver            - Version de Windows 11
@@ -115,20 +115,18 @@ export const TerminalApp: React.FC = () => {
 
       case 'cd': {
         const target = args.join(' ')
-        if (!target || target === '.') {
-          // stay
-        } else if (target === '..') {
-          const parts = currentPath.split('\\')
-          if (parts.length > 1) {
-            parts.pop()
-            setCurrentPath(parts.join('\\') || 'C:\\')
-          }
-        } else {
-          setCurrentPath(prev => `${prev}\\${target}`.replace(/\\\\+/g, '\\'))
-        }
+        if (!target || target === '.') break
+        const normalizedCurrent = currentPath.replace(/\\/g, '/').replace(/\/$/, '')
+        const candidate = target === '..'
+          ? normalizedCurrent.split('/').slice(0, -1).join('/') || 'C:'
+          : target.startsWith('C:') ? target.replace(/\\/g, '/') : `${normalizedCurrent}/${target}`.replace(/\\/g, '/')
+        const normalizedCandidate = candidate.replace(/\/$/, '')
+        const exists = files.some(file => file.type === 'folder' && file.path === normalizedCandidate) ||
+          files.some(file => file.path.startsWith(normalizedCandidate + '/'))
+        if (exists) setCurrentPath(normalizedCandidate.replace(/\//g, '\\'))
+        else { result = `Le chemin est introuvable : ${target}`; isErr = true }
         break
       }
-
       case 'mkdir': {
         const folderName = args.join(' ')
         if (!folderName) {
@@ -141,7 +139,7 @@ export const TerminalApp: React.FC = () => {
         break
       }
 
-      case 'cat':
+      case 'pwd':,        result = currentPath,        break,,      case 'touch': {,        const newName = args.join(' '),        if (!newName) { result = 'Erreur: nom de fichier requis. Exemple: touch notes.txt'; isErr = true },        else { createFile(currentPath.replace(/\\/g, '/'), newName, ''); result = `Fichier "${newName}" créé dans ${currentPath}.` },        break,      },      case 'cat':
       case 'type': {
         const fileName = args.join(' ')
         const normalizedCurrent = currentPath.replace(/\\/g, '/')
@@ -175,27 +173,17 @@ export const TerminalApp: React.FC = () => {
         break
 
       case 'systeminfo':
-        result = `Nom de l'hôte:                DESKTOP-WIN11-PRO
-Nom du système d'exploitation: Microsoft Windows 11 Professionnel
-Version du système:           10.0.26100 Version 24H2
-Fabricant du système:         Antigravity High-Performance Systems
-Type du système:              PC à architecture x64
-Processeur(s):                AMD Ryzen 9 7950X 16-Core @ 4.50 GHz
-Mémoire physique totale:      32 768 Mo (32 Go DDR5)
-Carte graphique:              NVIDIA GeForce RTX 4090 24 Go
-Statut réseau:                Connecté (Wi-Fi 6E / 1.2 Gbps)`
+        result = `SYSTEMES — environnement virtuel
+Système simulé : Windows 11 (interface de démonstration)
+Terminal : moteur de commandes local SYSTEMES
+Stockage : système de fichiers simulé dans la mémoire de l’application
+Réseau : non connecté depuis ce terminal
+Matériel réel : non détecté par cette simulation`
         break
 
       case 'ping': {
-        const host = args[0] || 'google.com'
-        result = `Envoi d'une requête 'Ping' sur ${host} [142.250.190.46] avec 32 octets de données :
-Réponse de 142.250.190.46 : octets=32 temps=8 ms TTL=118
-Réponse de 142.250.190.46 : octets=32 temps=7 ms TTL=118
-Réponse de 142.250.190.46 : octets=32 temps=9 ms TTL=118
-Réponse de 142.250.190.46 : octets=32 temps=8 ms TTL=118
-
-Statistiques Ping pour 142.250.190.46:
-    Paquets : envoyés = 4, reçus = 4, perdus = 0 (perte 0%)`
+        result = 'Ping indisponible : ce terminal simulé n’envoie aucune requête réseau.'
+        isErr = true
         break
       }
 
