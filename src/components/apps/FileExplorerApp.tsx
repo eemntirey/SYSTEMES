@@ -516,7 +516,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 </div>
               ))}
             </div>
-          )
+          )}
 
           {currentItems.length === 0 && !isCreatingFolder && !isCreatingFile && (
             <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '12.5px' }}>
