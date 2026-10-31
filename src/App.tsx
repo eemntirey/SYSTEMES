@@ -14,7 +14,7 @@ import { MenuBar } from './components/menu/MenuBar'
 // App components
 import { FileExplorerApp } from './components/apps/FileExplorerApp'
 import { NotepadApp } from './components/apps/NotepadApp'
-import { EdgeApp } from './components/apps/EdgeApp'
+import { PhotosApp } from './components/apps/PhotosApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { CalculatorApp } from './components/apps/CalculatorApp'
 import { SettingsApp } from './components/apps/SettingsApp'
@@ -40,8 +40,8 @@ const WindowsDesktopContent: React.FC = () => {
             fileContent={win.customData?.fileContent as string | undefined}
           />
         )
-      case 'edge':
-        return <EdgeApp />
+      case 'photos':
+        return <PhotosApp />
       case 'terminal':
         return <TerminalApp />
       case 'calculator':
