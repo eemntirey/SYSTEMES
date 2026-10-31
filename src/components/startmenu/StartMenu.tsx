@@ -30,7 +30,7 @@ export const StartMenu: React.FC = () => {
   if (!isStartMenuOpen) return null
 
   const pinnedApps: AppGridItem[] = [
-    { id: 'edge', name: 'Edge', icon: 'globe' },
+    { id: 'photos', name: 'Photos', icon: 'image' },
     { id: 'explorer', name: 'Explorateur', icon: 'folder' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'file-text' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal' },
@@ -38,7 +38,7 @@ export const StartMenu: React.FC = () => {
     { id: 'paint', name: 'Paint', icon: 'palette' },
     { id: 'settings', name: 'Paramètres', icon: 'settings' },
     { id: 'explorer', name: 'Ce PC', icon: 'folder' },
-    { id: 'edge', name: 'Bing Web', icon: 'globe' },
+    { id: 'photos', name: 'Galerie', icon: 'image' },
     { id: 'settings', name: 'Affichage', icon: 'sliders' },
     { id: 'notepad', name: 'Mémos', icon: 'file-text' },
     { id: 'terminal', name: 'PowerShell', icon: 'terminal' },
