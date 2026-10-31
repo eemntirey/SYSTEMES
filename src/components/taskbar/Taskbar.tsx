@@ -21,7 +21,7 @@ export const Taskbar: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date())
   const [showCustomize, setShowCustomize] = useState(false)
   const [customizeAppIds, setCustomizeAppIds] = useState<AppId[]>([
-    'edge', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'
+    'photos', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'
   ])
 
   const [hoveredAppId, setHoveredAppId] = useState<string | null>(null)
@@ -101,7 +101,7 @@ export const Taskbar: React.FC = () => {
         <div style={{ position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', background: 'rgba(10,10,14,0.98)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 12, padding: '14px 16px', zIndex: 99999, boxShadow: 'none', minWidth: 220 }}>
           <div style={{ fontWeight: 600, color: '#fff', marginBottom: 8, fontSize: 13 }}>Personnaliser la barre</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {['edge', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'].map(app => (
+            {['photos', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'].map(app => (
               <button key={app} onClick={() => { if (!customizeAppIds.includes(app as AppId)) setCustomizeAppIds([...customizeAppIds, app as AppId]); else setCustomizeAppIds(customizeAppIds.filter(a => a !== app)) }} style={{ padding: '4px 10px', borderRadius: 6, border: customizeAppIds.includes(app as AppId) ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.1)', background: customizeAppIds.includes(app as AppId) ? 'rgba(255,255,255,0.08)' : 'transparent', color: '#ccc', cursor: 'pointer', fontSize: 11 }}>{app}</button>
             ))}
           </div>
