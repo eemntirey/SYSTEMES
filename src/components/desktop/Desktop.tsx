@@ -1,0 +1,235 @@
+import React, { useState, useRef } from 'react'
+import { useOS } from '../../context/OSContext'
+import { DesktopIcon } from './DesktopIcon'
+import { ContextMenu } from './ContextMenu'
+import { AppId, FileItem } from '../../types'
+import { MENU_BAR_HEIGHT } from '../../data/constants'
+
+interface DesktopProps {
+  children?: React.ReactNode
+}
+
+interface DesktopShortcut {
+  id: string
+  name: string
+  icon: string
+  appId?: AppId
+  fileItem?: FileItem
+}
+
+export const Desktop: React.FC<DesktopProps> = ({ children }) => {
+  const {
+    wallpaper,
+    brightness,
+    nightLight,
+    openWindow,
+    closeAllFlyouts,
+    files,
+    showDesktopLabels,
+  } = useOS()
+
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
+  const [selectedIconId, setSelectedIconId] = useState<string | null>(null)
+  const [iconSize, setIconSize] = useState<'small' | 'medium' | 'large'>('medium')
+
+  // Lasso selection state
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+  } | null>(null)
+
+  const desktopRef = useRef<HTMLDivElement>(null)
+
+  // Fixed desktop icons with accurate 3D icon names
+  const defaultShortcuts: DesktopShortcut[] = [
+    { id: 'pc', name: 'Ce PC', icon: 'pc', appId: 'explorer' },
+    { id: 'recycle', name: 'Corbeille', icon: 'recycle' },
+    { id: 'edge', name: 'Microsoft Edge', icon: 'edge', appId: 'edge' },
+    { id: 'explorer', name: 'Explorateur', icon: 'explorer', appId: 'explorer' },
+    { id: 'notepad', name: 'Bloc-notes', icon: 'notepad', appId: 'notepad' },
+    { id: 'terminal', name: 'Terminal', icon: 'terminal', appId: 'terminal' },
+    { id: 'calc', name: 'Calculatrice', icon: 'calculator', appId: 'calculator' },
+    { id: 'paint', name: 'Paint', icon: 'paint', appId: 'paint' },
+    { id: 'settings', name: 'Paramètres', icon: 'settings', appId: 'settings' },
+  ]
+
+  // Add files saved to Desktop
+  const desktopFiles: DesktopShortcut[] = files
+    .filter(f => f.path.startsWith('C:/Users/eemntirey/Desktop/'))
+    .map(f => ({
+      id: f.id,
+      name: f.name,
+      icon: f.type === 'folder' ? 'folder' : 'notepad',
+      fileItem: f,
+    }))
+
+  const allShortcuts = [...defaultShortcuts, ...desktopFiles]
+
+  // Mouse handlers for selection lasso
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.target === desktopRef.current && e.button === 0) {
+      closeAllFlyouts()
+      setContextMenuPos(null)
+      setSelectedIconId(null)
+      setSelectionBox({
+        startX: e.clientX,
+        startY: e.clientY,
+        currentX: e.clientX,
+        currentY: e.clientY,
+      })
+    } else {
+      closeAllFlyouts()
+      setContextMenuPos(null)
+    }
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (selectionBox) {
+      setSelectionBox(prev => (prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null))
+    }
+  }
+
+  const handleMouseUp = () => {
+    setSelectionBox(null)
+  }
+
+  // Right-click context menu
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    closeAllFlyouts()
+    setContextMenuPos({ x: e.clientX, y: e.clientY })
+  }
+
+  // Handle double clicking shortcut
+  const handleShortcutDoubleClick = (sc: DesktopShortcut) => {
+    if (sc.appId) {
+      openWindow(sc.appId)
+    } else if (sc.fileItem) {
+      if (sc.fileItem.type === 'folder') {
+        openWindow('explorer', { initialPath: sc.fileItem.path })
+      } else {
+        openWindow(
+          'notepad',
+          {
+            fileId: sc.fileItem.id,
+            filePath: sc.fileItem.path,
+            fileContent: sc.fileItem.content || '',
+          },
+          `${sc.fileItem.name} - Bloc-notes`
+        )
+      }
+    }
+  }
+
+  // Calculate lasso bounds
+  const getBoxStyle = () => {
+    if (!selectionBox) return {}
+    const left = Math.min(selectionBox.startX, selectionBox.currentX)
+    const top = Math.min(selectionBox.startY, selectionBox.currentY)
+    const width = Math.abs(selectionBox.currentX - selectionBox.startX)
+    const height = Math.abs(selectionBox.currentY - selectionBox.startY)
+    return { left, top, width, height }
+  }
+
+  return (
+    <div
+      ref={desktopRef}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onContextMenu={handleContextMenu}
+      style={{
+        position: 'relative',
+        width: '100vw',
+        height: '100vh',
+        backgroundImage: `linear-gradient(135deg, rgba(10,10,18,0.65) 0%, rgba(30,30,45,0.35) 100%), url(${wallpaper.url})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        overflow: 'hidden',
+        userSelect: 'none',
+      }}
+    >
+      {/* Night light warm filter overlay */}
+      {nightLight && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: 'rgba(255, 140, 0, 0.12)',
+            pointerEvents: 'none',
+            zIndex: 999990,
+          }}
+        />
+      )}
+
+      {/* Brightness adjustment overlay */}
+      {brightness < 100 && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: `rgba(0, 0, 0, ${(100 - brightness) / 130})`,
+            pointerEvents: 'none',
+            zIndex: 999991,
+          }}
+        />
+      )}
+
+      {/* Selection Lasso Box */}
+      {selectionBox && <div className="selection-box" style={getBoxStyle()} />}
+
+      {/* Desktop Icons Grid — minimal macOS style */}
+      <div
+        style={{
+          position: 'absolute',
+          top: `${MENU_BAR_HEIGHT + 16}px`,
+          left: '16px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignContent: 'flex-start',
+          gap: '8px 12px',
+          zIndex: 5,
+          pointerEvents: 'none',
+        }}
+      >
+        {allShortcuts.map(sc => (
+          <div key={sc.id} style={{ pointerEvents: 'all' }}>
+            <DesktopIcon
+              id={sc.id}
+              name={sc.name}
+              icon={sc.icon}
+              isSelected={selectedIconId === sc.id}
+              showLabel={showDesktopLabels}
+              iconSize={iconSize}
+              onClick={e => {
+                e.stopPropagation()
+                setSelectedIconId(sc.id)
+              }}
+              onDoubleClick={e => {
+                e.stopPropagation()
+                handleShortcutDoubleClick(sc)
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Render Active Windows */}
+      {children}
+
+      {/* Right Click Context Menu */}
+      {contextMenuPos && (
+        <ContextMenu
+          x={contextMenuPos.x}
+          y={contextMenuPos.y}
+          onClose={() => setContextMenuPos(null)}
+          iconSize={iconSize}
+          onIconSizeChange={setIconSize}
+        />
+      )}
+    </div>
+  )
+}
