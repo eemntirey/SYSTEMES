@@ -48,7 +48,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   const defaultShortcuts: DesktopShortcut[] = [
     { id: 'pc', name: 'Ce PC', icon: 'pc', appId: 'explorer' },
     { id: 'recycle', name: 'Corbeille', icon: 'recycle' },
-    { id: 'edge', name: 'Microsoft Edge', icon: 'edge', appId: 'edge' },
+    { id: 'photos', name: 'Photos', icon: 'image', appId: 'photos' },
     { id: 'explorer', name: 'Explorateur', icon: 'explorer', appId: 'explorer' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'notepad', appId: 'notepad' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal', appId: 'terminal' },
