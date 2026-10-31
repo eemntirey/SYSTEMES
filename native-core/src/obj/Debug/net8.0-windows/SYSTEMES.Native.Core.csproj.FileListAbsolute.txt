@@ -1,0 +1,13 @@
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.csproj.AssemblyReference.cache
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.AssemblyInfoInputs.cache
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.AssemblyInfo.cs
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.csproj.CoreCompileInputs.cache
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.sourcelink.json
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\bin\Debug\net8.0-windows\SYSTEMES.Native.Core.deps.json
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\bin\Debug\net8.0-windows\SYSTEMES.Native.Core.dll
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\bin\Debug\net8.0-windows\SYSTEMES.Native.Core.pdb
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.dll
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\refint\SYSTEMES.Native.Core.dll
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\SYSTEMES.Native.Core.pdb
+C:\Users\eemntirey\Desktop\windowsReproduction\native-core\src\obj\Debug\net8.0-windows\ref\SYSTEMES.Native.Core.dll
