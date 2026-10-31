@@ -59,7 +59,8 @@ public partial class MainWindow : Window
 
     private async void OnClosed(object? sender, EventArgs e)
     {
-        DesktopView.CoreWebView2?.WebMessageReceived -= OnWebMessageReceived;
+        if (DesktopView.CoreWebView2 is { } coreWebView)
+            coreWebView.WebMessageReceived -= OnWebMessageReceived;
         await _native.DisposeAsync();
     }
 }
