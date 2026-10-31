@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import App from './App'
 import { OSProvider } from './context/OSContext'
 import { CalculatorApp } from './components/apps/CalculatorApp'
+import { PhotosApp } from './components/apps/PhotosApp'
+import { TerminalApp } from './components/apps/TerminalApp'
 import { RecycleBinApp } from './components/apps/RecycleBinApp'
 import { useOS } from './context/OSContext'
 
@@ -83,5 +85,25 @@ describe('Recycle Bin', () => {
     expect(screen.getByText('Bienvenue sur Windows 11.txt')).toBeDefined()
     fireEvent.click(screen.getByTitle('Restaurer'))
     expect(screen.getByText('La Corbeille est vide')).toBeDefined()
+  })
+})
+
+
+describe('Photos and Terminal', () => {
+  it('navigates between gallery images', () => {
+    render(<OSProvider><PhotosApp /></OSProvider>)
+    const imagesBefore = screen.getAllByRole('img')
+    const firstSource = imagesBefore[0].getAttribute('src')
+    fireEvent.click(screen.getByLabelText('Photo suivante'))
+    const imagesAfter = screen.getAllByRole('img')
+    expect(imagesAfter[0].getAttribute('src')).not.toBe(firstSource)
+  })
+
+  it('executes pwd inside the simulated terminal', () => {
+    render(<OSProvider><TerminalApp /></OSProvider>)
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'pwd' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getAllByText('C:\\Users\\eemntirey').length).toBeGreaterThan(1)
   })
 })
