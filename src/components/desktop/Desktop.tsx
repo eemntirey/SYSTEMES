@@ -126,7 +126,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   // Handle double clicking shortcut
   const handleShortcutDoubleClick = (sc: DesktopShortcut) => {
     if (sc.id === 'recycle') {
-      addNotification('Corbeille', 'La corbeille est vide ou contient 3 éléments.', 'Explorateur')
+      openWindow('recycle')
       return
     }
     if (sc.appId) {
