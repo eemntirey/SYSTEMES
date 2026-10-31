@@ -607,37 +607,31 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   }, [])
 
   const deleteItem = useCallback((id: string) => {
-    setFiles(prev => {
-      const target = prev.find(f => f.id === id)
-      if (!target) return prev
-      const folderPath = target.path + '/'
-      const removed = prev.filter(f => f.id === id || (target.type === 'folder' && f.path.startsWith(folderPath)))
-      const deletedAt = new Date().toLocaleString('fr-FR')
-      setRecycleItems(current => [...current, ...removed.map(item => ({ ...item, originalPath: item.path, deletedAt }))])
-      return prev.filter(f => !removed.some(item => item.id === f.id))
-    })
-  }, [])
+    const target = files.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.path + '/'
+    const removed = files.filter(item => item.id === id || (target.type === 'folder' && item.path.startsWith(folderPrefix)))
+    const deletedAt = new Date().toLocaleString('fr-FR')
+    setRecycleItems(current => [...current, ...removed.map(item => ({ ...item, originalPath: item.path, deletedAt }))])
+    setFiles(current => current.filter(item => !removed.some(removedItem => removedItem.id === item.id)))
+  }, [files])
 
   const restoreItem = useCallback((id: string) => {
-    setRecycleItems(current => {
-      const target = current.find(item => item.id === id)
-      if (!target) return current
-      const prefix = target.originalPath + '/'
-      const restoring = current.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(prefix)))
-      setFiles(existing => [...existing, ...restoring.map(({ originalPath, deletedAt, ...item }) => ({ ...item, path: originalPath }))])
-      return current.filter(item => !restoring.some(restored => restored.id === item.id))
-    })
-  }, [])
+    const target = recycleItems.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.originalPath + '/'
+    const restoring = recycleItems.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(folderPrefix)))
+    setFiles(current => [...current, ...restoring.map(({ originalPath, deletedAt, ...item }) => ({ ...item, path: originalPath }))])
+    setRecycleItems(current => current.filter(item => !restoring.some(restored => restored.id === item.id)))
+  }, [recycleItems])
 
   const permanentlyDeleteItem = useCallback((id: string) => {
-    setRecycleItems(current => {
-      const target = current.find(item => item.id === id)
-      if (!target) return current
-      const prefix = target.originalPath + '/'
-      const removing = current.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(prefix)))
-      return current.filter(item => !removing.some(removed => removed.id === item.id))
-    })
-  }, [])
+    const target = recycleItems.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.originalPath + '/'
+    const removing = recycleItems.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(folderPrefix)))
+    setRecycleItems(current => current.filter(item => !removing.some(removedItem => removedItem.id === item.id)))
+  }, [recycleItems])
 
   const emptyRecycleBin = useCallback(() => setRecycleItems([]), [])
 
