@@ -15,6 +15,7 @@ import { MenuBar } from './components/menu/MenuBar'
 import { FileExplorerApp } from './components/apps/FileExplorerApp'
 import { NotepadApp } from './components/apps/NotepadApp'
 import { PhotosApp } from './components/apps/PhotosApp'
+import { RecycleBinApp } from './components/apps/RecycleBinApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { CalculatorApp } from './components/apps/CalculatorApp'
 import { SettingsApp } from './components/apps/SettingsApp'
@@ -42,6 +43,8 @@ const WindowsDesktopContent: React.FC = () => {
         )
       case 'photos':
         return <PhotosApp />
+      case 'recycle':
+        return <RecycleBinApp />
       case 'terminal':
         return <TerminalApp />
       case 'calculator':
