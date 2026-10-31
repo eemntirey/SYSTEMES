@@ -171,6 +171,12 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
         <textarea
           value={content}
           onChange={handleTextChange}
+          onKeyDown={e => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+              e.preventDefault()
+              handleSave()
+            }
+          }}
           onKeyUp={e => updateCursorPos(e.currentTarget)}
           onClick={e => updateCursorPos(e.currentTarget)}
           placeholder="Commencez à taper votre texte ici..."
