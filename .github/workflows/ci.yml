@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/systemes-modernisation-apps
+      - Osreell
   pull_request:
     branches:
       - main
@@ -36,3 +37,25 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+
+  windows-native-host:
+    name: Windows native host build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build React assets
+        run: npm run build
+      - name: Build WPF + WebView2 host and native engine
+        run: dotnet build native/windows-host/SYSTEMES.WindowsHost.csproj --configuration Release
