@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { FileItem } from '../../types'
@@ -204,6 +204,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
   const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'details'>('grid')
 
   const navigateTo = (path: string) => {
     const formatted = path.replace(/\/+/g, '/')
@@ -382,6 +383,13 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div role="group" aria-label="Mode d’affichage" style={{ display: 'flex', gap: 2, padding: 2, borderRadius: 7, background: 'var(--flyout-card)' }}>
+            {([['grid', 'grid', 'Icônes'], ['list', 'list', 'Liste'], ['details', 'align-justify', 'Détails']] as const).map(([mode, icon, label]) => (
+              <button key={mode} type="button" aria-label={label} aria-pressed={viewMode === mode} title={label} onClick={() => setViewMode(mode)} style={{ width: 30, height: 28, display: 'grid', placeItems: 'center', border: 0, borderRadius: 5, cursor: 'pointer', color: viewMode === mode ? 'var(--win-accent)' : 'var(--text-secondary)', background: viewMode === mode ? 'var(--control-hover)' : 'transparent' }}>
+                <FluentIcon name={icon} size={15} />
+              </button>
+            ))}
+          </div>
           <label htmlFor="explorer-sort" style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Trier</label>
           <select id="explorer-sort" aria-label="Trier les éléments" value={sortBy} onChange={e => setSortBy(e.target.value as 'name' | 'type' | 'modified')} style={{ maxWidth: 112, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontSize: 11 }}>
             <option value="name">Nom</option>
@@ -494,19 +502,21 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             </form>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '20px', alignItems: 'start' }}>
-            {currentItems.map((item) => (
-              <FileCard
-                key={item.id}
-                item={item}
-                isSelected={selectedItemId === item.id}
-                isFav={favorites.includes(item.id)}
-                onSelect={() => setSelectedItemId(item.id)}
-                onToggleFav={(e) => toggleFavorite(item.id, e)}
-                onDoubleClick={() => handleItemDoubleClick(item)}
-              />
-            ))}
-          </div>
+          {viewMode === 'grid' ? (
+            <div role="list" aria-label="Fichiers et dossiers" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '20px', alignItems: 'start' }}>
+              {currentItems.map(item => <FileCard key={item.id} item={item} isSelected={selectedItemId === item.id} isFav={favorites.includes(item.id)} onSelect={() => setSelectedItemId(item.id)} onToggleFav={e => toggleFavorite(item.id, e)} onDoubleClick={() => handleItemDoubleClick(item)} />)}
+            </div>
+          ) : (
+            <div role="table" aria-label={viewMode === 'details' ? 'Détails des fichiers' : 'Liste des fichiers'} style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              {viewMode === 'details' && <div role="row" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 2fr) minmax(90px, 1fr) minmax(130px, 1fr) minmax(90px, .8fr)', gap: 12, padding: '8px 12px', borderBottom: '1px solid var(--window-border)', color: 'var(--text-tertiary)', fontSize: 11, fontWeight: 650 }}><span>Nom</span><span>Type</span><span>Date de modification</span><span>Taille</span></div>}
+              {currentItems.map(item => (
+                <div key={item.id} role="row" onClick={() => setSelectedItemId(item.id)} onDoubleClick={() => handleItemDoubleClick(item)} style={{ display: 'grid', gridTemplateColumns: viewMode === 'details' ? 'minmax(180px, 2fr) minmax(90px, 1fr) minmax(130px, 1fr) minmax(90px, .8fr)' : 'minmax(0, 1fr) auto', gap: 12, alignItems: 'center', padding: '9px 12px', borderBottom: '1px solid var(--window-border)', borderRadius: 5, cursor: 'pointer', background: selectedItemId === item.id ? 'var(--win-accent-light)' : 'transparent', color: 'var(--text-primary)', fontSize: 12 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}><FluentIcon name={item.type === 'folder' ? 'folder' : 'file-text'} size={18} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span></span>
+                  {viewMode === 'details' ? <><span style={{ color: 'var(--text-secondary)' }}>{item.type === 'folder' ? 'Dossier' : (item.extension || 'Fichier').toUpperCase()}</span><span style={{ color: 'var(--text-secondary)' }}>{item.modified || '—'}</span><span style={{ color: 'var(--text-secondary)' }}>{item.size || '—'}</span></> : <span style={{ color: 'var(--text-tertiary)' }}>{item.type === 'folder' ? 'Dossier' : (item.size || 'Fichier')}</span>}
+                </div>
+              ))}
+            </div>
+          )
 
           {currentItems.length === 0 && !isCreatingFolder && !isCreatingFile && (
             <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '12.5px' }}>
