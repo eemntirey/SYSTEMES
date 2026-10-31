@@ -48,8 +48,6 @@ const WindowsDesktopContent: React.FC = () => {
         return <CalculatorApp />
       case 'settings':
         return <SettingsApp />
-      case 'recycle':
-        return <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>Corbeille — fonctionnalité en cours de développement</div>
       case 'paint':
         return <PaintApp />
       default:

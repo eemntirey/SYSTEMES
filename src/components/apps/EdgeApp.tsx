@@ -15,6 +15,8 @@ export const EdgeApp: React.FC = () => {
   const [urlInput, setUrlInput] = useState('https://www.bing.com')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<string | null>(null)
+  const [history, setHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
 
   const handleNewTab = () => {
     const newId = `tab-${Date.now()}`
@@ -30,7 +32,10 @@ export const EdgeApp: React.FC = () => {
     const remaining = tabs.filter(t => t.id !== id)
     setTabs(remaining)
     if (activeTabId === id) {
-      setActiveTabId(remaining[remaining.length - 1].id)
+      const newActiveId = remaining[remaining.length - 1].id
+      setActiveTabId(newActiveId)
+      const newActiveTab = remaining.find(t => t.id === newActiveId)
+      if (newActiveTab) setUrlInput(newActiveTab.url)
     }
   }
 
@@ -46,6 +51,30 @@ export const EdgeApp: React.FC = () => {
     setTabs(prev =>
       prev.map(t => (t.id === activeTabId ? { ...t, url: clean, title: targetUrl } : t))
     )
+    setHistory(prev => {
+      const next = prev.slice(0, historyIndex + 1)
+      next.push(clean)
+      return next
+    })
+    setHistoryIndex(prev => prev + 1)
+  }
+
+  const goBack = () => {
+    if (historyIndex > 0) {
+      const newIdx = historyIndex - 1
+      setHistoryIndex(newIdx)
+      const url = history[newIdx]
+      handleNavigate(url)
+    }
+  }
+
+  const goForward = () => {
+    if (historyIndex < history.length - 1) {
+      const newIdx = historyIndex + 1
+      setHistoryIndex(newIdx)
+      const url = history[newIdx]
+      handleNavigate(url)
+    }
   }
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -159,25 +188,29 @@ export const EdgeApp: React.FC = () => {
       >
         <div style={{ display: 'flex', gap: '2px' }}>
           <button
+            onClick={goBack}
+            disabled={historyIndex <= 0}
             style={{
               padding: '6px',
               border: 'none',
               background: 'transparent',
-              color: 'var(--text-secondary)',
+              color: historyIndex <= 0 ? 'var(--text-tertiary)' : 'var(--text-secondary)',
               borderRadius: '4px',
-              cursor: 'pointer',
+              cursor: historyIndex <= 0 ? 'default' : 'pointer',
             }}
           >
             <FluentIcon name="arrow-left" size={14} />
           </button>
           <button
+            onClick={goForward}
+            disabled={historyIndex >= history.length - 1}
             style={{
               padding: '6px',
               border: 'none',
               background: 'transparent',
-              color: 'var(--text-secondary)',
+              color: historyIndex >= history.length - 1 ? 'var(--text-tertiary)' : 'var(--text-secondary)',
               borderRadius: '4px',
-              cursor: 'pointer',
+              cursor: historyIndex >= history.length - 1 ? 'default' : 'pointer',
             }}
           >
             <FluentIcon name="arrow-right" size={14} />

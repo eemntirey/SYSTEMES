@@ -278,6 +278,17 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // Keep active window valid after close/minimize
+  useEffect(() => {
+    setActiveWindowId(prev => {
+      if (!prev) return prev
+      const activeWindow = windows.find(w => w.id === prev)
+      if (activeWindow && !activeWindow.isMinimized) return prev
+      const remainingOpen = windows.filter(w => w.id !== prev && !w.isMinimized)
+      return remainingOpen.length > 0 ? remainingOpen[remainingOpen.length - 1].id : (windows.find(w => w.id === prev && !w.isMinimized) ? prev : null)
+    })
+  }, [windows])
+
   // Close flyouts helper
   const closeAllFlyouts = useCallback(() => {
     setIsStartMenuOpen(false)
@@ -403,26 +414,12 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
   const closeWindow = useCallback((id: string) => {
     setWindows(prev => prev.filter(w => w.id !== id))
-    setActiveWindowId(prev => {
-      if (prev === id) {
-        const otherOpen = windows.find(w => w.id !== id && !w.isMinimized)
-        return otherOpen ? otherOpen.id : (windows.filter(w => w.id !== id).find(w => !w.isMinimized)?.id || null)
-      }
-      return prev
-    })
   }, [])
 
   const minimizeWindow = useCallback((id: string) => {
     setWindows(prev =>
       prev.map(w => (w.id === id ? { ...w, isMinimized: true } : w))
     )
-    setActiveWindowId(prev => {
-      if (prev === id) {
-        const otherOpen = windows.find(w => w.id !== id && !w.isMinimized)
-        return otherOpen ? otherOpen.id : (windows.filter(w => w.id !== id).find(w => !w.isMinimized)?.id || null)
-      }
-      return prev
-    })
   }, [])
 
   const maximizeWindow = useCallback((id: string) => {

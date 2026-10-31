@@ -61,7 +61,6 @@ export const LockScreen: React.FC = () => {
       setPin('')
     }
   }
-  }
 
   return (
     <div
