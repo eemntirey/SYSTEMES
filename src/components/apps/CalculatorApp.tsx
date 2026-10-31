@@ -76,10 +76,18 @@ export const CalculatorApp: React.FC = () => {
           result = current * inputValue
           break
         case '÷':
-          result = inputValue !== 0 ? current / inputValue : 0
+          result = inputValue !== 0 ? current / inputValue : Number.NaN
           break
       }
 
+      if (!Number.isFinite(result)) {
+        setDisplay('Erreur')
+        setPrevValue(null)
+        setOperation(null)
+        setWaitingForOperand(true)
+        setEquation('Division par zéro impossible')
+        return
+      }
       setPrevValue(result)
       setDisplay(String(result))
       setEquation(`${result} ${nextOp}`)
@@ -107,10 +115,18 @@ export const CalculatorApp: React.FC = () => {
           result = current * inputValue
           break
         case '÷':
-          result = inputValue !== 0 ? current / inputValue : 0
+          result = inputValue !== 0 ? current / inputValue : Number.NaN
           break
       }
 
+      if (!Number.isFinite(result)) {
+        setEquation('Division par zéro impossible')
+        setDisplay('Erreur')
+        setPrevValue(null)
+        setOperation(null)
+        setWaitingForOperand(true)
+        return
+      }
       setEquation(`${current} ${operation} ${inputValue} =`)
       setDisplay(String(result))
       setPrevValue(null)
@@ -127,7 +143,8 @@ export const CalculatorApp: React.FC = () => {
     if (func === 'sqr') res = val * val
     if (func === 'inv') res = val !== 0 ? 1 / val : 0
     if (func === 'percent') res = val / 100
-    setDisplay(String(res))
+    setDisplay(Number.isFinite(res) ? String(res) : 'Erreur')
+    setEquation(Number.isFinite(res) ? equation : 'Opération impossible')
     setWaitingForOperand(true)
   }
 
