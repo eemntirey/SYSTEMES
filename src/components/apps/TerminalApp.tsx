@@ -476,7 +476,7 @@ export const TerminalApp: React.FC = () => {
         {/* Input line */}
         <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
           <span style={{ color: 'var(--win-accent-cyan)', marginRight: 8, whiteSpace: 'nowrap', fontWeight: 600 }}>
-            PS {activeTab.path}>
+            PS {activeTab.path}{'>'}
           </span>
           <input
             ref={inputRef}
