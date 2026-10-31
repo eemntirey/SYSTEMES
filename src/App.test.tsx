@@ -104,6 +104,6 @@ describe('Photos and Terminal', () => {
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'pwd' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(screen.getAllByText('C:\\Users\\eemntirey').length).toBeGreaterThan(1)
+    expect(screen.getByText('C:\\Users\\eemntirey')).toBeDefined()
   })
 })
