@@ -169,7 +169,7 @@ export const LockScreen: React.FC = () => {
               type="password"
               placeholder="Code PIN ou mot de passe"
               value={pin}
-              onChange={e => { setPin(e.target.value.replace(/\\D/g, '').slice(0, 8)); setPinError('') }}
+              onChange={e => { setPin(e.target.value.replace(/\D/g, '').slice(0, 8)); setPinError('') }}
               style={{
                 flex: 1,
                 padding: '10px 14px',
