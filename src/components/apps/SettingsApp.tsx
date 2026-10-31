@@ -573,7 +573,7 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Applications installées</SectionTitle>
             {[
-              { name: 'Microsoft Edge', publisher: 'Microsoft Corporation', size: '645 Mo', version: '130.0.2849.56', icon: 'edge' },
+              { name: 'Photos', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'image' },
               { name: 'Windows Terminal', publisher: 'Microsoft Corporation', size: '28,5 Mo', version: '1.21.3231', icon: 'terminal' },
               { name: 'Bloc-notes', publisher: 'Microsoft Corporation', size: '2,1 Mo', version: '11.2409', icon: 'notepad' },
               { name: 'Paint', publisher: 'Microsoft Corporation', size: '46,3 Mo', version: '11.2409', icon: 'paint' },
