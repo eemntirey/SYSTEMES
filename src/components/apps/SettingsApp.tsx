@@ -556,8 +556,8 @@ export const SettingsApp: React.FC = () => {
                 ))}
               </div>
             </div>
-            <SettingRow icon="square" title="Éléments masqués du coin système" desc="Gérez les icônes dans l'angle de la barre des tâches" onClick={() => alert('Paramètres du coin système — fonctionnalité en développement')} />
-            <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Afficher le badge, la sélection de fenêtres, le bouton afficher le bureau" onClick={() => alert('Paramètres de comportement — fonctionnalité en développement')} />
+            <SettingRow icon="square" title="Éléments masqués du coin système" desc="Gérez les icônes dans l'angle de la barre des tâches" onClick={() => addNotification('Barre des tâches', 'La gestion individuelle des icônes du coin système n’est pas encore disponible.', 'Paramètres', 'info')} />
+            <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Afficher le badge, la sélection de fenêtres, le bouton afficher le bureau" onClick={() => addNotification('Barre des tâches', 'Les options avancées de comportement ne sont pas encore disponibles.', 'Paramètres', 'info')} />
 
             <SectionTitle>Écran de verrouillage</SectionTitle>
             <SettingRow icon="lock" title="Arrière-plan de l'écran de verrouillage" desc="Windows à la une" toggle={lockScreenBackground} onToggle={toggleLockScreenBackground} />
@@ -569,18 +569,17 @@ export const SettingsApp: React.FC = () => {
         {section === 'apps' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Applications</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez les applications installées</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Applications intégrées à SYSTEMES. Cette version ne gère pas de paquets externes.</p>
 
             <SectionTitle>Applications installées</SectionTitle>
             {[
               { name: 'Photos', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'image' },
-              { name: 'Windows Terminal', publisher: 'Microsoft Corporation', size: '28,5 Mo', version: '1.21.3231', icon: 'terminal' },
-              { name: 'Bloc-notes', publisher: 'Microsoft Corporation', size: '2,1 Mo', version: '11.2409', icon: 'notepad' },
-              { name: 'Paint', publisher: 'Microsoft Corporation', size: '46,3 Mo', version: '11.2409', icon: 'paint' },
-              { name: 'Calculatrice', publisher: 'Microsoft Corporation', size: '18,7 Mo', version: '11.2408', icon: 'calculator' },
-              { name: 'Paramètres', publisher: 'Microsoft Corporation', size: '12,4 Mo', version: '11.2409', icon: 'settings' },
-              { name: 'Visual Studio Code', publisher: 'Microsoft Corporation', size: '380 Mo', version: '1.95.3', icon: 'square' },
-              { name: 'VLC media player', publisher: 'VideoLAN', size: '94,1 Mo', version: '3.0.21', icon: 'square' },
+              { name: 'Terminal', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'terminal' },
+              { name: 'Bloc-notes', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'notepad' },
+              { name: 'Paint', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'paint' },
+              { name: 'Calculatrice', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'calculator' },
+              { name: 'Paramètres', publisher: 'SYSTEMES', size: 'Intégrée', version: '1.0', icon: 'settings' },
+
             ].map(app => (
               <div key={app.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '6px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -591,8 +590,7 @@ export const SettingsApp: React.FC = () => {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.06)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.15)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.06)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.2)'; }}>Options</button>
-                  <button style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.06)', color: '#ef4444', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.06)'; }}>Désinstaller</button>
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Application système</span>
                 </div>
               </div>
             ))}
