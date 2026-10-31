@@ -139,7 +139,30 @@ export const TerminalApp: React.FC = () => {
         break
       }
 
-      case 'pwd':,        result = currentPath,        break,,      case 'touch': {,        const newName = args.join(' '),        if (!newName) { result = 'Erreur: nom de fichier requis. Exemple: touch notes.txt'; isErr = true },        else { createFile(currentPath.replace(/\\/g, '/'), newName, ''); result = `Fichier "${newName}" créé dans ${currentPath}.` },        break,      },      case 'cat':
+      case 'pwd':
+        result = currentPath
+        break
+
+      case 'touch': {
+        const newName = args.join(' ').trim()
+        if (!newName) {
+          result = 'Erreur : nom de fichier requis. Exemple : touch notes.txt'
+          isErr = true
+        } else {
+          const normalizedPath = currentPath.replace(/\\/g, '/')
+          const alreadyExists = files.some(file => file.name.toLowerCase() === newName.toLowerCase() && file.path.slice(0, file.path.lastIndexOf('/')) === normalizedPath)
+          if (alreadyExists) {
+            result = `Un élément nommé "${newName}" existe déjà dans ce dossier.`
+            isErr = true
+          } else {
+            createFile(normalizedPath, newName, '')
+            result = `Fichier "${newName}" créé dans ${currentPath}.`
+          }
+        }
+        break
+      }
+
+      case 'cat':
       case 'type': {
         const fileName = args.join(' ')
         const normalizedCurrent = currentPath.replace(/\\/g, '/')
