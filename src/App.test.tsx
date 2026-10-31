@@ -1,3 +1,4 @@
+import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import App from './App'
@@ -6,6 +7,8 @@ import { CalculatorApp } from './components/apps/CalculatorApp'
 import { PhotosApp } from './components/apps/PhotosApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { RecycleBinApp } from './components/apps/RecycleBinApp'
+import { FileExplorerApp } from './components/apps/FileExplorerApp'
+import { LockScreen } from './components/lockscreen/LockScreen'
 import { useOS } from './context/OSContext'
 
 describe('Windows 11 Recreation Tests', () => {
@@ -105,5 +108,34 @@ describe('Photos and Terminal', () => {
     fireEvent.change(input, { target: { value: 'pwd' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.getByText('C:\\Users\\eemntirey')).toBeDefined()
+  })
+})
+
+
+describe('Audit fonctionnel et transparence', () => {
+  it('expose réellement les trois modes d’affichage de l’Explorateur', () => {
+    render(<OSProvider><FileExplorerApp /></OSProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }))
+    expect(screen.getByRole('table', { name: 'Liste des fichiers' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Détails' }))
+    expect(screen.getByRole('table', { name: 'Détails des fichiers' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Icônes' }))
+    expect(screen.getByRole('list', { name: 'Fichiers et dossiers' })).toBeDefined()
+  })
+
+  it('annonce explicitement que le code fixe du verrouillage est une démo', () => {
+    const LockHarness = () => {
+      const { lockOS } = useOS()
+      React.useEffect(() => { lockOS() }, [lockOS])
+      return <LockScreen />
+    }
+
+    render(<OSProvider><LockHarness /></OSProvider>)
+    fireEvent.click(screen.getByText('Cliquez pour vous connecter'))
+    expect(screen.getByText(/Mode démonstration/)).toBeDefined()
+    expect(screen.getByText(/ne constitue pas une authentification réelle/)).toBeDefined()
   })
 })
