@@ -1,11 +1,11 @@
 export type AppId =
   | 'explorer'
-  | 'edge'
   | 'notepad'
   | 'terminal'
   | 'calculator'
   | 'settings'
   | 'paint'
+  | 'photos'
   | 'widgets'
 
 export type SnapPosition =
