@@ -163,7 +163,7 @@ export const WidgetsBoard: React.FC = () => {
             <div
               key={i}
               onClick={() => {
-                openWindow('edge')
+                openWindow('photos')
                 closeAllFlyouts()
               }}
               style={{
