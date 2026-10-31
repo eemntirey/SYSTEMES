@@ -33,6 +33,16 @@ describe('Windows 11 Recreation Tests', () => {
     expect(screen.queryByText('Applications épinglées')).toBeNull()
   })
 
+  it('reports division by zero instead of returning a fabricated result', () => {
+    render(<OSProvider><CalculatorApp /></OSProvider>)
+    fireEvent.click(screen.getByText('8'))
+    fireEvent.click(screen.getByText('÷'))
+    fireEvent.click(screen.getByText('0'))
+    fireEvent.click(screen.getByText('='))
+    expect(screen.getByText('Erreur')).toBeDefined()
+    expect(screen.getByText('Division par zéro impossible')).toBeDefined()
+  })
+
   it('performs calculations in CalculatorApp', () => {
     render(
       <OSProvider>
