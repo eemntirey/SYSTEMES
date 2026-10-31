@@ -6,6 +6,7 @@ export type AppId =
   | 'settings'
   | 'paint'
   | 'photos'
+  | 'recycle'
   | 'widgets'
 
 export type SnapPosition =
