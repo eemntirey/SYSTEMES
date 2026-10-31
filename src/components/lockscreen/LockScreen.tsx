@@ -6,6 +6,7 @@ export const LockScreen: React.FC = () => {
   const { isLocked, isSleeping, unlockOS, wakeOS, wallpaper, restartOS, shutdownOS } = useOS()
   const [showPinInput, setShowPinInput] = useState(false)
   const [pin, setPin] = useState('')
+  const [pinError, setPinError] = useState('')
   const [currentTime, setCurrentTime] = useState(new Date())
 
   useEffect(() => {
@@ -55,10 +56,10 @@ export const LockScreen: React.FC = () => {
       unlockOS()
       setShowPinInput(false)
       setPin('')
-    } else if (pin === '') {
-      setPin('')
+      setPinError('')
     } else {
       setPin('')
+      setPinError('Code PIN incorrect. Réessayez.')
     }
   }
 
@@ -168,7 +169,7 @@ export const LockScreen: React.FC = () => {
               type="password"
               placeholder="Code PIN ou mot de passe"
               value={pin}
-              onChange={e => setPin(e.target.value)}
+              onChange={e => { setPin(e.target.value.replace(/\\D/g, '').slice(0, 8)); setPinError('') }}
               style={{
                 flex: 1,
                 padding: '10px 14px',
@@ -192,6 +193,7 @@ export const LockScreen: React.FC = () => {
               <FluentIcon name="arrow-right" size={16} />
             </button>
           </form>
+          {pinError && <span role="alert" style={{ color: '#fecaca', fontSize: 12, marginTop: 10 }}>{pinError}</span>}
 
           <span
             onClick={() => setShowPinInput(false)}
