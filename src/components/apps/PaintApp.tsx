@@ -73,12 +73,13 @@ export const PaintApp: React.FC = () => {
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   }, [])
 
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    canvas.setPointerCapture(e.pointerId)
     const rect = canvas.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
@@ -89,7 +90,7 @@ export const PaintApp: React.FC = () => {
     setIsDrawing(true)
   }
 
-  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return
     const canvas = canvasRef.current
     if (!canvas) return
@@ -109,8 +110,9 @@ export const PaintApp: React.FC = () => {
     ctx.stroke()
   }
 
-  const stopDrawing = () => {
+  const stopDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
     setIsDrawing(false)
+    if (e?.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
   }
 
   const clearCanvas = () => {
@@ -284,15 +286,16 @@ export const PaintApp: React.FC = () => {
           ref={canvasRef}
           width={760}
           height={480}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
+          onPointerDown={startDrawing}
+          onPointerMove={draw}
+          onPointerUp={stopDrawing}
+          onPointerCancel={stopDrawing}
           style={{
             backgroundColor: '#ffffff',
             borderRadius: '4px',
             boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-            cursor: tool === 'pen' ? 'crosshair' : 'default',
+            cursor: tool === 'pen' ? 'crosshair' : 'cell',
+            touchAction: 'none',
           }}
         />
       </div>
