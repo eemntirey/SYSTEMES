@@ -26,7 +26,9 @@ export const TerminalApp: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (typeof terminalEndRef.current?.scrollIntoView === 'function') {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [outputs])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
