@@ -15,7 +15,9 @@ export const PhotosApp: React.FC = () => {
   const changeBy = useCallback((direction: number) => {
     const index = WALLPAPERS.findIndex(item => item.id === activeId)
     const next = (index + direction + WALLPAPERS.length) % WALLPAPERS.length
-    changePhoto(WALLPAPERS[next].id)
+    setActiveId(WALLPAPERS[next].id)
+    setZoom(1)
+    setRotation(0)
   }, [activeId])
 
   useEffect(() => {
