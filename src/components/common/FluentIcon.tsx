@@ -157,7 +157,7 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
     )
   }
 
-  // 4. Microsoft Edge (Famous Blue-Green Wave Surf Logo)
+  // 4. Browser-neutral globe icon
   if (norm === 'globe') return <Globe width={size} height={size} color={color} className={className} style={style} />
 
 
