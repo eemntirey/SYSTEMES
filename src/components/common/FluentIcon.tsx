@@ -33,6 +33,10 @@ import {
   Clock,
   Star,
   FileText,
+  Image as ImageIcon,
+  Info,
+  Play,
+  Pause,
 } from 'lucide-react'
 
 interface FluentIconProps {
@@ -432,6 +436,15 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
       return <Star {...props} />
     case 'file-text':
       return <FileText {...props} />
+    case 'image':
+    case 'photos':
+      return <ImageIcon {...props} />
+    case 'info':
+      return <Info {...props} />
+    case 'play':
+      return <Play {...props} />
+    case 'pause':
+      return <Pause {...props} />
     case 'check':
       return <Check {...props} />
     case 'maximize':
