@@ -1,7 +1,7 @@
 import { AppDefinition, FileItem, Wallpaper } from '../types'
 
 /** Hauteur de la barre de menus fixée en haut de l'écran (cf. MenuBar). */
-export const MENU_BAR_HEIGHT = 32
+export const MENU_BAR_HEIGHT = 40
 
 export const WALLPAPERS: Wallpaper[] = [
   {

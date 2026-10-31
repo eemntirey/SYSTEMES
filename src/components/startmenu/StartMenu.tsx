@@ -43,9 +43,19 @@ export const StartMenu: React.FC = () => {
     { id: 'terminal', name: 'PowerShell', icon: 'terminal' },
   ]
 
+  // Liste complète de toutes les applications du système (épinglées + fichiers)
+  const allUniqueApps = Array.from(
+    new Map([
+      ...pinnedApps.map(a => [a.name, a]),
+      ...files.map(f => [f.name, { id: f.type === 'folder' ? 'folder' : 'file', name: f.name, icon: f.type === 'folder' ? 'folder' : 'file-text' } as AppGridItem]),
+    ]).values()
+  )
+
   const filteredApps = searchFilter.trim()
-    ? pinnedApps.filter(a => a.name.toLowerCase().includes(searchFilter.toLowerCase()))
-    : pinnedApps
+    ? (viewAllApps
+        ? allUniqueApps.filter(a => a.name.toLowerCase().includes(searchFilter.toLowerCase()))
+        : pinnedApps.filter(a => a.name.toLowerCase().includes(searchFilter.toLowerCase())))
+    : (viewAllApps ? allUniqueApps : pinnedApps)
 
   // Recommended recent files
   const recommendedFiles = files.slice(0, 4)

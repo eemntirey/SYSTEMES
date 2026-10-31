@@ -41,11 +41,12 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   } | null>(null)
 
   const desktopRef = useRef<HTMLDivElement>(null)
+  const iconRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // Fixed desktop icons with accurate 3D icon names
   const defaultShortcuts: DesktopShortcut[] = [
     { id: 'pc', name: 'Ce PC', icon: 'pc', appId: 'explorer' },
-    { id: 'recycle', name: 'Corbeille', icon: 'recycle' },
+    { id: 'recycle', name: 'Corbeille', icon: 'recycle', appId: 'recycle' },
     { id: 'edge', name: 'Microsoft Edge', icon: 'edge', appId: 'edge' },
     { id: 'explorer', name: 'Explorateur', icon: 'explorer', appId: 'explorer' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'notepad', appId: 'notepad' },
@@ -66,6 +67,29 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
     }))
 
   const allShortcuts = [...defaultShortcuts, ...desktopFiles]
+
+  // Icon dimensions and gaps
+  const ICON_SIZE = 80
+  const ICON_HEIGHT = 92
+  const GAP_X = 12
+  const GAP_Y = 8
+  const CONTAINER_PADDING_TOP = MENU_BAR_HEIGHT + 16
+  const CONTAINER_PADDING_LEFT = 16
+
+  // Calculate grid position for each icon
+  const getIconPosition = (index: number) => {
+    const totalIcons = allShortcuts.length
+    if (index >= totalIcons) return null
+    const columns = Math.max(1, Math.floor((totalIcons) / 2) + 1)
+    const col = index % columns
+    const row = Math.floor(index / columns)
+    return {
+      x: CONTAINER_PADDING_LEFT + col * (ICON_SIZE + GAP_X),
+      y: CONTAINER_PADDING_TOP + row * (ICON_HEIGHT + GAP_Y),
+      w: ICON_SIZE,
+      h: ICON_HEIGHT,
+    }
+  }
 
   // Mouse handlers for selection lasso
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -124,6 +148,15 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   }
 
   // Calculate lasso bounds
+  const isIconInSelection = (icon: { x: number; y: number; w: number; h: number }) => {
+    if (!selectionBox) return false
+    const left = Math.min(selectionBox.startX, selectionBox.currentX)
+    const top = Math.min(selectionBox.startY, selectionBox.currentY)
+    const right = Math.max(selectionBox.startX, selectionBox.currentX)
+    const bottom = Math.max(selectionBox.startY, selectionBox.currentY)
+    return icon.x < right && icon.x + icon.w > left && icon.y < bottom && icon.y + icon.h > top
+  }
+
   const getBoxStyle = () => {
     if (!selectionBox) return {}
     const left = Math.min(selectionBox.startX, selectionBox.currentX)
@@ -198,10 +231,11 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
         {allShortcuts.map(sc => (
           <div key={sc.id} style={{ pointerEvents: 'all' }}>
             <DesktopIcon
+              ref={(el) => { iconRefs.current[sc.id] = el }}
               id={sc.id}
               name={sc.name}
               icon={sc.icon}
-              isSelected={selectedIconId === sc.id}
+              isSelected={selectedIconId === sc.id || (selectionBox ? isIconInSelection(sc) : false)}
               showLabel={showDesktopLabels}
               iconSize={iconSize}
               onClick={e => {

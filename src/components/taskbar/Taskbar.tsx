@@ -15,6 +15,7 @@ export const Taskbar: React.FC = () => {
     isCalendarOpen,
     toggleCalendar,
     notifications,
+    taskbarAlignment,
   } = useOS()
 
   const [currentTime, setCurrentTime] = useState(new Date())
@@ -64,7 +65,7 @@ export const Taskbar: React.FC = () => {
   )
 
   return (
-    <div className="dock-container">
+    <div className="dock-container" style={{ justifyContent: taskbarAlignment === 'left' ? 'flex-start' : 'center' }}>
       {/* Left separator + Start (Launchpad style) */}
       <button
         onClick={toggleStartMenu}

@@ -12,7 +12,7 @@ export interface DesktopIconProps {
   iconSize?: 'small' | 'medium' | 'large'
 }
 
-export const DesktopIcon: React.FC<DesktopIconProps> = ({
+export const DesktopIcon = React.forwardRef<HTMLDivElement, DesktopIconProps>(({
   name,
   icon,
   isSelected = false,
@@ -20,9 +20,10 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({
   onClick,
   onDoubleClick,
   iconSize = 'medium',
-}) => {
+}, ref) => {
   return (
     <div
+      ref={ref}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       style={{
@@ -91,4 +92,5 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({
       )}
     </div>
   )
-}
+})
+
