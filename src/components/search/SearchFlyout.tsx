@@ -150,7 +150,7 @@ export const SearchFlyout: React.FC = () => {
             {matchedApps.length === 0 && matchedFiles.length === 0 && (
               <div
                 onClick={() => {
-                  openWindow('photos')
+                  window.open('https://www.google.com/search?q=' + encodeURIComponent(query), '_blank', 'noopener,noreferrer')
                   closeAllFlyouts()
                 }}
                 style={{
@@ -162,10 +162,10 @@ export const SearchFlyout: React.FC = () => {
                 }}
               >
                 <div style={{ fontSize: '14px', color: 'var(--win-accent)', fontWeight: 500 }}>
-                  Rechercher sur Bing : « {query} »
+                  Rechercher sur le Web : « {query} »
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Ouvrir Photos
+                  Ouvrir dans le navigateur par défaut
                 </div>
               </div>
             )}
@@ -234,7 +234,7 @@ export const SearchFlyout: React.FC = () => {
                 <div
                   key={item.title}
                   onClick={() => {
-                    openWindow('photos')
+                    window.open('https://www.google.com/search?q=' + encodeURIComponent(item.title), '_blank', 'noopener,noreferrer')
                     closeAllFlyouts()
                   }}
                   style={{
