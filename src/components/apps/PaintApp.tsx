@@ -9,6 +9,7 @@ export const PaintApp: React.FC = () => {
   const [brushSize, setBrushSize] = useState(4)
   const undoStack = useRef<string[]>([])
   const redoStack = useRef<string[]>([])
+  const [, setHistoryVersion] = useState(0)
 
   const saveHistory = () => {
     const canvas = canvasRef.current
@@ -16,6 +17,7 @@ export const PaintApp: React.FC = () => {
     undoStack.current.push(canvas.toDataURL())
     if (undoStack.current.length > 30) undoStack.current.shift()
     redoStack.current = []
+    setHistoryVersion(version => version + 1)
   }
 
   const restoreSnapshot = (snapshot: string) => {
@@ -35,6 +37,7 @@ export const PaintApp: React.FC = () => {
     if (!canvas || !undoStack.current.length) return
     redoStack.current.push(canvas.toDataURL())
     restoreSnapshot(undoStack.current.pop() as string)
+    setHistoryVersion(version => version + 1)
   }
 
   const redo = () => {
@@ -42,6 +45,7 @@ export const PaintApp: React.FC = () => {
     if (!canvas || !redoStack.current.length) return
     undoStack.current.push(canvas.toDataURL())
     restoreSnapshot(redoStack.current.pop() as string)
+    setHistoryVersion(version => version + 1)
   }
 
   const PALETTE = [
