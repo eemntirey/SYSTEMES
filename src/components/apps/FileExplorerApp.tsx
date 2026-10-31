@@ -203,6 +203,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [newFileName, setNewFileName] = useState('')
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
+  const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
 
   const navigateTo = (path: string) => {
     const formatted = path.replace(/\/+/g, '/')
@@ -241,7 +242,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   }
 
   const currentItems = useMemo(() => {
-    return files.filter((f) => {
+    const visible = files.filter((f) => {
       const parts = f.path.split('/')
       parts.pop()
       const parent = parts.join('/')
@@ -258,7 +259,12 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
       }
       return true
     })
-  }, [files, currentPath, searchQuery])
+    return visible.sort((a, b) => {
+      if (sortBy === 'type') return a.type.localeCompare(b.type) || a.name.localeCompare(b.name)
+      if (sortBy === 'modified') return b.modified.localeCompare(a.modified) || a.name.localeCompare(b.name)
+      return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
+    })
+  }, [files, currentPath, searchQuery, sortBy])
 
   const selectedItem = useMemo(
     () => files.find((f) => f.id === selectedItemId) || null,
@@ -375,6 +381,14 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </div>
         </div>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={{ fontSize: 11, color: 'var(--text-tertiary)' }} htmlFor="explorer-sort">Trier</label>
+          <select id="explorer-sort" aria-label="Trier les éléments" value={sortBy} onChange={e => setSortBy(e.target.value as 'name' | 'type' | 'modified')} style={{ maxWidth: 112, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontSize: 11 }}>
+            <option value="name">Nom</option>
+            <option value="type">Type</option>
+            <option value="modified">Date</option>
+          </select>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <ActionButton icon="folder" label="Nouveau dossier" onClick={() => setIsCreatingFolder(true)} />
           <ActionButton icon="file-text" label="Nouveau fichier" onClick={() => setIsCreatingFile(true)} />
