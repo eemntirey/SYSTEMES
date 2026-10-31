@@ -1,7 +1,7 @@
 using System;
 using System.IO;
-using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Systemes.Native.Core
 {
@@ -9,7 +9,8 @@ namespace Systemes.Native.Core
     {
         public static void Start()
         {
-            Console.WriteLine("SYSTEMES Native Server started. Ready for JSON-RPC over stdin/stdout.");
+            // stdout is reserved for one JSON response per request; diagnostics go to stderr.
+            Console.Error.WriteLine("SYSTEMES Native Server ready.");
             while (true)
             {
                 try
@@ -18,14 +19,10 @@ namespace Systemes.Native.Core
                     if (line == null) break;
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
-                    var request = JsonConvert.DeserializeObject<dynamic>(line);
-                    if (request == null)
-                    {
-                        Console.WriteLine(JsonConvert.SerializeObject(new { error = "Invalid JSON" }));
-                        continue;
-                    }
-
-                    string method = request.method?.ToString() ?? "";
+                    var request = JObject.Parse(line);
+                    var id = request["id"]?.DeepClone();
+                    var args = request["params"] as JObject ?? request;
+                    var method = request["method"]?.Value<string>() ?? "";
                     object result;
 
                     switch (method)
@@ -37,17 +34,16 @@ namespace Systemes.Native.Core
                             result = ProcessManager.ReadRealProcesses();
                             break;
                         case "processes/kill":
-                            int pid = Convert.ToInt32(request.pid);
-                            result = ProcessManager.KillProcess(pid);
+                            result = ProcessManager.KillProcess(args["pid"]?.Value<int>() ?? 0);
                             break;
                         case "files/read":
-                            result = FileSystemNative.ReadRealFile(request.path?.ToString() ?? "");
+                            result = FileSystemNative.ReadRealFile(args["path"]?.Value<string>() ?? "");
                             break;
                         case "files/create":
-                            result = FileSystemNative.CreateFile(request.path?.ToString() ?? "", request.content?.ToString() ?? "");
+                            result = FileSystemNative.CreateFile(args["path"]?.Value<string>() ?? "", args["content"]?.Value<string>() ?? "");
                             break;
                         case "files/delete":
-                            result = FileSystemNative.DeleteFile(request.path?.ToString() ?? "");
+                            result = FileSystemNative.DeleteFile(args["path"]?.Value<string>() ?? "");
                             break;
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();
@@ -57,14 +53,16 @@ namespace Systemes.Native.Core
                             break;
                         default:
                             result = new { error = "Unknown method", method };
+                            break;
                     }
 
-                    string response = JsonConvert.SerializeObject(new { result, id = request.id?.ToString() ?? "" });
-                    Console.WriteLine(response);
+                    Console.WriteLine(JsonConvert.SerializeObject(new { result, id }));
+                    Console.Out.Flush();
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(JsonConvert.SerializeObject(new { error = ex.Message }));
+                    Console.WriteLine(JsonConvert.SerializeObject(new { error = ex.Message, id = (string?)null }));
+                    Console.Out.Flush();
                 }
             }
         }
