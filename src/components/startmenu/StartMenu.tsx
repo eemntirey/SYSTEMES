@@ -29,36 +29,30 @@ export const StartMenu: React.FC = () => {
 
   if (!isStartMenuOpen) return null
 
-  const pinnedApps: AppGridItem[] = [
-    { id: 'photos', name: 'Photos', icon: 'image' },
-    { id: 'explorer', name: 'Explorateur', icon: 'folder' },
-    { id: 'notepad', name: 'Bloc-notes', icon: 'file-text' },
-    { id: 'terminal', name: 'Terminal', icon: 'terminal' },
-    { id: 'calculator', name: 'Calculatrice', icon: 'calculator' },
-    { id: 'paint', name: 'Paint', icon: 'palette' },
-    { id: 'settings', name: 'Paramètres', icon: 'settings' },
-    { id: 'explorer', name: 'Ce PC', icon: 'folder' },
-    { id: 'photos', name: 'Galerie', icon: 'image' },
-    { id: 'settings', name: 'Affichage', icon: 'sliders' },
-    { id: 'notepad', name: 'Mémos', icon: 'file-text' },
-    { id: 'terminal', name: 'PowerShell', icon: 'terminal' },
-  ]
+  // Le catalogue central est la source unique : pas de raccourcis fictifs ou dupliqués.
+  const allUniqueApps: AppGridItem[] = Object.values(APP_DEFINITIONS)
+    .map(app => ({ id: app.id, name: app.name, icon: app.icon }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }))
+  const pinnedApps = Object.values(APP_DEFINITIONS)
+    .filter(app => app.pinned)
+    .map(app => ({ id: app.id, name: app.name, icon: app.icon }))
 
-  // Liste complète de toutes les applications du système (épinglées + fichiers)
-  const allUniqueApps: AppGridItem[] = Object.values(APP_DEFINITIONS).map(app => ({
-    id: app.id,
-    name: app.name,
-    icon: app.icon,
-  }))
+  const normalizedQuery = searchFilter.trim().toLocaleLowerCase('fr')
+  const sourceApps = viewAllApps ? allUniqueApps : pinnedApps
+  const filteredApps = normalizedQuery
+    ? sourceApps.filter(app => app.name.toLocaleLowerCase('fr').includes(normalizedQuery))
+    : sourceApps
 
-  const filteredApps = (searchFilter.trim()
-    ? (viewAllApps
-        ? allUniqueApps.filter((a: AppGridItem) => a.name.toLowerCase().includes(searchFilter.toLowerCase()))
-        : pinnedApps.filter((a: AppGridItem) => a.name.toLowerCase().includes(searchFilter.toLowerCase())))
-    : (viewAllApps ? allUniqueApps : pinnedApps)) as AppGridItem[]
-
-  // Recommended recent files
-  const recommendedFiles = files.slice(0, 4)
+  // Les recommandations reflètent les fichiers réellement modifiés récemment,
+  // pas l'ordre arbitraire du tableau en mémoire.
+  const getModifiedTime = (value: string) => {
+    const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/)
+    if (!match) return 0
+    return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]), Number(match[4] || 0), Number(match[5] || 0)).getTime()
+  }
+  const recommendedFiles = [...files]
+    .sort((a, b) => getModifiedTime(b.modified) - getModifiedTime(a.modified))
+    .slice(0, 4)
 
   const handleAppClick = (appId: AppId) => {
     openWindow(appId)
@@ -183,7 +177,7 @@ export const StartMenu: React.FC = () => {
           }}
         >
           <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Accès rapide aux fichiers
+            Modifiés récemment
           </span>
           <button
             onClick={() => { openWindow('explorer'); closeAllFlyouts() }}
@@ -244,7 +238,7 @@ export const StartMenu: React.FC = () => {
                 >
                   {rf.name}
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Disponible dans vos fichiers</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Modifié récemment</div>
               </div>
             </div>
           ))}
