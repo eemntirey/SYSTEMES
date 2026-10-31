@@ -37,6 +37,7 @@ import {
   Info,
   Play,
   Pause,
+  Globe,
 } from 'lucide-react'
 
 interface FluentIconProps {
@@ -157,37 +158,9 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
   }
 
   // 4. Microsoft Edge (Famous Blue-Green Wave Surf Logo)
-  if (norm === 'edge' || norm === 'globe') {
-    return (
-      <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className={className} style={style}>
-        <defs>
-          <linearGradient id="edgeBlue" x1="10" y1="4" x2="38" y2="44" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#0078D4" />
-            <stop offset="0.5" stopColor="#00A4EF" />
-            <stop offset="1" stopColor="#00C78D" />
-          </linearGradient>
-          <linearGradient id="edgeGreen" x1="20" y1="15" x2="44" y2="38" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#00C78D" />
-            <stop offset="1" stopColor="#107C41" />
-          </linearGradient>
-        </defs>
-        {/* Outer Circular Swirl Wave */}
-        <path
-          d="M24 6C14.06 6 6 14.06 6 24c0 9.94 8.06 18 18 18 8.8 0 16.14-6.32 17.68-14.67.24-1.3-.8-2.33-2.12-2.33h-10.8c-2.6 0-4.76-2.16-4.76-4.76 0-.85.24-1.66.68-2.36L35.5 8.92A17.9 17.9 0 0024 6z"
-          fill="url(#edgeBlue)"
-        />
-        {/* Inner Wave Curve */}
-        <path
-          d="M39.68 27.33C38.14 35.68 30.8 42 22 42 12.06 42 4 33.94 4 24c0-4.22 1.45-8.1 3.9-11.2 1.4-1.78 3.8-.45 3.38 1.76-1.12 5.9 3.02 11.44 9.12 11.44h17.16c1.32 0 2.36 1.03 2.12 2.33z"
-          fill="url(#edgeGreen)"
-        />
-        {/* Center Crest Highlight */}
-        <circle cx="28" cy="20" r="7" fill="#FFFFFF" fillOpacity="0.15" />
-      </svg>
-    )
-  }
+  if (norm === 'globe') return <Globe width={size} height={size} color={color} className={className} style={style} />
 
-  // 5. Windows 11 Bloc-notes / Notepad (Blue Notebook with Pencil)
+
   if (norm === 'notepad' || norm === 'file-text') {
     return (
       <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className={className} style={style}>
