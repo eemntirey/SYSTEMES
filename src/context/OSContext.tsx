@@ -173,6 +173,15 @@ interface OSContextType {
 
 export const OSContext = createContext<OSContextType | undefined>(undefined)
 
+const readPreference = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = window.localStorage.getItem(`systemes:${key}`)
+    return raw === null ? fallback : (JSON.parse(raw) as T)
+  } catch {
+    return fallback
+  }
+}
+
 export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Windows state - initialized with open File Explorer
   const [windows, setWindows] = useState<WindowState[]>([
@@ -200,24 +209,24 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isWidgetsOpen, setIsWidgetsOpen] = useState(false)
 
   // Settings state
-  const [theme, setTheme] = useState<ThemeMode>('dark')
-  const [wallpaper, setWallpaper] = useState<Wallpaper>(WALLPAPERS[0])
-  const [accentColor, setAccentColor] = useState('#0078d4')
-  const [volume, setVolume] = useState(70)
+  const [theme, setTheme] = useState<ThemeMode>(() => readPreference('theme', 'dark'))
+  const [wallpaper, setWallpaper] = useState<Wallpaper>(() => WALLPAPERS.find(item => item.id === readPreference('wallpaperId', WALLPAPERS[0].id)) ?? WALLPAPERS[0])
+  const [accentColor, setAccentColor] = useState(() => readPreference('accentColor', '#0078d4'))
+  const [volume, setVolume] = useState(() => readPreference('volume', 70))
   const [isMuted, setIsMuted] = useState(false)
-  const [brightness, setBrightness] = useState(90)
-  const [wifiEnabled, setWifiEnabled] = useState(true)
-  const [bluetoothEnabled, setBluetoothEnabled] = useState(true)
-  const [nightLight, setNightLight] = useState(false)
-  const [batterySaver, setBatterySaver] = useState(false)
+  const [brightness, setBrightness] = useState(() => readPreference('brightness', 90))
+  const [wifiEnabled, setWifiEnabled] = useState(() => readPreference('wifiEnabled', true))
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(() => readPreference('bluetoothEnabled', true))
+  const [nightLight, setNightLight] = useState(() => readPreference('nightLight', false))
+  const [batterySaver, setBatterySaver] = useState(() => readPreference('batterySaver', false))
 
   // Display settings
   const [showDesktopLabels, setShowDesktopLabels] = useState(true)
-  const [fontSize, setFontSize] = useState(100)
-  const [resolution, setResolution] = useState('1920x1080')
-  const [refreshRate, setRefreshRate] = useState('60Hz')
+  const [fontSize, setFontSize] = useState(() => readPreference('fontSize', 100))
+  const [resolution, setResolution] = useState(() => readPreference('resolution', '1920x1080'))
+  const [refreshRate, setRefreshRate] = useState(() => readPreference('refreshRate', '60Hz'))
   const [focusAssist, setFocusAssist] = useState(false)
-  const [taskbarAlignment, setTaskbarAlignment] = useState<'center' | 'left'>('center')
+  const [taskbarAlignment, setTaskbarAlignment] = useState<'center' | 'left'>(() => readPreference('taskbarAlignment', 'center'))
 
   // Privacy
   const [locationEnabled, setLocationEnabled] = useState(true)
@@ -287,6 +296,18 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  // Persist system preferences across browser reloads.
+  useEffect(() => {
+    const preferences = { theme, wallpaperId: wallpaper.id, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment }
+    try {
+      Object.entries(preferences).forEach(([key, value]) => window.localStorage.setItem(`systemes:${key}`, JSON.stringify(value)))
+    } catch {
+      // Keep the simulated OS usable when browser storage is unavailable.
+    }
+    document.documentElement.style.setProperty('--win-accent', accentColor)
+  }, [theme, wallpaper, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment])
+
 
   // Keep active window valid after close/minimize
   useEffect(() => {
