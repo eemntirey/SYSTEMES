@@ -8,6 +8,7 @@
     <RootNamespace>Systemes.Native</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Program.cs" Link="Program.cs" />
     <PackageReference Include="System.Management" Version="7.0.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
