@@ -10,7 +10,7 @@ export const SearchFlyout: React.FC = () => {
   if (!isSearchOpen) return null
 
   const topApps: { id: AppId; name: string; icon: string }[] = [
-    { id: 'edge', name: 'Microsoft Edge', icon: 'globe' },
+    { id: 'photos', name: 'Photos', icon: 'image' },
     { id: 'explorer', name: 'Explorateur', icon: 'folder' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'file-text' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal' },
@@ -150,7 +150,7 @@ export const SearchFlyout: React.FC = () => {
             {matchedApps.length === 0 && matchedFiles.length === 0 && (
               <div
                 onClick={() => {
-                  openWindow('edge')
+                  openWindow('photos')
                   closeAllFlyouts()
                 }}
                 style={{
@@ -165,7 +165,7 @@ export const SearchFlyout: React.FC = () => {
                   Rechercher sur Bing : « {query} »
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Ouvrir les résultats dans Microsoft Edge
+                  Ouvrir Photos
                 </div>
               </div>
             )}
@@ -234,7 +234,7 @@ export const SearchFlyout: React.FC = () => {
                 <div
                   key={item.title}
                   onClick={() => {
-                    openWindow('edge')
+                    openWindow('photos')
                     closeAllFlyouts()
                   }}
                   style={{
