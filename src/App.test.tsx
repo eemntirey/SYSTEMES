@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import App from './App'
 import { OSProvider } from './context/OSContext'
 import { CalculatorApp } from './components/apps/CalculatorApp'
+import { RecycleBinApp } from './components/apps/RecycleBinApp'
+import { useOS } from './context/OSContext'
 
 describe('Windows 11 Recreation Tests', () => {
   it('renders Desktop with essential shortcuts', () => {
@@ -50,5 +52,26 @@ describe('Windows 11 Recreation Tests', () => {
 
     // 7 + 5 = 12
     expect(screen.getByText('12')).toBeDefined()
+  })
+})
+
+
+describe('Recycle Bin', () => {
+  const RecycleBinHarness = () => {
+    const { deleteItem } = useOS()
+    return (
+      <>
+        <button onClick={() => deleteItem('doc-welcome')}>Supprimer le document de test</button>
+        <RecycleBinApp />
+      </>
+    )
+  }
+
+  it('moves a deleted file to the bin and restores it', () => {
+    render(<OSProvider><RecycleBinHarness /></OSProvider>)
+    fireEvent.click(screen.getByText('Supprimer le document de test'))
+    expect(screen.getByText('Bienvenue sur Windows 11.txt')).toBeDefined()
+    fireEvent.click(screen.getByTitle('Restaurer'))
+    expect(screen.getByText('La Corbeille est vide')).toBeDefined()
   })
 })
