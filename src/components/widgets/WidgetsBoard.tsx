@@ -3,11 +3,14 @@ import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 
 export const WidgetsBoard: React.FC = () => {
-  const { isWidgetsOpen, openWindow, closeAllFlyouts } = useOS()
-  const [note, setNote] = useState(() => localStorage.getItem('systemes-widget-note') ?? 'Penser à tester la nouvelle mise à jour de Windows 11.')
+  const { isWidgetsOpen, closeAllFlyouts } = useOS()
+  const [note, setNote] = useState(() => {
+    try { return localStorage.getItem('systemes-widget-note') ?? 'Penser à tester la nouvelle mise à jour de Windows 11.' }
+    catch { return 'Penser à tester la nouvelle mise à jour de Windows 11.' }
+  })
 
   useEffect(() => {
-    localStorage.setItem('systemes-widget-note', note)
+    try { localStorage.setItem('systemes-widget-note', note) } catch { /* stockage local indisponible */ }
   }, [note])
 
   if (!isWidgetsOpen) return null
