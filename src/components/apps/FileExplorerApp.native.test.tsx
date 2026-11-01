@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createDirectory: vi.fn(),
   createFile: vi.fn(),
   deleteFile: vi.fn(),
+  openRecycleBin: vi.fn(),
   renameFile: vi.fn(),
 }))
 
@@ -23,6 +24,18 @@ const renderExplorer = () => render(<OSProvider><FileExplorerApp /></OSProvider>
 afterEach(() => vi.clearAllMocks())
 
 describe('FileExplorer native integration', () => {
+  it('opens the native Windows Recycle Bin', async () => {
+    mocks.listFiles.mockResolvedValue({ path: 'C:/Users/test', count: 0, items: [] })
+    mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readHardware.mockResolvedValue({ disks: [] })
+    mocks.openRecycleBin.mockResolvedValue({ opened: true, target: 'shell:RecycleBinFolder' })
+
+    renderExplorer()
+    fireEvent.click(await screen.findByRole('button', { name: 'Corbeille' }))
+
+    expect(mocks.openRecycleBin).toHaveBeenCalledTimes(1)
+  })
+
   it('lists actual directory entries returned by the native host', async () => {
     mocks.listFiles.mockResolvedValue({
       path: 'C:/Users/test',
