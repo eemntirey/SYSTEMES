@@ -85,6 +85,18 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readServices() {
+    const response = await request<{ services: { name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string }[]; count: number; source: string }>('services/read');
+    if (!response.result) throw new Error('Windows n’a retourné aucun inventaire de services.');
+    return response.result;
+  },
+
+  async controlService(name: string, action: 'start' | 'stop') {
+    if (!/^[A-Za-z0-9_.-]{1,128}$/.test(name)) throw new Error('Nom de service invalide.');
+    const response = await request('services/control', { name, action });
+    return response.result;
+  },
+
   async readProcesses() {
     const response = await request('processes/read');
     return response.result;
