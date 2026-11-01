@@ -57,6 +57,8 @@ describe('FileExplorer native integration', () => {
 
     expect(await screen.findByText('readme.txt')).toBeDefined()
     expect(screen.getByText('1.0 Ko')).toBeDefined()
+    expect(await screen.findByText('C:/')).toBeDefined()
+    expect(screen.getByText(/25 Gio libres \/ 100 Gio/)).toBeDefined()
     expect(mocks.listFiles).toHaveBeenCalledWith('')
     expect(mocks.getFileLocations).toHaveBeenCalled()
   })
