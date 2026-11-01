@@ -200,6 +200,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [isNativeLoading, setIsNativeLoading] = useState(true)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [permissionText, setPermissionText] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([initialPath])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
@@ -639,6 +640,8 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                       <button onClick={() => handleItemDoubleClick(selectedItem)} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--win-accent)', color: '#fff', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Ouvrir dans le Bloc-notes</button>
                     )}
                     <button onClick={() => { setRenameValue(selectedItem.name); setIsRenaming(true) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Renommer</button>
+                    <button type="button" onClick={() => { void NativeBridge.readPermissions(selectedItem.path).then(result => setPermissionText(result.acl)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Permissions Windows</button>
+                    {permissionText && <pre aria-label="Permissions Windows" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 10, color: 'var(--text-secondary)' }}>{permissionText}</pre>}
                     {isRenaming && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><input aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} /><button type="button" onClick={() => void handleRename()}>Valider</button></div>}
                     <button onClick={() => { void NativeBridge.deleteFile(selectedItem.path).then(() => { setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Supprimer cet élément</button>
                   </div>
