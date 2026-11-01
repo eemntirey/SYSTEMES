@@ -47,6 +47,7 @@ describe('ProcessManagerApp', () => {
 
     expect(await screen.findByText('editor')).toBeDefined()
     expect(screen.getByText('125,5 Mo')).toBeDefined()
+    expect(screen.getByText('18,6 %')).toBeDefined()
     expect(screen.getByText('12 / 16 Gio')).toBeDefined()
     expect(screen.getByText('75 % utilisés · 4 Gio disponibles')).toBeDefined()
     expect(screen.getAllByText('12,4 %').length).toBeGreaterThan(0)
@@ -72,6 +73,7 @@ describe('ProcessManagerApp', () => {
   it('sorts the list by CPU and shows selected process details', async () => {
     mocks.readProcesses.mockResolvedValue({
       logicalProcessorCount: 8,
+      systemCpuUsagePercent: 18.6,
       processes: [
         { id: 100, name: 'editor', memoryMB: 125, cpuUsagePercent: 7.5, threadCount: 8, sessionId: 1, startTimeUtcTicks: 638975808000000000, executablePath: 'C:/Apps/editor.exe' },
         { id: 101, name: 'worker', memoryMB: 90, cpuUsagePercent: 42, threadCount: 4, sessionId: 1 },
