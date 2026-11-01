@@ -32,6 +32,16 @@ static VOID serial_out(UINT16 port, UINT8 value) {
     __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+static VOID serial_init(VOID) {
+    serial_out(0x3F9, 0x00);
+    serial_out(0x3FB, 0x80);
+    serial_out(0x3F8, 0x01);
+    serial_out(0x3F9, 0x00);
+    serial_out(0x3FB, 0x03);
+    serial_out(0x3FA, 0xC7);
+    serial_out(0x3FC, 0x0B);
+}
+
 static VOID serial_text(const CHAR8 *text) {
     while (*text) serial_out(0x3F8, (UINT8)*text++);
 }
