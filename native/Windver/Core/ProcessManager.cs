@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Management;
 using System.Runtime.InteropServices;
 
 namespace Systemes.Native.Core
@@ -52,6 +53,121 @@ namespace Systemes.Native.Core
                 if (total == 0 || idleDelta > total) return null;
                 return Math.Round(Math.Clamp((total - idleDelta) * 100.0 / total, 0, 100), 1);
             }
+        }
+
+        private static object ReadPerformanceSnapshot()
+        {
+            object[] disks = Array.Empty<object>();
+            object[] networks = Array.Empty<object>();
+            object[] gpus = Array.Empty<object>();
+            string? diskError = null, networkError = null, gpuError = null;
+
+            try
+            {
+                var rows = new System.Collections.Generic.List<object>();
+                using var searcher = new ManagementObjectSearcher("SELECT Name, PercentDiskTime, DiskReadBytesPersec, DiskWriteBytesPersec FROM Win32_PerfFormattedData_PerfDisk_PhysicalDisk");
+                foreach (ManagementObject item in searcher.Get())
+                {
+                    var name = item["Name"]?.ToString() ?? "";
+                    if (name == "_Total") continue;
+                    rows.Add(new
+                    {
+                        name,
+                        activePercent = ReadCounter(item, "PercentDiskTime"),
+                        readBytesPerSecond = ReadCounter(item, "DiskReadBytesPersec"),
+                        writeBytesPerSecond = ReadCounter(item, "DiskWriteBytesPersec")
+                    });
+                }
+                disks = rows.ToArray();
+            }
+            catch (Exception ex) { diskError = ex.Message; }
+
+            try
+            {
+                var rows = new System.Collections.Generic.List<object>();
+                using var searcher = new ManagementObjectSearcher("SELECT Name, BytesReceivedPersec, BytesSentPersec FROM Win32_PerfFormattedData_Tcpip_NetworkInterface");
+                foreach (ManagementObject item in searcher.Get())
+                {
+                    rows.Add(new
+                    {
+                        name = item["Name"]?.ToString() ?? "Interface réseau",
+                        receiveBytesPerSecond = ReadCounter(item, "BytesReceivedPersec"),
+                        sendBytesPerSecond = ReadCounter(item, "BytesSentPersec")
+                    });
+                }
+                networks = rows.ToArray();
+            }
+            catch (Exception ex) { networkError = ex.Message; }
+
+            try
+            {
+                var engines = new System.Collections.Generic.Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                using (var searcher = new ManagementObjectSearcher("SELECT Name, UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"))
+                {
+                    foreach (ManagementObject item in searcher.Get())
+                    {
+                        var instance = item["Name"]?.ToString() ?? "GPU";
+                        var adapter = System.Text.RegularExpressions.Regex.Match(instance, @"luid_[^_]+_[^_]+_phys_\d+").Value;
+                        if (string.IsNullOrEmpty(adapter)) adapter = "GPU";
+                        var utilization = ReadCounter(item, "UtilizationPercentage");
+                        if (!engines.TryGetValue(adapter, out var current) || utilization > current)
+                            engines[adapter] = Math.Clamp(utilization, 0, 100);
+                    }
+                }
+
+                var memoryByAdapter = new System.Collections.Generic.Dictionary<string, (ulong Dedicated, ulong Shared)>(StringComparer.OrdinalIgnoreCase);
+                using (var searcher = new ManagementObjectSearcher("SELECT Name, DedicatedUsage, SharedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory"))
+                {
+                    foreach (ManagementObject item in searcher.Get())
+                    {
+                        var name = item["Name"]?.ToString() ?? "GPU";
+                        memoryByAdapter[name] = (
+                            ReadUnsignedCounter(item, "DedicatedUsage"),
+                            ReadUnsignedCounter(item, "SharedUsage"));
+                    }
+                }
+
+                gpus = engines.Select(pair => (object)new
+                {
+                    adapter = pair.Key,
+                    utilizationPercent = pair.Value,
+                    dedicatedMemoryBytes = (ulong?)null,
+                    sharedMemoryBytes = (ulong?)null
+                }).ToArray();
+                if (gpus.Length == 0 && memoryByAdapter.Count > 0)
+                    gpus = memoryByAdapter.Select(pair => (object)new
+                    {
+                        adapter = pair.Key,
+                        utilizationPercent = (double?)null,
+                        dedicatedMemoryBytes = pair.Value.Dedicated,
+                        sharedMemoryBytes = pair.Value.Shared
+                    }).ToArray();
+            }
+            catch (Exception ex) { gpuError = ex.Message; }
+
+            return new
+            {
+                disks,
+                networks,
+                gpus,
+                diskError,
+                networkError,
+                gpuError,
+                sampledAtUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                source = "Windows WMI performance counters"
+            };
+        }
+
+        private static double ReadCounter(ManagementBaseObject item, string property)
+        {
+            try { return Convert.ToDouble(item[property] ?? 0, CultureInfo.InvariantCulture); }
+            catch { return 0; }
+        }
+
+        private static ulong ReadUnsignedCounter(ManagementBaseObject item, string property)
+        {
+            try { return Convert.ToUInt64(item[property] ?? 0, CultureInfo.InvariantCulture); }
+            catch { return 0; }
         }
 
         public static object ReadRealProcesses()
@@ -127,6 +243,7 @@ namespace Systemes.Native.Core
                     count = list.Count,
                     logicalProcessorCount = Environment.ProcessorCount,
                     systemCpuUsagePercent,
+                    performance = ReadPerformanceSnapshot(),
                     sampleInterval = "Entre deux actualisations",
                     note = "Processus Windows réels. Le CPU est calculé à partir du temps processeur cumulé et de l’intervalle entre deux lectures."
                 };
