@@ -34,6 +34,23 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readSecurityContext() {
+    const response = await request<{
+      userName: string;
+      machineName: string;
+      userSid?: string;
+      authenticationType?: string;
+      isAdministrator: boolean;
+      uacEnabled: boolean | null;
+      consentPromptBehaviorAdmin: number | null;
+      secureDesktopEnabled: boolean | null;
+      source: string;
+      note: string;
+    }>('security/read');
+    if (!response.result) throw new Error('Windows n’a retourné aucun contexte de sécurité.');
+    return response.result;
+  },
+
   async readMemory() {
     const response = await request<{
       totalPhysicalBytes: number;
