@@ -197,6 +197,9 @@ export const SettingsApp: React.FC = () => {
   const [activePowerGuid, setActivePowerGuid] = useState('')
   const [selectedPowerGuid, setSelectedPowerGuid] = useState('')
   const [powerMessage, setPowerMessage] = useState('')
+  const [services, setServices] = useState<{ name: string; displayName: string; state: string; startMode: string; processId: number }[]>([])
+  const [serviceMessage, setServiceMessage] = useState('')
+  const [busyService, setBusyService] = useState<string | null>(null)
   const [updateMessage, setUpdateMessage] = useState('')
 
   useEffect(() => {
@@ -208,6 +211,7 @@ export const SettingsApp: React.FC = () => {
       setActivePowerGuid(value?.activeGuid || '')
       setSelectedPowerGuid(value?.activeGuid || '')
     }).catch((error: unknown) => setPowerMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'system') void NativeBridge.readServices().then((value: any) => setServices(Array.isArray(value?.services) ? value.services : [])).catch((error: unknown) => setServiceMessage(error instanceof Error ? error.message : String(error)))
   }, [section])
 
   const applyPowerScheme = async () => {
@@ -225,6 +229,21 @@ export const SettingsApp: React.FC = () => {
       const result: any = await NativeBridge.checkWindowsUpdate()
       setUpdateMessage(result?.serviceRunning ? 'Service Windows Update actif' : 'Service Windows Update arrêté')
     } catch (error) { setUpdateMessage(error instanceof Error ? error.message : String(error)) }
+  }
+
+  const changeServiceState = async (service: { name: string; displayName: string; state: string }) => {
+    const action = service.state.toLowerCase() === 'running' ? 'stop' : 'start'
+    if (!window.confirm((action === 'stop' ? 'Arrêter' : 'Démarrer') + ' le service Windows « ' + service.displayName + ' » ?')) return
+    setBusyService(service.name)
+    setServiceMessage('')
+    try {
+      await NativeBridge.controlService(service.name, action)
+      const result: any = await NativeBridge.readServices()
+      setServices(Array.isArray(result?.services) ? result.services : [])
+      setServiceMessage('État de « ' + service.displayName + ' » confirmé par Windows.')
+    } catch (error) {
+      setServiceMessage(error instanceof Error ? error.message : String(error))
+    } finally { setBusyService(null) }
   }
 
   const navItems: { id: SettingsSection; label: string; icon: string; desc?: string }[] = [
@@ -402,6 +421,16 @@ export const SettingsApp: React.FC = () => {
               <button type="button" aria-label="Appliquer le plan à Windows" onClick={() => void applyPowerScheme()} disabled={!selectedPowerGuid || selectedPowerGuid === activePowerGuid} style={{ padding: '9px 12px', borderRadius: 8, border: 0, background: 'var(--win-accent)', color: '#fff' }}>Appliquer le plan à Windows</button>
             </div>
             {powerMessage && <div role="status" style={{ fontSize: 12, marginBottom: 12 }}>{powerMessage}</div>}
+
+            <SectionTitle>Services Windows</SectionTitle>
+            <div style={{ maxHeight: 230, overflow: 'auto', border: '1px solid var(--window-border)', borderRadius: 8, marginBottom: 8 }}>
+              {services.map(service => <div key={service.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--window-border)', fontSize: 11 }}>
+                <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }}>{service.displayName || service.name}</div><div style={{ color: 'var(--text-tertiary)' }}>{service.name} · {service.state} · {service.startMode}</div></div>
+                <button type="button" disabled={busyService === service.name || service.startMode === 'Disabled'} onClick={() => void changeServiceState(service)} style={{ flexShrink: 0, padding: '6px 9px', borderRadius: 6 }}>{busyService === service.name ? '…' : service.state.toLowerCase() === 'running' ? 'Arrêter' : 'Démarrer'}</button>
+              </div>)}
+              {services.length === 0 && <div style={{ padding: 12, fontSize: 11, color: 'var(--text-tertiary)' }}>Aucun service chargé ou accès WMI indisponible.</div>}
+            </div>
+            {serviceMessage && <div role="status" style={{ fontSize: 11, marginBottom: 12 }}>{serviceMessage}</div>}
 
             <SectionTitle>Affichage</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
