@@ -34,6 +34,23 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readMemory() {
+    const response = await request<{
+      totalPhysicalBytes: number;
+      availablePhysicalBytes: number;
+      usedPhysicalBytes: number;
+      memoryLoadPercent: number;
+      totalPageFileBytes: number;
+      availablePageFileBytes: number;
+      totalVirtualBytes: number;
+      availableVirtualBytes: number;
+      sampleSource: string;
+      sampledAtUtc: string;
+    }>('memory/read');
+    if (!response.result) throw new Error('Le moteur natif n’a retourné aucune mesure mémoire.');
+    return response.result;
+  },
+
   // ===== Audio (Core Audio réel) =====
   async readAudio() {
     const response = await request('audio/read');
