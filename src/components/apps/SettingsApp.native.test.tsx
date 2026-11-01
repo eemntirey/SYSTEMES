@@ -117,6 +117,21 @@ describe('Settings native integrations', () => {
     expect(nativeMocks.readDevices).toHaveBeenCalledTimes(1)
   })
 
+  it('lists Windows services and confirms an explicit stop operation', async () => {
+    nativeMocks.readServices
+      .mockResolvedValueOnce({ services: [{ name: 'W32Time', displayName: 'Windows Time', state: 'Running', startMode: 'Auto', processId: 100 }] })
+      .mockResolvedValueOnce({ services: [{ name: 'W32Time', displayName: 'Windows Time', state: 'Stopped', startMode: 'Auto', processId: 0 }] })
+    nativeMocks.controlService.mockResolvedValue({ changed: true, name: 'W32Time', state: 'Stopped' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderSettings()
+    fireEvent.click(screen.getAllByText('Système')[0])
+    expect(await screen.findByText(/Windows Time/)).toBeDefined()
+    fireEvent.click(await screen.findByRole('button', { name: 'Arrêter' }))
+    expect(nativeMocks.controlService).toHaveBeenCalledWith('W32Time', 'stop')
+    expect(await screen.findByText(/État de « Windows Time » confirmé/)).toBeDefined()
+  })
+
   it('reads and applies a real Windows power scheme through the native engine', async () => {
     const balanced = '381b4222-f694-41f0-9685-ff5bb260df2e'
     const performance = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
