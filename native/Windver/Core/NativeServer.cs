@@ -85,6 +85,12 @@ namespace Systemes.Native.Core
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();
                             break;
+                        case "services/read":
+                            result = ServiceManager.ReadServices();
+                            break;
+                        case "services/control":
+                            result = ServiceManager.ControlService(args["name"]?.Value<string>() ?? "", args["action"]?.Value<string>() ?? "");
+                            break;
                         case "audio/read":
                             result = AudioManager.ReadRealAudio();
                             break;
