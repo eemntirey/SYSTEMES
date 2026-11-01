@@ -5,28 +5,16 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
-const COM1: u16 = 0x3F8;
+const DEBUG_PORT: u16 = 0xE9;
 
 unsafe fn outb(port: u16, value: u8) {
     // SAFETY: The boot environment is x86_64 and COM1 is the conventional debug UART.
     unsafe { asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags)) };
 }
 
-unsafe fn serial_init() {
-    unsafe {
-        outb(COM1 + 1, 0x00);
-        outb(COM1 + 3, 0x80);
-        outb(COM1, 0x01);
-        outb(COM1 + 1, 0x00);
-        outb(COM1 + 3, 0x03);
-        outb(COM1 + 2, 0xC7);
-        outb(COM1 + 4, 0x0B);
-    }
-}
-
 unsafe fn serial_write(text: &[u8]) {
     for byte in text {
-        unsafe { outb(COM1, *byte) };
+        unsafe { outb(DEBUG_PORT, *byte) };
     }
 }
 
@@ -40,7 +28,7 @@ fn halt() -> ! {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text._start")]
 pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
-    unsafe { serial_init() };
+    
     unsafe { serial_write(b"SYSTEMES: kernel entry reached\r\n") };
 
     if info.is_null() {
