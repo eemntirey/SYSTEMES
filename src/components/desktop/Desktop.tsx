@@ -168,7 +168,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
         position: 'relative',
         width: '100vw',
         height: '100vh',
-        backgroundImage: `linear-gradient(135deg, rgba(10,10,18,0.65) 0%, rgba(30,30,45,0.35) 100%), url(${wallpaper.url})`,
+        backgroundImage: `url(${wallpaper.url})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',

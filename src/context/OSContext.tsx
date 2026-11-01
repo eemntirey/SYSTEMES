@@ -193,6 +193,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       zIndex: 10,
       position: { x: 120, y: 50 },
       size: { width: 880, height: 550 },
+      customData: { initialPath: 'C:/Users/eemntirey' },
     },
   ])
   const [activeWindowId, setActiveWindowId] = useState<string | null>('explorer-init')
