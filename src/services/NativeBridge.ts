@@ -185,6 +185,27 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readWifiStatus() {
+    const response = await request('network/wifi/status');
+    return response.result as { connected: boolean; ssid?: string | null; state?: string | null; signal?: string | null; error?: string };
+  },
+
+  async scanWifi() {
+    const response = await request('network/wifi/scan');
+    return response.result as { networks?: { ssid: string; signal?: string; authentication?: string; encryption?: string; bssid?: string }[]; error?: string };
+  },
+
+  async connectWifi(ssid: string, password?: string) {
+    if (!ssid.trim() || ssid.length > 32) throw new Error('SSID Wi-Fi invalide.');
+    const response = await request('network/wifi/connect', { ssid, password });
+    return response.result;
+  },
+
+  async disconnectWifi() {
+    const response = await request('network/wifi/disconnect');
+    return response.result;
+  },
+
   async fileOperate(action: 'read' | 'write' | 'delete' | 'rename', path: string, content?: string) {
     switch (action) {
       case 'read': return this.readFile(path);
