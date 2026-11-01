@@ -505,7 +505,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                       if (currentPath !== item.path) e.currentTarget.style.background = 'transparent'
                     }}
                   >
-                    <FluentIcon name={item.icon} size={16} />
+                    <FluentIcon name={item.icon || "folder"} size={16} />
                     <span>{item.name}</span>
                   </div>
                 ))}
