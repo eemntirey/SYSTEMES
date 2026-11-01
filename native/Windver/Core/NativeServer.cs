@@ -54,8 +54,7 @@ namespace Systemes.Native.Core
                             result = WindowsUpdateNative.CheckRealUpdates();
                             break;
                         default:
-                            result = new { error = "Unknown method", method };
-                            break;
+                            throw new NotSupportedException($"Unknown native method: {method}");
                     }
 
                     Console.WriteLine(JsonConvert.SerializeObject(new { result, id }));
