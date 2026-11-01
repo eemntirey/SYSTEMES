@@ -167,6 +167,11 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async openRecycleBin() {
+    const response = await request('files/recycle-bin/open');
+    return response.result as { opened: boolean; target: string; note: string };
+  },
+
   async readPermissions(path: string) {
     const response = await request<{ path: string; acl: string; source: string; note: string }>('files/permissions/read', { path });
     if (!response.result) throw new Error('Windows n’a retourné aucune information de permissions.');
