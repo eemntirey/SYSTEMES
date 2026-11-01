@@ -161,7 +161,6 @@ export const SettingsApp: React.FC = () => {
     refreshRate, setRefreshRate,
     focusAssist, setFocusAssist,
     taskbarAlignment, setTaskbarAlignment,
-    locationEnabled, setLocationEnabled,
     cameraEnabled, setCameraEnabled,
     micEnabled, setMicEnabled,
     diagnosticData, setDiagnosticData,
