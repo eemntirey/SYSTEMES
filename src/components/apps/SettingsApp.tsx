@@ -153,7 +153,6 @@ export const SettingsApp: React.FC = () => {
     volume, setVolume,
     isMuted, toggleMute,
     wifiEnabled,
-    bluetoothEnabled, toggleBluetooth,
     nightLight, toggleNightLight,
     batterySaver, toggleBatterySaver,
     fontSize, setFontSize,
@@ -205,6 +204,10 @@ export const SettingsApp: React.FC = () => {
   const [wifiNetworks, setWifiNetworks] = useState<{ ssid: string; signal?: string; authentication?: string; encryption?: string }[]>([])
   const [wifiMessage, setWifiMessage] = useState('')
   const [wifiBusy, setWifiBusy] = useState(false)
+  const [bluetoothStatus, setBluetoothStatus] = useState<{ adapterPresent: boolean; powered: boolean; adapterName?: string | null; devices?: { id: string; name: string; status: string }[] } | null>(null)
+  const [nearbyBluetooth, setNearbyBluetooth] = useState<{ id: string; name: string }[]>([])
+  const [bluetoothMessage, setBluetoothMessage] = useState('')
+  const [bluetoothBusy, setBluetoothBusy] = useState(false)
 
   const refreshWifi = async () => {
     setWifiBusy(true)
@@ -217,6 +220,27 @@ export const SettingsApp: React.FC = () => {
     } catch (error) {
       setWifiMessage(error instanceof Error ? error.message : String(error))
     } finally { setWifiBusy(false) }
+  }
+
+  const refreshBluetooth = async () => {
+    setBluetoothBusy(true)
+    setBluetoothMessage('')
+    try {
+      const result = await NativeBridge.scanBluetooth(6)
+      setNearbyBluetooth(Array.isArray(result?.devices) ? result.devices : [])
+      if (result?.error) setBluetoothMessage(result.error)
+    } catch (error) { setBluetoothMessage(error instanceof Error ? error.message : String(error)) }
+    finally { setBluetoothBusy(false) }
+  }
+
+  const pairBluetooth = async (device: { id: string; name: string }) => {
+    if (!window.confirm('Demander à Windows de coupler « ' + device.name + ' » ?')) return
+    try {
+      const result: any = await NativeBridge.pairBluetoothDevice(device.id)
+      setBluetoothMessage(result?.paired ? 'Appairage confirmé par Windows.' : 'Windows n’a pas confirmé l’appairage : ' + (result?.status || 'inconnu'))
+      const status = await NativeBridge.readBluetoothStatus()
+      setBluetoothStatus(status)
+    } catch (error) { setBluetoothMessage(error instanceof Error ? error.message : String(error)) }
   }
 
   const connectToWifi = async (ssid: string, connected: boolean) => {
@@ -234,6 +258,7 @@ export const SettingsApp: React.FC = () => {
   useEffect(() => {
     if (section === 'about') void NativeBridge.readHardware().then(setHardwareInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'bluetooth') void NativeBridge.readBluetoothStatus().then(setBluetoothStatus).catch((error: unknown) => setBluetoothMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'network') void refreshWifi()
     if (section === 'system') void NativeBridge.readPowerSchemes().then((value: any) => {
       const schemes = Array.isArray(value?.schemes) ? value.schemes : []
@@ -511,37 +536,20 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Bluetooth et appareils</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos appareils connectés</p>
 
-            <SettingRow icon="sliders" title="Bluetooth" desc={bluetoothEnabled ? 'Activé — visible par d\'autres appareils' : 'Désactivé'} toggle={bluetoothEnabled} onToggle={toggleBluetooth} />
+            <SettingRow icon="sliders" title="Bluetooth" desc={bluetoothStatus?.adapterPresent ? (bluetoothStatus.powered ? 'Adaptateur actif : ' + (bluetoothStatus.adapterName || 'Bluetooth') : 'Adaptateur détecté mais non actif') : 'Adaptateur Bluetooth non détecté'} />
+            <div style={{ display: 'flex', gap: 8, margin: '10px 0', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => void refreshBluetooth()} disabled={bluetoothBusy}>{bluetoothBusy ? 'Recherche…' : 'Rechercher des appareils Bluetooth'}</button>
+              <button type="button" onClick={() => void NativeBridge.openWindowsSettings('bluetooth')}>Paramètres Bluetooth Windows</button>
+            </div>
+            {bluetoothMessage && <div role="status" style={{ padding: 8, fontSize: 12 }}>{bluetoothMessage}</div>}
+            <SectionTitle>Appareils Bluetooth connus par Windows</SectionTitle>
+            {(bluetoothStatus?.devices || []).map(device => <div key={device.id} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{device.name} · {device.status}</div>)}
+            <SectionTitle>Appareils Bluetooth à proximité</SectionTitle>
+            {nearbyBluetooth.map(device => <div key={device.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}><span>{device.name}</span><button type="button" onClick={() => void pairBluetooth(device)}>Coupler</button></div>)}
             <SectionTitle>Périphériques détectés par Windows</SectionTitle>
             {(deviceInfo?.usb || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
             {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-
-            {bluetoothEnabled && (
-              <>
-                <SectionTitle>Appareils couplés</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-                {[
-                  { name: 'Surface Headphones 2+', type: 'Casque audio', status: 'Connecté', battery: '78%', icon: 'volume' },
-                  { name: 'Magic Mouse', type: 'Souris Bluetooth', status: 'Connecté', battery: '55%', icon: 'sliders' },
-                  { name: 'iPad Pro', type: 'Tablette', status: 'Couplé, non connecté', battery: null, icon: 'square' },
-                ].map(device => (
-                  <div key={device.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                      <FluentIcon name={device.icon} size={20} color="var(--win-accent)" />
-                      <div>
-                        <div style={{ fontSize: '13.5px', fontWeight: 500 }}>{device.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{device.type} · {device.status}{device.battery ? ` · Batterie ${device.battery}` : ''}</div>
-                      </div>
-                    </div>
-                    <button style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.08)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.18)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.2)'; }}>Déconnecter</button>
-                  </div>
-                ))}
-
-                <SectionTitle>Ajouter un appareil</SectionTitle>
-                <SettingRow icon="plus" title="Ajouter un appareil Bluetooth ou autre" desc="Casques, claviers, stylos, contrôleurs et autres appareils" onClick={() => addNotification('Bluetooth', 'Ajouter un appareil', 'Paramètres', 'plus')} />
-              </>
-            )}
 
             <SectionTitle>Autres appareils</SectionTitle>
             <SettingRow icon="sliders" title="Imprimantes et scanners" desc="HP LaserJet Pro — Prête" onClick={() => addNotification('Appareils', 'Imprimantes et scanners', 'Paramètres', 'sliders')} />
