@@ -138,6 +138,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
 
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, boot_info_size, (VOID **)&boot_info);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate boot information");
+    debug_text("SYSTEMES_UEFI_BOOT_INFO_ALLOCATED\\r\\n");
 
     status = uefi_call_wrapper(st->BootServices->LocateProtocol, 3, &GraphicsOutputProtocol, NULL, (VOID **)&gop);
     if (!EFI_ERROR(status) && gop && gop->Mode && gop->Mode->Info) {
@@ -148,14 +149,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
         pixel_format = (UINT32)gop->Mode->Info->PixelFormat;
     }
 
+    debug_text("SYSTEMES_UEFI_GOP_LOOKUP_DONE\\r\\n");
     acpi_rsdp = find_acpi_rsdp(st);
+    debug_text("SYSTEMES_UEFI_ACPI_LOOKUP_DONE\\r\\n");
     debug_text(framebuffer ? "SYSTEMES_UEFI_GOP_OK\r\n" : "SYSTEMES_UEFI_GOP_UNAVAILABLE\r\n");
     debug_text(acpi_rsdp ? "SYSTEMES_UEFI_ACPI_OK\r\n" : "SYSTEMES_UEFI_ACPI_UNAVAILABLE\r\n");
 
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, memory_map_size, (VOID **)&memory_map);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate UEFI memory map buffer");
+    debug_text("SYSTEMES_UEFI_MAP_BUFFER_ALLOCATED\\r\\n");
 
     for (index = 0; index < 4; ++index) {
+        debug_text("SYSTEMES_UEFI_GET_MAP_START\\r\\n");
         memory_map_size = MEMORY_MAP_CAPACITY;
         status = uefi_call_wrapper(st->BootServices->GetMemoryMap, 5, &memory_map_size, memory_map, &map_key, &descriptor_size, &descriptor_version);
         if (status == EFI_BUFFER_TOO_SMALL) fail(st, L"SYSTEMES: memory map buffer capacity exceeded");
