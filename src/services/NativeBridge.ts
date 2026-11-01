@@ -41,6 +41,12 @@ export const NativeBridge = {
       userSid?: string;
       authenticationType?: string;
       isAdministrator: boolean;
+      isAuthenticated: boolean;
+      isSystem: boolean;
+      isGuest: boolean;
+      impersonationLevel: string;
+      groups: { sid: string; name: string }[];
+      groupCount: number;
       uacEnabled: boolean | null;
       consentPromptBehaviorAdmin: number | null;
       secureDesktopEnabled: boolean | null;
