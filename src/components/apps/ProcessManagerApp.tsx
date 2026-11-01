@@ -13,14 +13,26 @@ interface NativeProcess {
   startTimeUtcTicks?: string | null
   executablePath?: string | null
 }
+interface NativePerformanceSnapshot {
+  disks?: { name: string; activePercent: number; readBytesPerSecond: number; writeBytesPerSecond: number }[]
+  networks?: { name: string; receiveBytesPerSecond: number; sendBytesPerSecond: number }[]
+  gpus?: { adapter: string; utilizationPercent: number | null; dedicatedMemoryBytes: number | null; sharedMemoryBytes: number | null }[]
+  diskError?: string | null
+  networkError?: string | null
+  gpuError?: string | null
+  sampledAtUtc?: string
+  source?: string
+}
 interface ProcessSnapshot {
   processes?: NativeProcess[]
   count?: number
   logicalProcessorCount?: number
   systemCpuUsagePercent?: number | null
+  performance?: NativePerformanceSnapshot
   note?: string
 }
 type NativeMemorySnapshot = Awaited<ReturnType<typeof NativeBridge.readMemory>>
+const formatRate = (bytesPerSecond: number) => (bytesPerSecond / (1024 ** 2)).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mio/s'
 const formatGiB = (bytes: number) => (bytes / (1024 ** 3)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })
 type SortMode = 'cpu' | 'memory' | 'name'
 
@@ -45,6 +57,7 @@ export const ProcessManagerApp: React.FC = () => {
   const [logicalProcessors, setLogicalProcessors] = useState<number | null>(null)
   const [systemCpuPercent, setSystemCpuPercent] = useState<number | null>(null)
   const [memory, setMemory] = useState<NativeMemorySnapshot | null>(null)
+  const [performance, setPerformance] = useState<NativePerformanceSnapshot | null>(null)
   const refreshing = useRef(false)
 
   const refresh = useCallback(async (silent = false) => {
@@ -65,6 +78,7 @@ export const ProcessManagerApp: React.FC = () => {
       setProcesses(snapshot.processes)
       setLogicalProcessors(snapshot.logicalProcessorCount ?? null)
       setSystemCpuPercent(Number.isFinite(snapshot.systemCpuUsagePercent) ? snapshot.systemCpuUsagePercent! : null)
+      setPerformance(snapshot.performance ?? null)
 
       if (memoryResult.status === 'fulfilled') {
         const memorySnapshot = memoryResult.value
@@ -172,6 +186,23 @@ export const ProcessManagerApp: React.FC = () => {
         </div>
       </div>
 
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ padding: '11px 14px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 170, flex: 1 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>GPU · moteur le plus actif</div>
+          <div style={{ fontSize: 19, fontWeight: 700 }}>{performance?.gpus?.some(gpu => gpu.utilizationPercent != null) ? `${Math.max(...performance.gpus.map(gpu => gpu.utilizationPercent ?? 0)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : 'Indisponible'}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{performance?.gpus?.length ? `${performance.gpus.length} adaptateur(s) / moteur(s) détecté(s)` : performance?.gpuError || 'Compteur GPU Windows non exposé'}</div>
+        </div>
+        <div style={{ padding: '11px 14px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 170, flex: 1 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Disque · activité maximale</div>
+          <div style={{ fontSize: 19, fontWeight: 700 }}>{performance?.disks?.length ? `${Math.max(...performance.disks.map(disk => disk.activePercent)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : 'Indisponible'}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{performance?.disks?.length ? formatRate(performance.disks.reduce((sum, disk) => sum + disk.readBytesPerSecond + disk.writeBytesPerSecond, 0)) + ' lecture + écriture' : performance?.diskError || 'Compteur disque indisponible'}</div>
+        </div>
+        <div style={{ padding: '11px 14px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 170, flex: 1 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Réseau · réception / envoi</div>
+          <div style={{ fontSize: 19, fontWeight: 700 }}>{performance?.networks?.length ? formatRate(performance.networks.reduce((sum, item) => sum + item.receiveBytesPerSecond, 0)) : 'Indisponible'}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{performance?.networks?.length ? `${formatRate(performance.networks.reduce((sum, item) => sum + item.sendBytesPerSecond, 0))} envoyés` : performance?.networkError || 'Compteur réseau indisponible'}</div>
+        </div>
+      </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 8, background: 'var(--flyout-card)', flex: 1, minWidth: 220 }}>
           <FluentIcon name="search" size={16} />
