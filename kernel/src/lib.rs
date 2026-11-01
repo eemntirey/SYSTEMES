@@ -6,7 +6,7 @@
 //! dependencies. The UEFI loader will populate BootInfo before transferring control.
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;
-pub const BOOT_INFO_VERSION: u32 = 1;
+pub const BOOT_INFO_VERSION: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,7 +15,12 @@ pub struct BootInfo {
     pub version: u32,
     pub reserved: u32,
     pub memory_map_address: u64,
+    pub memory_map_size: u64,
     pub memory_map_entries: u64,
+    pub memory_map_descriptor_size: u64,
+    pub memory_map_descriptor_version: u32,
+    pub reserved2: u32,
+    pub acpi_rsdp_address: u64,
     pub framebuffer_address: u64,
     pub framebuffer_width: u32,
     pub framebuffer_height: u32,
@@ -29,6 +34,7 @@ pub enum BootInfoError {
     UnsupportedVersion,
     MissingMemoryMap,
     InvalidFramebuffer,
+    InvalidMemoryMapDescriptor,
 }
 
 impl BootInfo {
@@ -40,8 +46,13 @@ impl BootInfo {
         if self.version != BOOT_INFO_VERSION {
             return Err(BootInfoError::UnsupportedVersion);
         }
-        if self.memory_map_address == 0 || self.memory_map_entries == 0 {
+        if self.memory_map_address == 0 || self.memory_map_size == 0 || self.memory_map_entries == 0 {
             return Err(BootInfoError::MissingMemoryMap);
+        }
+        if self.memory_map_descriptor_size == 0
+            || self.memory_map_entries * self.memory_map_descriptor_size != self.memory_map_size
+        {
+            return Err(BootInfoError::InvalidMemoryMapDescriptor);
         }
         let framebuffer_present = self.framebuffer_address != 0;
         if framebuffer_present
@@ -68,7 +79,12 @@ mod tests {
             version: BOOT_INFO_VERSION,
             reserved: 0,
             memory_map_address: 0x1000,
+            memory_map_size: 32 * 48,
             memory_map_entries: 32,
+            memory_map_descriptor_size: 48,
+            memory_map_descriptor_version: 1,
+            reserved2: 0,
+            acpi_rsdp_address: 0,
             framebuffer_address: 0x8000,
             framebuffer_width: 1280,
             framebuffer_height: 720,
