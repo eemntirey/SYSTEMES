@@ -101,6 +101,7 @@ jobs:
               @{ id = "phase2-network"; method = "network/read"; params = @{} },
               @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
               @{ id = "phase2-services"; method = "services/read"; params = @{} },
+              @{ id = "phase2-protected-service-stop"; method = "services/control"; params = @{ name = "RpcSs"; action = "stop" } },
               @{ id = "phase2-security"; method = "security/read"; params = @{} },
               @{ id = "phase2-update"; method = "update/check"; params = @{} },
               @{ id = "phase2-file-dir-create"; method = "files/create-directory"; params = @{ path = $testDir } },
@@ -165,6 +166,7 @@ jobs:
             }
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
             if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
+            if (-not $responses["phase2-protected-service-stop"].error) { throw "services/control allowed stopping a protected Windows RPC service." }
             if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
             if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
