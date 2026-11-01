@@ -1,7 +1,28 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { WALLPAPERS } from '../../data/constants'
+import { NativeBridge } from '../../services/NativeBridge'
+
+interface HardwareSnapshot {
+  cpuName?: string | null
+  cpuCores?: number | null
+  cpuThreads?: number | null
+  ramTotalGB?: number | null
+  gpuName?: string | null
+  gpuMemoryBytes?: number | null
+  disks?: Array<{ name: string; totalBytes: number; availableBytes: number; format: string }>
+  windowsVersion?: string
+  note?: string
+  error?: string
+}
+
+interface UpdateSnapshot {
+  serviceRunning?: boolean
+  updatesAvailable?: boolean | null
+  note?: string
+  error?: string
+}
 
 type SettingsSection =
   | 'home'
@@ -191,6 +212,44 @@ export const SettingsApp: React.FC = () => {
 
   const [section, setSection] = useState<SettingsSection>('home')
   const [searchQuery, setSearchQuery] = useState('')
+  const [hardwareSnapshot, setHardwareSnapshot] = useState<HardwareSnapshot | null>(null)
+  const [hardwareLoading, setHardwareLoading] = useState(false)
+  const [hardwareError, setHardwareError] = useState<string | null>(null)
+  const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
+  const [updateLoading, setUpdateLoading] = useState(false)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (section !== 'about') return
+    let cancelled = false
+    setHardwareLoading(true)
+    setHardwareError(null)
+    NativeBridge.readHardware()
+      .then((result) => {
+        if (!cancelled) setHardwareSnapshot(result as HardwareSnapshot)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setHardwareError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (!cancelled) setHardwareLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [section])
+
+  const handleCheckWindowsUpdate = async () => {
+    setUpdateLoading(true)
+    setUpdateError(null)
+    try {
+      const result = await NativeBridge.checkWindowsUpdate() as UpdateSnapshot
+      setUpdateSnapshot(result)
+    } catch (error) {
+      setUpdateSnapshot(null)
+      setUpdateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUpdateLoading(false)
+    }
+  }
 
   const navItems: { id: SettingsSection; label: string; icon: string; desc?: string }[] = [
     { id: 'home', label: 'Accueil', icon: 'pc' },
@@ -757,36 +816,31 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Windows Update</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Maintenir Windows à jour</p>
 
-            {/* Status banner */}
-            <div style={{ padding: '20px 24px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,212,255,0.08))', border: '1px solid rgba(16,185,129,0.4)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <FluentIcon name="check" size={24} color="#10b981" />
+            <div style={{ padding: '20px 24px', borderRadius: '14px', background: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--win-accent-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FluentIcon name="refresh" size={24} color="var(--win-accent)" />
               </div>
-              <div>
-                <div style={{ fontSize: '16px', fontWeight: 600, color: '#10b981' }}>Windows est à jour</div>
-                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>Dernière vérification : aujourd'hui à {new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '16px', fontWeight: 600 }}>
+                  {updateSnapshot
+                    ? updateSnapshot.serviceRunning ? 'Service Windows Update actif' : 'Service Windows Update arrêté'
+                    : updateError ? 'Vérification impossible' : 'État non vérifié'}
+                </div>
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                  {updateError ?? updateSnapshot?.note ?? 'Le contrôle interroge le service Windows Update sur cet ordinateur.'}
+                </div>
               </div>
-              <button style={{ marginLeft: 'auto', padding: '10px 20px', borderRadius: '10px', border: '1px solid rgba(16,185,129,0.35)', background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(0,212,255,0.1))', color: '#10b981', fontSize: '13px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 4px 16px rgba(16,185,129,0.15)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(16,185,129,0.25), rgba(0,212,255,0.15))'; e.currentTarget.style.boxShadow = '0 6px 24px rgba(16,185,129,0.3)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(0,212,255,0.1))'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(16,185,129,0.15)'; }}
-              >Rechercher des mises à jour</button>
+              <button
+                disabled={updateLoading}
+                style={{ padding: '10px 20px', borderRadius: '10px', border: '1px solid var(--window-border)', background: 'var(--win-accent-light)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, cursor: updateLoading ? 'wait' : 'pointer', opacity: updateLoading ? 0.65 : 1 }}
+                onClick={handleCheckWindowsUpdate}
+              >{updateLoading ? 'Vérification…' : 'Vérifier le service'}</button>
             </div>
 
-            {/* Update history */}
-            <SectionTitle>Historique des mises à jour</SectionTitle>
-            {[
-              { name: 'Mise à jour cumulative Windows 11 (KB5044384)', date: '29 oct. 2026', type: 'Qualité', size: '486 Mo' },
-              { name: 'Mise à jour de définitions Windows Defender', date: '31 oct. 2026', type: 'Sécurité', size: '42 Mo' },
-              { name: 'Mise à jour du pilote Intel® Wi-Fi 6E AX210', date: '28 oct. 2026', type: 'Pilote', size: '12 Mo' },
-            ].map(upd => (
-              <div key={upd.name} style={{ padding: '12px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{upd.name}</div>
-                  <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>Installé le {upd.date} · {upd.size}</div>
-                </div>
-                <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '10px', backgroundColor: upd.type === 'Sécurité' ? 'rgba(239,68,68,0.12)' : 'var(--win-accent-light)', color: upd.type === 'Sécurité' ? '#ef4444' : 'var(--win-accent)', fontWeight: 600, flexShrink: 0 }}>{upd.type}</span>
-              </div>
-            ))}
+            <SectionTitle>Portée du contrôle</SectionTitle>
+            <div style={{ padding: '16px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Cette vérification lit uniquement l'état réel du service Windows Update. La recherche du catalogue de mises à jour, le téléchargement et l'installation ne sont pas encore implémentés. Aucun statut « Windows est à jour » n'est déduit de l'état du service.
+            </div>
 
             <SectionTitle>Options avancées</SectionTitle>
             <SettingRow icon="clock" title="Mises à jour actives" desc="Choisissez quand les mises à jour sont installées" toggle={autoUpdate} onToggle={() => setAutoUpdate(!autoUpdate)} />
@@ -803,50 +857,46 @@ export const SettingsApp: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Spécifications de l'appareil et de Windows 11</p>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '16px' }}></div>
 
-            {/* Device banner */}
-            <div style={{ padding: '24px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(0,120,212,0.12), rgba(139,92,246,0.12))', border: '1px solid rgba(0,120,212,0.35)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-              <FluentIcon name="pc" size={52} />
-              <div>
-                <div style={{ fontSize: '18px', fontWeight: 700 }}>DESKTOP-WIN11-PRO</div>
-                <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>Windows 11 Professionnel · Build 26100.1742</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px' }}>AMD Ryzen 9 7950X · 32 Go DDR5 · GPU RTX 4090</div>
+            <div style={{ padding: '24px', borderRadius: '14px', background: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '20px' }}>
+              <div style={{ fontSize: '17px', fontWeight: 700, marginBottom: '6px' }}>Diagnostic matériel réel</div>
+              <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                {hardwareLoading ? 'Lecture des informations matérielles…' : hardwareError ? hardwareError : hardwareSnapshot?.note ?? 'Les caractéristiques sont lues depuis Windows via le moteur natif.'}
               </div>
+              {hardwareLoading ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Chargement en cours…</div>
+              ) : hardwareError ? (
+                <div role="alert" style={{ fontSize: '13px', color: '#f87171' }}>Moteur natif indisponible : {hardwareError}</div>
+              ) : hardwareSnapshot ? (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {[
+                    ['Processeur', hardwareSnapshot.cpuName ?? 'Non disponible'],
+                    ['Cœurs / threads', hardwareSnapshot.cpuCores != null ? `${hardwareSnapshot.cpuCores} cœurs / ${hardwareSnapshot.cpuThreads ?? '—'} threads` : 'Non disponible'],
+                    ['Mémoire vive', hardwareSnapshot.ramTotalGB != null ? `${hardwareSnapshot.ramTotalGB} Go` : 'Non disponible'],
+                    ['Carte graphique', hardwareSnapshot.gpuName ?? 'Non disponible'],
+                    ['Mémoire GPU', hardwareSnapshot.gpuMemoryBytes != null ? `${Math.round(hardwareSnapshot.gpuMemoryBytes / (1024 * 1024))} Mo` : 'Non communiquée par le pilote'],
+                    ['Système', hardwareSnapshot.windowsVersion ?? 'Non disponible'],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '12px', fontSize: '13px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                      <span>{value}</span>
+                    </div>
+                  ))}
+                  <SectionTitle>Volumes détectés</SectionTitle>
+                  {(hardwareSnapshot.disks ?? []).length > 0 ? hardwareSnapshot.disks?.map((disk) => (
+                    <div key={disk.name} style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '12px', fontSize: '13px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{disk.name}</span>
+                      <span>{(disk.totalBytes / (1024 ** 3)).toFixed(1)} Go · {(disk.availableBytes / (1024 ** 3)).toFixed(1)} Go libres · {disk.format}</span>
+                    </div>
+                  )) : <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Aucun volume prêt détecté.</div>}
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Aucune lecture matérielle disponible. Lancez SYSTEMES depuis l'hôte Windows pour accéder au moteur natif.</div>
+              )}
             </div>
 
-            <SectionTitle>Spécifications de l'appareil</SectionTitle>
-            <div style={{ padding: '20px', borderRadius: '12px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px' }}>
-              {[
-                ['Nom de l\'appareil', 'DESKTOP-WIN11-PRO'],
-                ['Processeur', 'AMD Ryzen 9 7950X 16-Core Processor 4.50 GHz'],
-                ['Mémoire vive (RAM)', '32,0 Go (31,8 Go utilisable) DDR5-6000'],
-                ['Carte graphique', 'NVIDIA GeForce RTX 4090 24 Go GDDR6X'],
-                ['Stockage', 'Samsung 990 Pro NVMe 2 To (SSD)'],
-                ['ID de périphérique', 'C4A2F3D8-1B5E-4F6A-9C2D-7E8B3F0A1C4D'],
-                ['ID de produit', '00330-80000-00000-AAOEM'],
-                ['Type de système', 'Système d\'exploitation 64 bits, processeur x64'],
-                ['Stylet et entrée tactile', 'Ce PC possède une assistance tactile à 10 points'],
-              ].map(([label, value]) => (
-                <div key={label as string} style={{ display: 'grid', gridTemplateColumns: '200px 1fr', marginBottom: '10px', fontSize: '13px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-                  <span style={{ fontWeight: 400 }}>{value}</span>
-                </div>
-              ))}
-            </div>
-
-            <SectionTitle>Spécifications de Windows</SectionTitle>
-            <div style={{ padding: '20px', borderRadius: '12px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px' }}>
-              {[
-                ['Édition', 'Windows 11 Professionnel'],
-                ['Version', '24H2'],
-                ['Installé le', '31/10/2026'],
-                ['Build du système d\'exploitation', '26100.1742'],
-                ['Expérience', 'Windows Feature Experience Pack 1000.26100.32.0'],
-              ].map(([label, value]) => (
-                <div key={label as string} style={{ display: 'grid', gridTemplateColumns: '200px 1fr', marginBottom: '10px', fontSize: '13px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-                  <span style={{ fontWeight: 400 }}>{value}</span>
-                </div>
-              ))}
+            <SectionTitle>Informations système</SectionTitle>
+            <div style={{ padding: '16px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Les identifiants de périphérique, l'édition exacte, la date d'installation et les fonctions tactiles ne sont pas encore exposés par le moteur natif. Ils ne sont donc pas affichés comme des valeurs vérifiées.
             </div>
 
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
