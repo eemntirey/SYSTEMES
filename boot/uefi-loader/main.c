@@ -139,7 +139,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, boot_info_size, (VOID **)&boot_info);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate boot information");
 
-    status = LibLocateProtocol(&GraphicsOutputProtocol, (VOID **)&gop);
+    status = uefi_call_wrapper(st->BootServices->LocateProtocol, 3, &GraphicsOutputProtocol, NULL, (VOID **)&gop);
     if (!EFI_ERROR(status) && gop && gop->Mode && gop->Mode->Info) {
         framebuffer = gop->Mode->FrameBufferBase;
         width = gop->Mode->Info->HorizontalResolution;
