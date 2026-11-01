@@ -79,3 +79,69 @@ jobs:
           }
 
           Write-Host "Native engine process started and answered the JSON handshake."
+
+      - name: Launch WPF host and verify WebView2 React rendering
+        shell: pwsh
+        run: |
+          $hostExe = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/SYSTEMES.WindowsHost.exe"
+          $resultPath = Join-Path $env:RUNNER_TEMP "systemes-ui-smoke.json"
+          $screenshotPath = Join-Path $env:GITHUB_WORKSPACE "systemes-ui-smoke.png"
+          if (-not (Test-Path $hostExe)) {
+            throw "WPF host executable missing: $hostExe"
+          }
+
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $env:SYSTEMES_UI_SMOKE_RESULT = $resultPath
+          $hostProcess = Start-Process -FilePath $hostExe -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(75)
+            while (-not (Test-Path $resultPath) -and (Get-Date) -lt $deadline) {
+              if ($hostProcess.HasExited) {
+                throw "WPF host exited early with code $($hostProcess.ExitCode)"
+              }
+              Start-Sleep -Seconds 1
+            }
+
+            if (-not (Test-Path $resultPath)) {
+              throw "Timed out waiting for WebView2/React render result."
+            }
+
+            $uiResult = Get-Content $resultPath -Raw | ConvertFrom-Json
+            if ($uiResult.status -ne "ready") {
+              throw "WPF/WebView2 UI smoke test failed: $($uiResult.error)"
+            }
+            if ($uiResult.rootChildren -lt 1 -or $uiResult.bodyTextLength -lt 1) {
+              throw "React root is empty: $($uiResult | ConvertTo-Json -Compress)"
+            }
+
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            $graphics.Dispose()
+            $bitmap.Dispose()
+
+            if ((Get-Item $screenshotPath).Length -lt 10000) {
+              throw "UI screenshot is unexpectedly small; graphical rendering may have failed."
+            }
+
+            Write-Host "WPF window launched and WebView2 rendered React UI: $($uiResult | ConvertTo-Json -Compress)"
+            Write-Host "Screenshot saved: $screenshotPath"
+          }
+          finally {
+            if (-not $hostProcess.HasExited) {
+              Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item Env:SYSTEMES_UI_SMOKE_RESULT -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload Windows UI smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: systemes-windows-ui-smoke
+          path: systemes-ui-smoke.png
+          if-no-files-found: ignore
