@@ -160,9 +160,6 @@ export const SettingsApp: React.FC = () => {
     refreshRate, setRefreshRate,
     focusAssist, setFocusAssist,
     taskbarAlignment, setTaskbarAlignment,
-    cameraEnabled, setCameraEnabled,
-    micEnabled, setMicEnabled,
-    diagnosticData, setDiagnosticData,
     autoUpdate, setAutoUpdate,
     notificationsEnabled, toggleNotifications,
     addNotification,
@@ -179,8 +176,6 @@ export const SettingsApp: React.FC = () => {
     captionsEnabled, toggleCaptions,
     audioAlertsEnabled, toggleAudioAlerts,
     voiceAccessEnabled, toggleVoiceAccess,
-    personalizedExperiences, togglePersonalizedExperiences,
-    activityHistory, toggleActivityHistory,
     syncSettings, toggleSyncSettings,
     setTimeAutomatically, toggleSetTimeAutomatically,
     setTimeZoneAutomatically, toggleSetTimeZoneAutomatically,
@@ -200,6 +195,7 @@ export const SettingsApp: React.FC = () => {
   const [serviceMessage, setServiceMessage] = useState('')
   const [busyService, setBusyService] = useState<string | null>(null)
   const [updateMessage, setUpdateMessage] = useState('')
+  const [securityInfo, setSecurityInfo] = useState<any>(null)
   const [wifiStatus, setWifiStatus] = useState<{ connected: boolean; ssid?: string | null; state?: string | null; signal?: string | null } | null>(null)
   const [wifiNetworks, setWifiNetworks] = useState<{ ssid: string; signal?: string; authentication?: string; encryption?: string }[]>([])
   const [wifiMessage, setWifiMessage] = useState('')
@@ -257,6 +253,7 @@ export const SettingsApp: React.FC = () => {
 
   useEffect(() => {
     if (section === 'about') void NativeBridge.readHardware().then(setHardwareInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'privacy') void NativeBridge.readSecurityContext().then(setSecurityInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth') void NativeBridge.readBluetoothStatus().then(setBluetoothStatus).catch((error: unknown) => setBluetoothMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'network') void refreshWifi()
@@ -831,21 +828,31 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Confidentialité et sécurité</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Contrôlez vos données et autorisations</p>
 
+            {securityInfo && <div role="status" style={{ padding: 16, borderRadius: 12, background: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>Contexte de sécurité Windows</div>
+              <div style={{ fontSize: 12 }}>Compte : {securityInfo.userName} · Appareil : {securityInfo.machineName}</div>
+              <div style={{ fontSize: 12 }}>Session administrateur élevée : {securityInfo.isAdministrator ? 'Oui' : 'Non'}</div>
+              <div style={{ fontSize: 12 }}>UAC : {securityInfo.uacEnabled == null ? 'Indisponible' : securityInfo.uacEnabled ? 'Activé' : 'Désactivé'}</div>
+              <div style={{ fontSize: 12 }}>Bureau sécurisé : {securityInfo.secureDesktopEnabled == null ? 'Indisponible' : securityInfo.secureDesktopEnabled ? 'Activé' : 'Désactivé'}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6 }}>{securityInfo.source} · lecture seule</div>
+            </div>}
+            <button type="button" onClick={() => void NativeBridge.openWindowsSettings('windows-security')} style={{ padding: 9, marginBottom: 12 }}>Ouvrir Sécurité Windows</button>
+
             <SectionTitle>Sécurité Windows</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="lock" title="Sécurité Windows" desc="Protection antivirus, pare-feu, performances" onClick={() => addNotification('Confidentialité', 'Sécurité Windows', 'Paramètres', 'lock')} badge="Protégé ✓" />
-            <SettingRow icon="lock" title="Chiffrement BitLocker" desc="Lecteur C: chiffré" onClick={() => addNotification('Confidentialité', 'BitLocker', 'Paramètres', 'lock')} badge="Activé" />
+            <SettingRow icon="lock" title="Sécurité Windows" desc="Ouvrir le tableau de bord de sécurité Windows" onClick={() => { void NativeBridge.openWindowsSettings('windows-security') }} />
+            <SettingRow icon="lock" title="Chiffrement de l’appareil" desc="Consulter l’état réel dans les paramètres Windows" onClick={() => { void NativeBridge.openWindowsSettings('device-encryption') }} />
 
             <SectionTitle>Autorisations Windows</SectionTitle>
-            <SettingRow icon="sliders" title="Données de diagnostic" desc="Envoyer des données de diagnostic à Microsoft" toggle={diagnosticData} onToggle={() => setDiagnosticData(!diagnosticData)} />
-            <SettingRow icon="sliders" title="Expériences personnalisées" desc="Personnaliser les publicités et les recommandations" toggle={personalizedExperiences} onToggle={togglePersonalizedExperiences} />
-            <SettingRow icon="sliders" title="Historique des activités" desc="Microsoft collecte les activités de cet appareil" toggle={activityHistory} onToggle={toggleActivityHistory} />
+            <SettingRow icon="sliders" title="Données de diagnostic" desc="Gérer les autorisations directement dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-diagnostics') }} />
+            <SettingRow icon="sliders" title="Expériences personnalisées" desc="Consulter les contrôles de confidentialité Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy') }} />
+            <SettingRow icon="sliders" title="Historique des activités" desc="Ouvrir les paramètres Windows correspondants" onClick={() => { void NativeBridge.openWindowsSettings('privacy-activity') }} />
 
             <SectionTitle>Autorisations des applications</SectionTitle>
             <SettingRow icon="sliders" title="Position" desc="Ouvrir les paramètres de confidentialité de localisation de Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-location') }} />
-            <SettingRow icon="sliders" title="Caméra" desc="Certaines applications peuvent accéder à la caméra" toggle={cameraEnabled} onToggle={() => setCameraEnabled(!cameraEnabled)} />
-            <SettingRow icon="volume" title="Microphone" desc="Certaines applications peuvent accéder au microphone" toggle={micEnabled} onToggle={() => setMicEnabled(!micEnabled)} />
-            <SettingRow icon="bell" title="Notifications" desc="Envoyer des notifications depuis les applications" toggle={notificationsEnabled} onToggle={toggleNotifications} />
+            <SettingRow icon="sliders" title="Caméra" desc="Gérer l’accès à la caméra dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-camera') }} />
+            <SettingRow icon="volume" title="Microphone" desc="Gérer l’accès au microphone dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-microphone') }} />
+            <SettingRow icon="bell" title="Notifications" desc="Gérer les autorisations dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-notifications') }} />
             <SettingRow icon="sliders" title="Informations du compte" desc="Nom, image et autres informations du compte" onClick={() => addNotification('Confidentialité', 'Informations du compte', 'Paramètres', 'sliders')} />
             <SettingRow icon="sliders" title="Contacts" desc="Accès aux contacts depuis les applications" onClick={() => addNotification('Confidentialité', 'Contacts', 'Paramètres', 'sliders')} />
             <SettingRow icon="clock" title="Historique des appels" desc="Accès à l'historique des appels depuis les applications" onClick={() => addNotification('Confidentialité', 'Historique des appels', 'Paramètres', 'clock')} />
