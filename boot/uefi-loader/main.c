@@ -32,6 +32,12 @@ static VOID serial_out(UINT16 port, UINT8 value) {
     __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+static UINT8 serial_in(UINT16 port) {
+    UINT8 value;
+    __asm__ __volatile__("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
 static VOID serial_init(VOID) {
     serial_out(0x3F9, 0x00);
     serial_out(0x3FB, 0x80);
@@ -45,12 +51,13 @@ static VOID serial_init(VOID) {
 static VOID serial_text(const CHAR8 *text) {
     while (*text) {
         UINTN retries = 100000;
-        while (retries-- && !( ((UINT8)__extension__({ UINT8 value; __asm__ __volatile__("inb %1, %0" : "=a"(value) : "Nd"((UINT16)0x3FD)); value; })) & 0x20)) { }
+        while (retries && !(serial_in(0x3FD) & 0x20)) --retries;
         serial_out(0x3F8, (UINT8)*text++);
     }
 }
 
 static VOID fail(EFI_SYSTEM_TABLE *st, CHAR16 *message) {
+    serial_text("SYSTEMES_UEFI_FAIL\r\n");
     st->ConOut->OutputString(st->ConOut, message);
     st->ConOut->OutputString(st->ConOut, L"\r\n");
     for (;;) __asm__ __volatile__("cli; hlt");
@@ -118,17 +125,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     UINT32 width = 0, height = 0, stride = 0, pixel_format = 0;
 
     InitializeLib(image, st);
+    serial_init();
+    serial_text("SYSTEMES_UEFI_START\r\n");
     st->ConOut->OutputString(st->ConOut, L"SYSTEMES UEFI loader: start\r\n");
 
     status = read_kernel(image, st, &kernel_buffer, &kernel_bytes);
     if (EFI_ERROR(status) || kernel_bytes == 0) fail(st, L"SYSTEMES: cannot read EFI\\BOOT\\KERNEL.BIN");
     if (kernel_bytes > KERNEL_MAX_BYTES) fail(st, L"SYSTEMES: kernel image exceeds loader limit");
+    serial_text("SYSTEMES_UEFI_KERNEL_FILE_OK\r\n");
 
     kernel_pages = EFI_SIZE_TO_PAGES(kernel_bytes);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
     CopyMem((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
-    serial_text("SYSTEMES_UEFI_KERNEL_LOADED\\r\\n");
+    serial_text("SYSTEMES_UEFI_KERNEL_LOADED\r\n");
     uefi_call_wrapper(st->BootServices->FreePool, 1, kernel_buffer);
     kernel_buffer = NULL;
 
@@ -145,8 +155,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     }
 
     acpi_rsdp = find_acpi_rsdp(st);
-    serial_text(framebuffer ? "SYSTEMES_UEFI_GOP_OK\\r\\n" : "SYSTEMES_UEFI_GOP_UNAVAILABLE\\r\\n");
-    serial_text(acpi_rsdp ? "SYSTEMES_UEFI_ACPI_OK\\r\\n" : "SYSTEMES_UEFI_ACPI_UNAVAILABLE\\r\\n");
+    serial_text(framebuffer ? "SYSTEMES_UEFI_GOP_OK\r\n" : "SYSTEMES_UEFI_GOP_UNAVAILABLE\r\n");
+    serial_text(acpi_rsdp ? "SYSTEMES_UEFI_ACPI_OK\r\n" : "SYSTEMES_UEFI_ACPI_UNAVAILABLE\r\n");
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, memory_map_size, (VOID **)&memory_map);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate UEFI memory map buffer");
 
@@ -172,17 +182,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
         boot_info->framebuffer_stride = stride;
         boot_info->framebuffer_pixel_format = pixel_format;
 
-        serial_text("SYSTEMES_UEFI_MEMORY_MAP_OK\\r\\n");
+        serial_text("SYSTEMES_UEFI_MEMORY_MAP_OK\r\n");
         status = uefi_call_wrapper(st->BootServices->ExitBootServices, 2, image, map_key);
         if (!EFI_ERROR(status)) {
-            serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK\\r\\n");
+            serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK\r\n");
             typedef VOID (__attribute__((sysv_abi)) *kernel_entry_t)(SYSTEMES_BOOT_INFO *);
             kernel_entry_t entry = (kernel_entry_t)(UINTN)kernel_address;
             __asm__ __volatile__("cli" ::: "memory");
             entry(boot_info);
             return EFI_SUCCESS;
         }
-        serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_RETRY\\r\\n");
+        serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_RETRY\r\n");
         if (status != EFI_INVALID_PARAMETER) break;
     }
 
