@@ -93,8 +93,10 @@ jobs:
             exit 1
           fi
           cat build/uefi/debug.log
+          grep -q 'SYSTEMES_UEFI_ENTRY_REACHED' build/uefi/debug.log
+          grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
+          grep -q 'SYSTEMES: kernel entry reached' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
-          grep -q 'SYSTEMES: UEFI memory map accepted' build/uefi/debug.log
       - name: Upload boot evidence
         if: always()
         uses: actions/upload-artifact@v4
