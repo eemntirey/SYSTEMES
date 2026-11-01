@@ -96,29 +96,29 @@ namespace Systemes.Native.Core
             }
         }
 
-        private static string BuildScanScript(int timeoutSeconds)  => $$"""
+        private static string BuildScanScript(int timeoutSeconds) => $$"""
             $ErrorActionPreference = 'Stop'
             $watcherType = [Windows.Devices.Enumeration.DeviceWatcher,Windows.Devices.Enumeration,ContentType=WindowsRuntime]
             $selector = [Windows.Devices.Bluetooth.BluetoothLEDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::GetDeviceSelector()
             $watcher = $watcherType::CreateWatcher($selector)
-            $found = @{{}}
+            $found = @{}
             $subId = Register-ObjectEvent -InputObject $watcher -EventName Added -SourceIdentifier 'systemes-bt-added'
             $watcher.Start()
-            $deadline = (Get-Date).AddSeconds({timeoutSeconds})
-            while ((Get-Date) -lt $deadline) {{
+            $deadline = (Get-Date).AddSeconds({{timeoutSeconds}})
+            while ((Get-Date) -lt $deadline) {
                 Start-Sleep -Milliseconds 400
                 $pending = @(Get-Event -SourceIdentifier 'systemes-bt-added' -ErrorAction SilentlyContinue)
-                foreach ($evt in $pending) {{
+                foreach ($evt in $pending) {
                     $id = $evt.EventArgs.Id
-                    if (-not $found.ContainsKey($id)) {{
-                        $found[$id] = @{{ id = $id; name = $evt.EventArgs.Name }}
-                    }}
+                    if (-not $found.ContainsKey($id)) {
+                        $found[$id] = @{ id = $id; name = $evt.EventArgs.Name }
+                    }
                     Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
-                }}
-            }}
-            try {{ $watcher.Stop() }} catch {{ }}
+                }
+            }
+            try { $watcher.Stop() } catch { }
             Unregister-Event -SourceIdentifier 'systemes-bt-added' -ErrorAction SilentlyContinue
-            @{{ devices = @($found.Values) }} | ConvertTo-Json -Compress -Depth 5
+            @{ devices = @($found.Values) } | ConvertTo-Json -Compress -Depth 5
             """;
 
         /// <summary>Scan réel des périphériques Bluetooth LE à proximité (WinRT DeviceWatcher, ~${timeout}s).</summary>
