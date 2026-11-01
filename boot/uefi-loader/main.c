@@ -118,6 +118,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     UINT64 framebuffer = 0;
     UINT32 width = 0, height = 0, stride = 0, pixel_format = 0;
 
+    debug_text("SYSTEMES_UEFI_ENTRY_REACHED\r\n");
     InitializeLib(image, st);
     debug_text("SYSTEMES_UEFI_START\r\n");
     console_text(st, L"SYSTEMES UEFI loader: start\r\n");
