@@ -213,6 +213,18 @@ namespace Systemes.Native.Core
             };
         }
 
+        public static object OpenRecycleBin()
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                UseShellExecute = true,
+                Arguments = "shell:RecycleBinFolder"
+            };
+            Process.Start(start);
+            return new { opened = true, target = "shell:RecycleBinFolder", note = "Corbeille Windows ouverte dans l’Explorateur système." };
+        }
+
         public static object DeleteFile(string path)
         {
             var resolvedPath = ResolvePath(path);
