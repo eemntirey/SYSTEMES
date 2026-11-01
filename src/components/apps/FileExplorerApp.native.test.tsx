@@ -61,6 +61,6 @@ describe('FileExplorer native integration', () => {
     fireEvent.submit(input.closest('form') as HTMLFormElement)
 
     await waitFor(() => expect(mocks.createDirectory).toHaveBeenCalledWith('C:/Users/test/NativeFolder'))
-    expect(mocks.listFiles).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mocks.listFiles).toHaveBeenCalledTimes(3))
   })
 })
