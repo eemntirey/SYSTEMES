@@ -37,7 +37,7 @@ beforeEach(() => {
   nativeMocks.scanWifi.mockResolvedValue({ networks: [] });
   nativeMocks.readServices.mockResolvedValue({ services: [], count: 0 });
   nativeMocks.readPowerSchemes.mockResolvedValue({ schemes: [], activeGuid: '' });
-  nativeMocks.readSecurityContext.mockResolvedValue({ userName: 'test', machineName: 'TEST-PC', isAdministrator: false, uacEnabled: true, secureDesktopEnabled: true, source: 'test' });
+  nativeMocks.readSecurityContext.mockResolvedValue({ userName: 'test', machineName: 'TEST-PC', isAdministrator: false, isAuthenticated: true, isSystem: false, isGuest: false, impersonationLevel: 'None', groups: [{ sid: 'S-1-5-32-545', name: 'BUILTIN\\Users' }], groupCount: 1, uacEnabled: true, secureDesktopEnabled: true, source: 'test' });
   nativeMocks.readAudio.mockResolvedValue({ volume: 45, isMuted: false, deviceName: 'Test audio output' });
 });
 
@@ -106,6 +106,14 @@ describe('Settings native integrations', () => {
     expect(screen.getByText(/Le catalogue WUA n’est pas encore interrogé/)).toBeDefined();
     expect(nativeMocks.checkWindowsUpdate).toHaveBeenCalledTimes(1);
   });
+  it('displays the effective Windows token identity and group inventory', async () => {
+    renderSettings()
+    fireEvent.click(screen.getAllByText('Confidentialité et sécurité')[0])
+    expect(await screen.findByText(/Identité authentifiée : Oui/)).toBeDefined()
+    expect(screen.getByText(/Groupes du jeton : 1/)).toBeDefined()
+    expect(nativeMocks.readSecurityContext).toHaveBeenCalledTimes(1)
+  })
+
   it('opens real Windows privacy controls instead of changing a local mock toggle', async () => {
     nativeMocks.openWindowsSettings.mockResolvedValue({ opened: true, page: 'privacy-location' })
 
