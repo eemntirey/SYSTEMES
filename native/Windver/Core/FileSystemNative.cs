@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using Microsoft.VisualBasic.FileIO;
+using System.Diagnostics;
 
 namespace Systemes.Native.Core
 {
@@ -214,13 +216,55 @@ namespace Systemes.Native.Core
         public static object DeleteFile(string path)
         {
             var resolvedPath = ResolvePath(path);
-            if (Directory.Exists(resolvedPath))
-                throw new InvalidOperationException("La suppression des dossiers est désactivée pour éviter toute suppression récursive.");
-            if (!File.Exists(resolvedPath))
-                throw new FileNotFoundException("Le fichier à supprimer n’existe plus.", resolvedPath);
+            if (!File.Exists(resolvedPath) && !Directory.Exists(resolvedPath))
+                throw new FileNotFoundException("L’élément à supprimer n’existe plus.", resolvedPath);
 
-            File.Delete(resolvedPath);
-            return new { deleted = true, path = resolvedPath.Replace('\\', '/'), note = "Fichier supprimé du disque" };
+            var root = Path.GetPathRoot(resolvedPath);
+            if (string.Equals(resolvedPath.TrimEnd(Path.DirectorySeparatorChar), root?.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("La racine d’un volume ne peut pas être envoyée à la corbeille.");
+
+            if (Directory.Exists(resolvedPath))
+                FileSystem.DeleteDirectory(resolvedPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+            else
+                FileSystem.DeleteFile(resolvedPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+
+            return new { deleted = true, recycled = true, path = resolvedPath.Replace('\\', '/'), note = "Élément déplacé vers la Corbeille Windows" };
+        }
+
+        public static object ReadPermissions(string path)
+        {
+            var resolvedPath = ResolvePath(path);
+            if (!File.Exists(resolvedPath) && !Directory.Exists(resolvedPath))
+                throw new FileNotFoundException("L’élément à examiner n’existe plus.", resolvedPath);
+
+            var start = new ProcessStartInfo
+            {
+                FileName = "icacls.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            start.ArgumentList.Add(resolvedPath);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows n’a pas démarré icacls.exe.");
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(10000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException("La lecture des permissions Windows a dépassé 10 secondes.");
+            }
+            Task.WaitAll(outputTask, errorTask);
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(errorTask.Result) ? "icacls.exe n’a pas pu lire les permissions." : errorTask.Result.Trim());
+
+            return new
+            {
+                path = resolvedPath.Replace('\\', '/'),
+                acl = outputTask.Result.Trim(),
+                source = "icacls.exe",
+                note = "Liste de contrôle d’accès (ACL) réellement lue depuis Windows ; aucune permission n’a été modifiée."
+            };
         }
     }
 }
