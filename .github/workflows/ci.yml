@@ -98,7 +98,10 @@ jobs:
               @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
               @{ id = "phase2-memory"; method = "memory/read"; params = @{} },
               @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
+              @{ id = "phase2-network"; method = "network/read"; params = @{} },
               @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
+              @{ id = "phase2-services"; method = "services/read"; params = @{} },
+              @{ id = "phase2-security"; method = "security/read"; params = @{} },
               @{ id = "phase2-update"; method = "update/check"; params = @{} },
               @{ id = "phase2-file-dir-create"; method = "files/create-directory"; params = @{ path = $testDir } },
               @{ id = "phase2-file-create"; method = "files/create"; params = @{ path = $testFile; content = "SYSTEMES native integration test" } },
@@ -113,8 +116,10 @@ jobs:
               @{ id = "phase2-rename-reserved"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "CON.txt" } },
               @{ id = "phase2-rename-traversal"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "../escaped.txt" } },
               @{ id = "phase2-dir-rename"; method = "files/rename"; params = @{ path = $testDir; newName = "renamed-dir" } },
+              @{ id = "phase2-file-permissions"; method = "files/permissions/read"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt") } },
               @{ id = "phase2-collision-read"; method = "files/read-content"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
               @{ id = "phase2-file-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt") } },
+              @{ id = "phase2-dir-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-dir") } },
               @{ id = "phase2-collision-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
               @{ id = "phase2-locations"; method = "files/locations"; params = @{} },
               @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} }
@@ -153,10 +158,15 @@ jobs:
             if ($memory.sampleSource -ne "Windows GlobalMemoryStatusEx") { throw "memory/read did not identify the real Windows measurement source." }
             if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
             if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }
+            if (-not $responses["phase2-processes"].result.performance.source) { throw "processes/read returned no Windows performance counter source." }
+            if ($null -eq $responses["phase2-processes"].result.performance.disks -or $null -eq $responses["phase2-processes"].result.performance.networks -or $null -eq $responses["phase2-processes"].result.performance.gpus) { throw "processes/read returned an incomplete GPU/disk/network snapshot." }
             foreach ($process in $responses["phase2-processes"].result.processes) {
               if ($null -ne $process.cpuUsagePercent -and ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100)) { throw "Process CPU sample is outside the normalized 0-100 range." }
             }
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
+            if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
+            if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
+            if (-not $responses["phase2-network"].result.source) { throw "network/read returned no diagnostic source." }
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
             if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
             if ($responses["phase2-file-create"].result.created -ne $true) { throw "files/create failed." }
@@ -173,6 +183,9 @@ jobs:
             if (-not $responses["phase2-rename-traversal"].error) { throw "files/rename accepted a path traversal name." }
             if ($responses["phase2-dir-rename"].result.renamed -ne $true -or $responses["phase2-dir-rename"].result.isDirectory -ne $true) { throw "Directory rename failed." }
             if ($responses["phase2-file-delete"].result.deleted -ne $true) { throw "files/delete failed after rename." }
+            if ($responses["phase2-file-delete"].result.recycled -ne $true) { throw "files/delete did not confirm Windows Recycle Bin transfer." }
+            if ($responses["phase2-dir-delete"].result.recycled -ne $true) { throw "Directory deletion did not confirm Windows Recycle Bin transfer." }
+            if (-not $responses["phase2-file-permissions"].result.acl -or $responses["phase2-file-permissions"].result.source -ne "icacls.exe") { throw "files/permissions/read returned no Windows ACL." }
             if ($responses["phase2-collision-read"].result.content -ne "keep existing file") { throw "A failed rename modified the existing destination file." }
             if ($responses["phase2-collision-delete"].result.deleted -ne $true) { throw "Collision test cleanup failed." }
             if ($responses["phase2-locations"].result.locations.Count -lt 1) { throw "files/locations returned no Windows locations." }
