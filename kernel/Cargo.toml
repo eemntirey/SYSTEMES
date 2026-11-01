@@ -11,6 +11,8 @@ crate-type = ["rlib"]
 [[bin]]
 name = "systemes-kernel"
 path = "src/main.rs"
+test = false
+bench = false
 
 [profile.dev]
 panic = "abort"
