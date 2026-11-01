@@ -8,6 +8,10 @@ publish = false
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "systemes-kernel"
+path = "src/main.rs"
+
 [profile.dev]
 panic = "abort"
 
