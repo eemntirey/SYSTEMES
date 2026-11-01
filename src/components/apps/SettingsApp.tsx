@@ -862,7 +862,6 @@ export const SettingsApp: React.FC = () => {
               <button type="button" onClick={() => void verifyWindowsUpdateService()} style={{ padding: '9px 12px', borderRadius: 8 }}>Vérifier le service</button>
               <button type="button" onClick={() => void NativeBridge.openWindowsSettings('windows-update')} style={{ padding: '9px 12px', borderRadius: 8 }}>Ouvrir Windows Update</button>
             </div>
-            {updateMessage && <div role="status" style={{ padding: 8, marginBottom: 12, fontSize: 12 }}><span>{updateMessage}</span><span>La recherche du catalogue de mises à jour n’est pas effectuée par ce contrôle.</span></div>}
             <div style={{ padding: 18, borderRadius: 12, background: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: 20 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>État réel du service Windows Update</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{updateMessage || 'Service non vérifié dans cette session.'}</div>
@@ -886,12 +885,6 @@ export const SettingsApp: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Spécifications de l'appareil et de Windows 11</p>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '16px' }}></div>
 
-            {hardwareInfo && <div role="status" style={{ padding: 14, borderRadius: 10, background: 'var(--flyout-card)', marginBottom: 16, fontSize: 13 }}>
-              <div><strong>{hardwareInfo.cpuName || 'Processeur non détecté'}</strong></div>
-              <div>{hardwareInfo.gpuName || 'GPU non détecté'}</div>
-              <div>{Number.isFinite(hardwareInfo.ramTotalGB) ? Math.round(hardwareInfo.ramTotalGB) + ' Go' : 'RAM non détectée'}</div>
-              {(hardwareInfo.disks || []).map((disk: any) => <div key={disk.name}>{disk.name} · {disk.format}</div>)}
-            </div>}
             <SectionTitle>Spécifications matérielles lues depuis Windows</SectionTitle>
             <div style={{ padding: 20, borderRadius: 12, background: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: 16 }}>
               {[
