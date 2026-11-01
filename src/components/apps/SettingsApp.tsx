@@ -465,12 +465,18 @@ export const SettingsApp: React.FC = () => {
             </div>
             {powerMessage && <div role="status" style={{ fontSize: 12, marginBottom: 12 }}>{powerMessage}</div>}
 
-            <SectionTitle>Services Windows</SectionTitle>
-            <div style={{ maxHeight: 230, overflow: 'auto', border: '1px solid var(--window-border)', borderRadius: 8, marginBottom: 8 }}>
-              {services.map(service => <div key={service.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--window-border)', fontSize: 11 }}>
-                <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }}>{service.displayName || service.name}</div><div style={{ color: 'var(--text-tertiary)' }}>{service.name} · {service.state} · {service.startMode}</div></div>
-                <button type="button" disabled={busyService === service.name || service.startMode === 'Disabled'} onClick={() => void changeServiceState(service)} style={{ flexShrink: 0, padding: '6px 9px', borderRadius: 6 }}>{busyService === service.name ? '…' : service.state.toLowerCase() === 'running' ? 'Arrêter' : 'Démarrer'}</button>
-              </div>)}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 24, marginBottom: 10 }}>
+              <SectionTitle>Services Windows · {services.length}</SectionTitle>
+              <button type="button" onClick={() => void NativeBridge.readServices().then((value: any) => setServices(Array.isArray(value?.services) ? value.services : [])).catch((error: unknown) => setServiceMessage(error instanceof Error ? error.message : String(error)))} style={{ padding: '6px 9px', borderRadius: 6 }}>Actualiser</button>
+            </div>
+            <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--window-border)', borderRadius: 8, marginBottom: 8 }}>
+              {services.map(service => {
+                const protectedService = ['RpcSs', 'DcomLaunch', 'RpcEptMapper', 'EventLog', 'PlugPlay', 'Power', 'SamSs', 'LSM', 'Winmgmt', 'Schedule', 'CryptSvc', 'ProfSvc', 'UserManager', 'BFE', 'MpsSvc', 'LanmanServer'].includes(service.name)
+                return <div key={service.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--window-border)', fontSize: 11 }}>
+                  <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }}>{service.displayName || service.name}</div><div style={{ color: 'var(--text-tertiary)' }}>{service.name} · {service.state} · {service.startMode}</div></div>
+                  <button type="button" disabled={protectedService || busyService === service.name || service.startMode === 'Disabled'} title={protectedService ? 'Service Windows critique protégé' : undefined} onClick={() => void changeServiceState(service)} style={{ flexShrink: 0, padding: '6px 9px', borderRadius: 6 }}>{busyService === service.name ? '…' : protectedService ? 'Protégé' : service.state.toLowerCase() === 'running' ? 'Arrêter' : 'Démarrer'}</button>
+                </div>
+              })}
               {services.length === 0 && <div style={{ padding: 12, fontSize: 11, color: 'var(--text-tertiary)' }}>Aucun service chargé ou accès WMI indisponible.</div>}
             </div>
             {serviceMessage && <div role="status" style={{ fontSize: 11, marginBottom: 12 }}>{serviceMessage}</div>}
