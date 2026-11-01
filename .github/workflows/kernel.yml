@@ -1,0 +1,32 @@
+name: Independent kernel K0
+
+on:
+  push:
+    branches: [Osreell]
+    paths:
+      - 'kernel/**'
+      - '.github/workflows/kernel.yml'
+  pull_request:
+    paths:
+      - 'kernel/**'
+      - '.github/workflows/kernel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel-contract:
+    name: no_std contract tests and x86_64 target check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-none
+      - name: Run host-side contract tests
+        run: cargo test --manifest-path kernel/Cargo.toml
+      - name: Check no_std x86_64 target
+        run: cargo check --manifest-path kernel/Cargo.toml --target x86_64-unknown-none
