@@ -19,6 +19,7 @@ const nativeMocks = vi.hoisted(() => ({
   disconnectWifi: vi.fn(),
   readServices: vi.fn(),
   controlService: vi.fn(),
+  readSecurityContext: vi.fn(),
 }));
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -33,6 +34,7 @@ beforeEach(() => {
   nativeMocks.scanWifi.mockResolvedValue({ networks: [] });
   nativeMocks.readServices.mockResolvedValue({ services: [], count: 0 });
   nativeMocks.readPowerSchemes.mockResolvedValue({ schemes: [], activeGuid: '' });
+  nativeMocks.readSecurityContext.mockResolvedValue({ userName: 'test', machineName: 'TEST-PC', isAdministrator: false, uacEnabled: true, secureDesktopEnabled: true, source: 'test' });
 });
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
