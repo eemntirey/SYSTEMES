@@ -40,6 +40,7 @@ const WindowsDesktopContent: React.FC = () => {
             fileId={win.customData?.fileId as string | undefined}
             filePath={win.customData?.filePath as string | undefined}
             fileContent={win.customData?.fileContent as string | undefined}
+            nativeFile={win.customData?.nativeFile as boolean | undefined}
           />
         )
       case 'photos':

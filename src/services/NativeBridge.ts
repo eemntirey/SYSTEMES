@@ -37,6 +37,31 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async getFileLocations() {
+    const response = await request('files/locations');
+    return response.result;
+  },
+
+  async listFiles(path = '') {
+    const response = await request('files/list', { path });
+    return response.result;
+  },
+
+  async readTextFile(path: string) {
+    const response = await request('files/read-content', { path });
+    return response.result;
+  },
+
+  async writeTextFile(path: string, content: string) {
+    const response = await request('files/write', { path, content });
+    return response.result;
+  },
+
+  async createDirectory(path: string) {
+    const response = await request('files/create-directory', { path });
+    return response.result;
+  },
+
   async createFile(path: string, content = '') {
     const response = await request('files/create', { path, content });
     return response.result;
@@ -55,7 +80,7 @@ export const NativeBridge = {
   async fileOperate(action: 'read' | 'write' | 'delete' | 'rename', path: string, content?: string) {
     switch (action) {
       case 'read': return this.readFile(path);
-      case 'write': return this.createFile(path, content ?? '');
+      case 'write': return this.writeTextFile(path, content ?? '');
       case 'delete': return this.deleteFile(path);
       case 'rename':
         throw new Error('Le renommage natif n’est pas encore exposé par NativeServer.');

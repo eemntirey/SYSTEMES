@@ -38,8 +38,23 @@ namespace Systemes.Native.Core
                         case "processes/kill":
                             result = ProcessManager.KillProcess(args["pid"]?.Value<int>() ?? 0);
                             break;
+                        case "files/locations":
+                            result = FileSystemNative.ReadKnownLocations();
+                            break;
+                        case "files/list":
+                            result = FileSystemNative.ListDirectory(args["path"]?.Value<string>() ?? "");
+                            break;
                         case "files/read":
                             result = FileSystemNative.ReadRealFile(args["path"]?.Value<string>() ?? "");
+                            break;
+                        case "files/read-content":
+                            result = FileSystemNative.ReadTextFile(args["path"]?.Value<string>() ?? "");
+                            break;
+                        case "files/write":
+                            result = FileSystemNative.WriteTextFile(args["path"]?.Value<string>() ?? "", args["content"]?.Value<string>() ?? "");
+                            break;
+                        case "files/create-directory":
+                            result = FileSystemNative.CreateDirectory(args["path"]?.Value<string>() ?? "");
                             break;
                         case "files/create":
                             result = FileSystemNative.CreateFile(args["path"]?.Value<string>() ?? "", args["content"]?.Value<string>() ?? "");
