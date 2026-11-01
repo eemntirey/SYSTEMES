@@ -17,12 +17,12 @@ namespace Systemes.Native.Core
                     {
                         totalRAM = obj["TotalVisibleMemorySize"],
                         freeRAM = obj["FreePhysicalMemory"],
-                        usedPercent = Math.Round((1.0 - (Convert.ToDouble(obj["FreePhysicalMemory"]) / Convert.ToDouble(obj["TotalVisibleMemorySize"])) * 100), 1)
+                        usedPercent = Math.Round((1.0 - (Convert.ToDouble(obj["FreePhysicalMemory"]) / Convert.ToDouble(obj["TotalVisibleMemorySize"]))) * 100, 1)
                     };
                 }
             }
             catch { }
-            return new { totalRAM = null, freeRAM = null, usedPercent = null, note = "Données réelles non disponibles sans accès WMI" };
+            return new { totalRAM = (object?)null, freeRAM = (object?)null, usedPercent = (double?)null, note = "Données réelles non disponibles sans accès WMI" };
         }
 
         public static object ReadRealDisk()
@@ -44,7 +44,7 @@ namespace Systemes.Native.Core
                 }
             }
             catch { }
-            return new { drive = null, totalGB = null, freeGB = null, percentFree = null, note = "Données réelles non disponibles" };
+            return new { drive = (object?)null, totalGB = (double?)null, freeGB = (double?)null, percentFree = (double?)null, note = "Données réelles non disponibles" };
         }
 
         public static object ReadRealGPU()
@@ -63,7 +63,7 @@ namespace Systemes.Native.Core
                 }
             }
             catch { }
-            return new { name = null, adapterRAM = null, driverVersion = null, note = "Données réelles non disponibles" };
+            return new { name = (string?)null, adapterRAM = (object?)null, driverVersion = (string?)null, note = "Données réelles non disponibles" };
         }
     }
 }
