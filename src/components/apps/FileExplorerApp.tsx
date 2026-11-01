@@ -447,6 +447,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </select>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <ActionButton icon="trash" label="Corbeille" onClick={() => { void NativeBridge.openRecycleBin().catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} />
           <ActionButton icon="folder" label="Nouveau dossier" onClick={() => setIsCreatingFolder(true)} />
           <ActionButton icon="file-text" label="Nouveau fichier" onClick={() => setIsCreatingFile(true)} />
           <ToggleButton icon="sliders" label="Inspecteur & Aperçu" active={showInspector} onClick={() => setShowInspector((v) => !v)} />
@@ -624,7 +625,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                     <button type="button" onClick={() => { void NativeBridge.readPermissions(selectedItem.path).then(result => setPermissionText(result.acl)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Permissions Windows</button>
                     {permissionText && <pre aria-label="Permissions Windows" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 10, color: 'var(--text-secondary)' }}>{permissionText}</pre>}
                     {isRenaming && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><input aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} /><button type="button" onClick={() => void handleRename()}>Valider</button></div>}
-                    <button onClick={() => { void NativeBridge.deleteFile(selectedItem.path).then(() => { setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Supprimer cet élément</button>
+                    <button onClick={() => { if (!window.confirm('Envoyer « ' + selectedItem.name + ' » vers la Corbeille Windows ?')) return; void NativeBridge.deleteFile(selectedItem.path).then((result: any) => { setPermissionText(result?.note || 'Élément envoyé vers la Corbeille Windows.'); setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Envoyer vers la Corbeille</button>
                   </div>
                 </>
               ) : (
