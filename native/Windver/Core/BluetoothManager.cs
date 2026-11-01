@@ -96,7 +96,7 @@ namespace Systemes.Native.Core
             }
         }
 
-        private static string BuildScanScript(int timeoutSeconds) => $"""
+        private static string BuildScanScript(int timeoutSeconds)  => $$"""
             $ErrorActionPreference = 'Stop'
             $watcherType = [Windows.Devices.Enumeration.DeviceWatcher,Windows.Devices.Enumeration,ContentType=WindowsRuntime]
             $selector = [Windows.Devices.Bluetooth.BluetoothLEDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::GetDeviceSelector()
