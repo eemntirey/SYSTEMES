@@ -50,7 +50,8 @@ impl BootInfo {
             return Err(BootInfoError::MissingMemoryMap);
         }
         if self.memory_map_descriptor_size == 0
-            || self.memory_map_entries * self.memory_map_descriptor_size != self.memory_map_size
+            || self.memory_map_size % self.memory_map_descriptor_size != 0
+            || self.memory_map_size / self.memory_map_descriptor_size != self.memory_map_entries
         {
             return Err(BootInfoError::InvalidMemoryMapDescriptor);
         }
@@ -117,6 +118,13 @@ mod tests {
         let mut info = valid_boot_info();
         info.memory_map_entries = 0;
         assert_eq!(info.validate(), Err(BootInfoError::MissingMemoryMap));
+    }
+
+    #[test]
+    fn rejects_an_inconsistent_memory_map_descriptor_size() {
+        let mut info = valid_boot_info();
+        info.memory_map_descriptor_size = 0;
+        assert_eq!(info.validate(), Err(BootInfoError::InvalidMemoryMapDescriptor));
     }
 
     #[test]
