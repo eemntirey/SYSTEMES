@@ -138,6 +138,12 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readPermissions(path: string) {
+    const response = await request<{ path: string; acl: string; source: string; note: string }>('files/permissions/read', { path });
+    if (!response.result) throw new Error('Windows n’a retourné aucune information de permissions.');
+    return response.result;
+  },
+
   async renameFile(path: string, newName: string) {
     if (!path.trim() || !newName.trim()) throw new Error('Le chemin et le nouveau nom sont obligatoires.');
     const response = await request('files/rename', { path, newName });
