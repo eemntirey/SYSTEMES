@@ -1,23 +1,28 @@
 import React, { useState, useEffect } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
+import { NativeBridge } from '../../services/NativeBridge'
 
 interface NotepadAppProps {
   fileId?: string
   filePath?: string
   fileContent?: string
+  nativeFile?: boolean
 }
 
 export const NotepadApp: React.FC<NotepadAppProps> = ({
   fileId: initialFileId,
   filePath: initialFilePath,
   fileContent: initialContent = '',
+  nativeFile: initialNativeFile = false,
 }) => {
   const { files, updateFileContent, createFile, addNotification } = useOS()
 
   const [content, setContent] = useState(initialContent)
   const [fileId, setFileId] = useState<string | undefined>(initialFileId)
   const [filePath, setFilePath] = useState<string>(initialFilePath || 'Sans titre.txt')
+  const [isNativeFile, setIsNativeFile] = useState(initialNativeFile)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [isSaved, setIsSaved] = useState(true)
   const [showSavePrompt, setShowSavePrompt] = useState(false)
   const [newFileName, setNewFileName] = useState('Nouveau document.txt')
@@ -50,8 +55,17 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
     setCursorPos({ line: currentLineNumber, col: currentColumnIndex })
   }
 
-  const handleSave = () => {
-    if (fileId) {
+  const handleSave = async () => {
+    setSaveError(null)
+    if (isNativeFile && filePath) {
+      try {
+        await NativeBridge.writeTextFile(filePath, content)
+        setIsSaved(true)
+        addNotification('Bloc-notes', `Le fichier "${filePath.split(/[\\/]/).pop()}" a été enregistré sur le disque.`, 'Bloc-notes')
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : String(error))
+      }
+    } else if (fileId) {
       updateFileContent(fileId, content)
       setIsSaved(true)
       addNotification('Bloc-notes', `Le fichier "${filePath.split('/').pop()}" a été enregistré.`, 'Bloc-notes')
@@ -60,17 +74,30 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
     }
   }
 
-  const handleSaveAsSubmit = (e: React.FormEvent) => {
+  const handleSaveAsSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (newFileName.trim()) {
-      const newFileObj = createFile('C:/Users/eemntirey/Documents', newFileName.trim(), content)
-      if (newFileObj) {
-        setFileId(newFileObj.id)
-        setFilePath(newFileObj.path)
+    if (!newFileName.trim()) return
+    try {
+      if (isNativeFile && filePath.includes('/')) {
+        const parentPath = filePath.slice(0, filePath.lastIndexOf('/'))
+        const newPath = `${parentPath}/${newFileName.trim()}`
+        await NativeBridge.createFile(newPath, content)
+        setFileId(undefined)
+        setFilePath(newPath)
+        setIsNativeFile(true)
+      } else {
+        const newFileObj = createFile('C:/Users/eemntirey/Documents', newFileName.trim(), content)
+        if (newFileObj) {
+          setFileId(newFileObj.id)
+          setFilePath(newFileObj.path)
+        }
+        setIsNativeFile(false)
       }
       setIsSaved(true)
       setShowSavePrompt(false)
       addNotification('Bloc-notes', `Fichier "${newFileName.trim()}" créé avec succès !`, 'Bloc-notes')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -148,6 +175,8 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
             setContent('')
             setFileId(undefined)
             setFilePath('Nouveau document.txt')
+            setIsNativeFile(false)
+            setSaveError(null)
             setIsSaved(true)
           }}
           style={{
@@ -166,11 +195,19 @@ export const NotepadApp: React.FC<NotepadAppProps> = ({
         </button>
       </div>
 
+      {saveError && <div role="alert" style={{ padding: '8px 14px', color: '#fecaca', background: 'rgba(185,28,28,.18)', fontSize: 12 }}>{saveError}</div>}
+
       {/* Editor Content Area */}
       <div style={{ flex: 1, position: 'relative' }}>
         <textarea
           value={content}
           onChange={handleTextChange}
+          onKeyDown={e => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+              e.preventDefault()
+              handleSave()
+            }
+          }}
           onKeyUp={e => updateCursorPos(e.currentTarget)}
           onClick={e => updateCursorPos(e.currentTarget)}
           placeholder="Commencez à taper votre texte ici..."

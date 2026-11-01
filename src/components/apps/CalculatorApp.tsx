@@ -76,10 +76,18 @@ export const CalculatorApp: React.FC = () => {
           result = current * inputValue
           break
         case '÷':
-          result = inputValue !== 0 ? current / inputValue : 0
+          result = inputValue !== 0 ? current / inputValue : Number.NaN
           break
       }
 
+      if (!Number.isFinite(result)) {
+        setDisplay('Erreur')
+        setPrevValue(null)
+        setOperation(null)
+        setWaitingForOperand(true)
+        setEquation('Division par zéro impossible')
+        return
+      }
       setPrevValue(result)
       setDisplay(String(result))
       setEquation(`${result} ${nextOp}`)
@@ -107,10 +115,18 @@ export const CalculatorApp: React.FC = () => {
           result = current * inputValue
           break
         case '÷':
-          result = inputValue !== 0 ? current / inputValue : 0
+          result = inputValue !== 0 ? current / inputValue : Number.NaN
           break
       }
 
+      if (!Number.isFinite(result)) {
+        setEquation('Division par zéro impossible')
+        setDisplay('Erreur')
+        setPrevValue(null)
+        setOperation(null)
+        setWaitingForOperand(true)
+        return
+      }
       setEquation(`${current} ${operation} ${inputValue} =`)
       setDisplay(String(result))
       setPrevValue(null)
@@ -125,10 +141,61 @@ export const CalculatorApp: React.FC = () => {
     let res = val
     if (func === 'sqrt') res = Math.sqrt(val)
     if (func === 'sqr') res = val * val
-    if (func === 'inv') res = val !== 0 ? 1 / val : 0
+    if (func === 'inv') res = val !== 0 ? 1 / val : Number.NaN
     if (func === 'percent') res = val / 100
-    setDisplay(String(res))
+    setDisplay(Number.isFinite(res) ? String(res) : 'Erreur')
+    setEquation(Number.isFinite(res) ? equation : 'Opération impossible')
     setWaitingForOperand(true)
+  }
+
+  const handleKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (/^[0-9]$/.test(event.key)) {
+      event.preventDefault()
+      inputDigit(event.key)
+      return
+    }
+    switch (event.key) {
+      case '.':
+      case ',':
+        event.preventDefault()
+        inputDecimal()
+        break
+      case '+':
+        event.preventDefault()
+        performMathOperation('+')
+        break
+      case '-':
+        event.preventDefault()
+        performMathOperation('−')
+        break
+      case '*':
+      case 'x':
+      case 'X':
+        event.preventDefault()
+        performMathOperation('×')
+        break
+      case '/':
+        event.preventDefault()
+        performMathOperation('÷')
+        break
+      case 'Enter':
+      case '=':
+        event.preventDefault()
+        handleEquals()
+        break
+      case 'Backspace':
+        event.preventDefault()
+        handleBackspace()
+        break
+      case 'Escape':
+        event.preventDefault()
+        clearAll()
+        break
+      case '%':
+        event.preventDefault()
+        performFunction('percent')
+        break
+    }
   }
 
   const btnStyle = (isAccent = false, isOp = false): React.CSSProperties => ({
@@ -151,12 +218,16 @@ export const CalculatorApp: React.FC = () => {
 
   return (
     <div
+      tabIndex={0}
+      onKeyDown={handleKeyboard}
+      aria-label="Calculatrice. Utilisez les chiffres et opérateurs du clavier."
       style={{
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         backgroundColor: 'var(--window-bg)',
         padding: '12px',
+        outline: 'none',
       }}
     >
       {/* Top Header */}

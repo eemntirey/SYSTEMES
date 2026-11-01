@@ -1,0 +1,125 @@
+- generic [ref=f8e3]:
+  - generic [ref=f8e4]:
+    - generic:
+      - generic [ref=f8e5]: Ce PC
+      - generic [ref=f8e16]: Corbeille
+      - generic [ref=f8e25]: Photos
+      - generic [ref=f8e33]: Explorateur
+      - generic [ref=f8e41]: Bloc-notes
+      - generic [ref=f8e55]: Terminal
+      - generic [ref=f8e68] [cursor=pointer]:
+        - img [ref=f8e70]:
+          - generic [ref=f8e73]: "137"
+        - generic [ref=f8e83]: Calculatrice
+      - generic [ref=f8e84]: Paint
+      - generic [ref=f8e96]: Paramètres
+      - generic [ref=f8e105]: Lisez-moi.txt
+    - generic [ref=f8e429]:
+      - generic [ref=f8e430]:
+        - generic [ref=f8e431]: Paramètres
+        - generic [ref=f8e438]:
+          - button "Réduire" [ref=f8e439]
+          - button "Agrandir" [ref=f8e442]
+          - button "Fermer" [ref=f8e445]
+      - generic [ref=f8e450]:
+        - generic [ref=f8e451]:
+          - generic [ref=f8e452]:
+            - generic [ref=f8e453]:
+              - generic [ref=f8e454]: W
+              - generic [ref=f8e455]:
+                - generic [ref=f8e456]: Utilisateur Windows
+                - generic [ref=f8e457]: eemntirey@outlook.com
+            - textbox "Rechercher dans les paramètres" [ref=f8e462]
+          - generic [ref=f8e463]:
+            - button "Accueil" [ref=f8e464] [cursor=pointer]
+            - button "Système" [ref=f8e473] [cursor=pointer]
+            - button "Bluetooth et appareils" [ref=f8e476] [cursor=pointer]
+            - button "Réseau et Internet" [ref=f8e480] [cursor=pointer]
+            - button "Personnalisation" [ref=f8e486] [cursor=pointer]
+            - button "Applications" [ref=f8e496] [cursor=pointer]
+            - button "Comptes" [ref=f8e500] [cursor=pointer]
+            - button "Heure et langue" [ref=f8e505] [cursor=pointer]
+            - button "Jeux" [ref=f8e510] [cursor=pointer]
+            - button "Accessibilité" [ref=f8e520] [cursor=pointer]
+            - button "Confidentialité et sécurité" [ref=f8e527] [cursor=pointer]
+            - button "Windows Update" [ref=f8e532] [cursor=pointer]
+            - button "À propos" [ref=f8e539] [cursor=pointer]
+        - generic [ref=f8e552]:
+          - heading "Paramètres" [level=1] [ref=f8e553]
+          - paragraph [ref=f8e554]: eemntirey@outlook.com
+          - generic [ref=f8e555]:
+            - generic [ref=f8e556] [cursor=pointer]:
+              - generic [ref=f8e560]: Mode Sombre activé
+              - generic [ref=f8e561]: Personnalisation › Couleurs
+            - generic [ref=f8e562] [cursor=pointer]:
+              - generic [ref=f8e568]: Wi-Fi connecté
+              - generic [ref=f8e569]: Réseau et Internet
+            - generic [ref=f8e570] [cursor=pointer]:
+              - generic [ref=f8e577]: Windows à jour
+              - generic [ref=f8e578]: "Dernière vérif : aujourd'hui"
+            - generic [ref=f8e579] [cursor=pointer]:
+              - generic [ref=f8e585]: Batterie 94%
+              - generic [ref=f8e586]: Alimentation et veille
+          - heading "Toutes les catégories" [level=2] [ref=f8e587]
+          - generic [ref=f8e588]:
+            - generic [ref=f8e589] [cursor=pointer]:
+              - generic [ref=f8e592]: Système
+              - generic [ref=f8e593]: Écran, son, notifications, alimentation
+            - generic [ref=f8e594] [cursor=pointer]:
+              - generic [ref=f8e598]: Bluetooth et appareils
+              - generic [ref=f8e599]: Souris, clavier, casque, autres appareils
+            - generic [ref=f8e600] [cursor=pointer]:
+              - generic [ref=f8e606]: Réseau et Internet
+              - generic [ref=f8e607]: Wi-Fi, réseau câblé, VPN
+            - generic [ref=f8e608] [cursor=pointer]:
+              - generic [ref=f8e618]: Personnalisation
+              - generic [ref=f8e619]: Arrière-plan, couleurs, écran de verrouillage
+            - generic [ref=f8e620] [cursor=pointer]:
+              - generic [ref=f8e624]: Applications
+              - generic [ref=f8e625]: Applications installées, fonctionnalités optionnelles
+            - generic [ref=f8e626] [cursor=pointer]:
+              - generic [ref=f8e631]: Comptes
+              - generic [ref=f8e632]: Compte Microsoft, famille, autres utilisateurs
+            - generic [ref=f8e633] [cursor=pointer]:
+              - generic [ref=f8e638]: Heure et langue
+              - generic [ref=f8e639]: Fuseau horaire, région, langue d'affichage
+            - generic [ref=f8e640] [cursor=pointer]:
+              - generic [ref=f8e650]: Jeux
+              - generic [ref=f8e651]: Xbox Game Bar, Game Mode, captures
+            - generic [ref=f8e652] [cursor=pointer]:
+              - generic [ref=f8e659]: Accessibilité
+              - generic [ref=f8e660]: Loupe, narrateur, contraste élevé
+            - generic [ref=f8e661] [cursor=pointer]:
+              - generic [ref=f8e666]: Confidentialité et sécurité
+              - generic [ref=f8e667]: Autorisations Windows, données de diagnostic
+            - generic [ref=f8e668] [cursor=pointer]:
+              - generic [ref=f8e675]: Windows Update
+              - generic [ref=f8e676]: Mises à jour, Windows Insider
+            - generic [ref=f8e677] [cursor=pointer]:
+              - generic [ref=f8e689]: À propos
+              - generic [ref=f8e690]: Spécifications de l'appareil et Windows
+  - toolbar "Barre des tâches" [ref=f8e313]:
+    - generic [ref=f8e314]:
+      - button "Démarrer" [ref=f8e315] [cursor=pointer]
+      - button "Rechercher" [ref=f8e321] [cursor=pointer]
+      - button "Vue des tâches" [ref=f8e326] [cursor=pointer]
+      - button "Widgets" [ref=f8e330] [cursor=pointer]
+      - button "Copilot" [ref=f8e336] [cursor=pointer]
+      - button "Explorateur de fichiers" [ref=f8e341] [cursor=pointer]
+      - button "Bloc-notes" [ref=f8e347] [cursor=pointer]
+      - button "Terminal Windows" [ref=f8e358] [cursor=pointer]
+      - button "Calculatrice" [ref=f8e367] [cursor=pointer]:
+        - img [ref=f8e368]:
+          - generic [ref=f8e371]: "137"
+      - button "Paramètres" [active] [ref=f8e381] [cursor=pointer]
+      - button "Photos" [ref=f8e387] [cursor=pointer]
+      - button "Paint" [ref=f8e392] [cursor=pointer]
+    - generic [ref=f8e401]:
+      - button "Afficher les icônes cachées" [ref=f8e402] [cursor=pointer]
+      - button "Réseau, son, batterie" [ref=f8e405] [cursor=pointer]
+      - button "Microphone" [ref=f8e416] [cursor=pointer]
+      - button "Heure, date et notifications" [ref=f8e420] [cursor=pointer]:
+        - generic [ref=f8e421]: 13:34
+        - generic [ref=f8e422]: 01/11/2026
+      - button "Notifications" [ref=f8e424] [cursor=pointer]
+      - button "Afficher le bureau" [ref=f8e428] [cursor=pointer]

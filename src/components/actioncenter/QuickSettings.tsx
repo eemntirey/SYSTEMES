@@ -19,6 +19,7 @@ export const QuickSettings: React.FC = () => {
     setVolume,
     isMuted,
     toggleMute,
+    audioDeviceName,
     openWindow,
     closeAllFlyouts,
   } = useOS()
@@ -65,8 +66,8 @@ export const QuickSettings: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        top: '60px',
-        right: '20px',
+        bottom: '56px',
+        right: '8px',
         width: '350px',
         backgroundColor: '#1a1a1a',
         backdropFilter: 'var(--backdrop-blur)',
@@ -91,8 +92,10 @@ export const QuickSettings: React.FC = () => {
         }}
       >
         {quickToggles.map(toggle => (
-          <div
+          <button
             key={toggle.id}
+            type="button"
+            aria-pressed={toggle.active}
             onClick={toggle.onClick}
             style={{
               display: 'flex',
@@ -105,6 +108,8 @@ export const QuickSettings: React.FC = () => {
               cursor: 'pointer',
               border: '1px solid var(--window-border)',
               transition: 'background 0.12s',
+              textAlign: 'left',
+              font: 'inherit',
             }}
           >
             <FluentIcon name={toggle.icon} size={16} />
@@ -122,7 +127,7 @@ export const QuickSettings: React.FC = () => {
                 {toggle.desc}
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -131,7 +136,10 @@ export const QuickSettings: React.FC = () => {
         {/* Brightness Slider */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <FluentIcon name="sun" size={17} color="var(--text-secondary)" />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 62 }}>Luminosité</span>
           <input
+            aria-label="Luminosité"
             type="range"
             min="20"
             max="100"
@@ -139,6 +147,8 @@ export const QuickSettings: React.FC = () => {
             onChange={e => setBrightness(Number(e.target.value))}
             style={{ flex: 1, accentColor: 'var(--win-accent)', cursor: 'pointer' }}
           />
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 32 }}>{brightness}%</span>
+          </label>
         </div>
 
         {/* Volume Slider */}
@@ -149,7 +159,10 @@ export const QuickSettings: React.FC = () => {
           >
             <FluentIcon name={isMuted || volume === 0 ? 'volume-x' : 'volume'} size={17} />
           </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 62 }}>Volume</span>
           <input
+            aria-label="Volume"
             type="range"
             min="0"
             max="100"
@@ -157,7 +170,25 @@ export const QuickSettings: React.FC = () => {
             onChange={e => setVolume(Number(e.target.value))}
             style={{ flex: 1, accentColor: 'var(--win-accent)', cursor: 'pointer' }}
           />
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 32 }}>{isMuted ? 0 : volume}%</span>
+          </label>
         </div>
+
+        {audioDeviceName && (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-tertiary)',
+              marginTop: -6,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={audioDeviceName}
+          >
+            Sortie : {audioDeviceName}
+          </div>
+        )}
       </div>
 
       {/* Footer Info: Battery & Settings link */}
@@ -172,7 +203,7 @@ export const QuickSettings: React.FC = () => {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
           <FluentIcon name="battery" size={16} />
-          <span>94% restant</span>
+          <span>État de la batterie simulé · 94 %</span>
         </div>
 
         <button

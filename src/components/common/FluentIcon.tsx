@@ -33,6 +33,11 @@ import {
   Clock,
   Star,
   FileText,
+  Image as ImageIcon,
+  Info,
+  Play,
+  Pause,
+  Globe,
 } from 'lucide-react'
 
 interface FluentIconProps {
@@ -152,38 +157,10 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
     )
   }
 
-  // 4. Microsoft Edge (Famous Blue-Green Wave Surf Logo)
-  if (norm === 'edge' || norm === 'globe') {
-    return (
-      <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className={className} style={style}>
-        <defs>
-          <linearGradient id="edgeBlue" x1="10" y1="4" x2="38" y2="44" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#0078D4" />
-            <stop offset="0.5" stopColor="#00A4EF" />
-            <stop offset="1" stopColor="#00C78D" />
-          </linearGradient>
-          <linearGradient id="edgeGreen" x1="20" y1="15" x2="44" y2="38" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#00C78D" />
-            <stop offset="1" stopColor="#107C41" />
-          </linearGradient>
-        </defs>
-        {/* Outer Circular Swirl Wave */}
-        <path
-          d="M24 6C14.06 6 6 14.06 6 24c0 9.94 8.06 18 18 18 8.8 0 16.14-6.32 17.68-14.67.24-1.3-.8-2.33-2.12-2.33h-10.8c-2.6 0-4.76-2.16-4.76-4.76 0-.85.24-1.66.68-2.36L35.5 8.92A17.9 17.9 0 0024 6z"
-          fill="url(#edgeBlue)"
-        />
-        {/* Inner Wave Curve */}
-        <path
-          d="M39.68 27.33C38.14 35.68 30.8 42 22 42 12.06 42 4 33.94 4 24c0-4.22 1.45-8.1 3.9-11.2 1.4-1.78 3.8-.45 3.38 1.76-1.12 5.9 3.02 11.44 9.12 11.44h17.16c1.32 0 2.36 1.03 2.12 2.33z"
-          fill="url(#edgeGreen)"
-        />
-        {/* Center Crest Highlight */}
-        <circle cx="28" cy="20" r="7" fill="#FFFFFF" fillOpacity="0.15" />
-      </svg>
-    )
-  }
+  // 4. Browser-neutral globe icon
+  if (norm === 'globe') return <Globe width={size} height={size} color={color} className={className} style={style} />
 
-  // 5. Windows 11 Bloc-notes / Notepad (Blue Notebook with Pencil)
+
   if (norm === 'notepad' || norm === 'file-text') {
     return (
       <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className={className} style={style}>
@@ -432,6 +409,54 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
       return <Star {...props} />
     case 'file-text':
       return <FileText {...props} />
+    case 'image':
+    case 'photos':
+      return <ImageIcon {...props} />
+    case 'info':
+      return <Info {...props} />
+    case 'play':
+      return <Play {...props} />
+    case 'pause':
+      return <Pause {...props} />
+    case 'taskview':
+      // Windows 11 Task View : deux rectangles superposés (bureaux virtuels)
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="6" width="13" height="13" rx="2.5" />
+          <path d="M8 6V4.5A1.5 1.5 0 019.5 3h9A1.5 1.5 0 0120 4.5v9a1.5 1.5 0 01-1.5 1.5H17" />
+        </svg>
+      )
+    case 'widgets':
+      // Windows 11 Widgets : grille de 4 tuiles
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7.5" height="9" rx="2" />
+          <rect x="13.5" y="3" width="7.5" height="5.5" rx="2" />
+          <rect x="13.5" y="11.5" width="7.5" height="9.5" rx="2" />
+          <rect x="3" y="15" width="7.5" height="6" rx="2" />
+        </svg>
+      )
+    case 'mic':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="2.5" width="6" height="11" rx="3" />
+          <path d="M5.5 11a6.5 6.5 0 0013 0" />
+          <line x1="12" y1="17.5" x2="12" y2="21.5" />
+        </svg>
+      )
+    case 'shield':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2.5l7.5 3v5.5c0 4.6-3.1 8.4-7.5 9.5-4.4-1.1-7.5-4.9-7.5-9.5V5.5z" />
+          <path d="M9 12l2 2 4-4" />
+        </svg>
+      )
+    case 'cloud':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M7 18a4 4 0 010-8 5.5 5.5 0 0110.5-1.5A4 4 0 1117.5 18z" />
+        </svg>
+      )
     case 'check':
       return <Check {...props} />
     case 'maximize':
@@ -440,6 +465,83 @@ export const FluentIcon: React.FC<FluentIconProps> = ({
       return <Minimize2 {...props} />
     case 'clock':
       return <Clock {...props} />
+    case 'cut':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <line x1="20" y1="4" x2="8.12" y2="15.88" />
+          <line x1="14.47" y1="14.48" x2="20" y2="20" />
+          <line x1="8.12" y1="8.12" x2="12" y2="12" />
+        </svg>
+      )
+    case 'clipboard':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
+          <rect x="8" y="2" width="8" height="4" rx="1" />
+        </svg>
+      )
+    case 'trash':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+          <path d="M10 11v6M14 11v6" />
+          <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+        </svg>
+      )
+    case 'share':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        </svg>
+      )
+    case 'monitor':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <line x1="8" y1="21" x2="16" y2="21" />
+          <line x1="12" y1="17" x2="12" y2="21" />
+        </svg>
+      )
+    case 'sort':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 5h10M11 9h7M11 13h4" />
+          <path d="M3 17l3 3 3-3M6 4v16" />
+        </svg>
+      )
+    case 'eye':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      )
+    case 'edit':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
+        </svg>
+      )
+    case 'radio-on':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="4.5" fill={color || 'currentColor'} stroke="none" />
+        </svg>
+      )
+    case 'radio-off':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'} strokeWidth="1.8">
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      )
     default:
       return <HelpCircle {...props} />
   }

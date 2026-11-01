@@ -1,12 +1,18 @@
 export type AppId =
   | 'explorer'
-  | 'edge'
   | 'notepad'
   | 'terminal'
   | 'calculator'
   | 'settings'
   | 'paint'
+  | 'photos'
+  | 'recycle'
   | 'widgets'
+  | 'taskmanager'
+  | 'clock'
+  | 'music'
+  | 'store'
+  | 'controlpanel'
 
 export type SnapPosition =
   | 'left-half'

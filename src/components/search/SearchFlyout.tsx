@@ -10,7 +10,7 @@ export const SearchFlyout: React.FC = () => {
   if (!isSearchOpen) return null
 
   const topApps: { id: AppId; name: string; icon: string }[] = [
-    { id: 'edge', name: 'Microsoft Edge', icon: 'globe' },
+    { id: 'photos', name: 'Photos', icon: 'image' },
     { id: 'explorer', name: 'Explorateur', icon: 'folder' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'file-text' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal' },
@@ -31,7 +31,7 @@ export const SearchFlyout: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '104px',
+        bottom: '56px',
         left: '50%',
         transform: 'translateX(-50%)',
         width: '640px',
@@ -150,7 +150,7 @@ export const SearchFlyout: React.FC = () => {
             {matchedApps.length === 0 && matchedFiles.length === 0 && (
               <div
                 onClick={() => {
-                  openWindow('edge')
+                  window.open('https://www.google.com/search?q=' + encodeURIComponent(query), '_blank', 'noopener,noreferrer')
                   closeAllFlyouts()
                 }}
                 style={{
@@ -162,10 +162,10 @@ export const SearchFlyout: React.FC = () => {
                 }}
               >
                 <div style={{ fontSize: '14px', color: 'var(--win-accent)', fontWeight: 500 }}>
-                  Rechercher sur Bing : « {query} »
+                  Rechercher sur le Web : « {query} »
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Ouvrir les résultats dans Microsoft Edge
+                  Ouvrir dans le navigateur par défaut
                 </div>
               </div>
             )}
@@ -234,7 +234,7 @@ export const SearchFlyout: React.FC = () => {
                 <div
                   key={item.title}
                   onClick={() => {
-                    openWindow('edge')
+                    window.open('https://www.google.com/search?q=' + encodeURIComponent(item.title), '_blank', 'noopener,noreferrer')
                     closeAllFlyouts()
                   }}
                   style={{

@@ -7,6 +7,8 @@ node_modules/
 dist/
 build/
 *.tgz
+**/bin/
+**/obj/
 
 # Cache and temp
 .cache/

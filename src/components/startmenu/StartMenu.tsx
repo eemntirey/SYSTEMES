@@ -1,12 +1,12 @@
-// @ts-nocheck
 import React, { useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { AppTile } from './AppTile'
+import { APP_DEFINITIONS } from '../../data/constants'
 import { AppId } from '../../types'
 
 interface AppGridItem {
-  id: AppId | 'folder' | 'file'
+  id: AppId
   name: string
   icon: string
 }
@@ -30,27 +30,27 @@ export const StartMenu: React.FC = () => {
   if (!isStartMenuOpen) return null
 
   const pinnedApps: AppGridItem[] = [
-    { id: 'edge', name: 'Edge', icon: 'globe' },
+    { id: 'photos', name: 'Photos', icon: 'image' },
     { id: 'explorer', name: 'Explorateur', icon: 'folder' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'file-text' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal' },
     { id: 'calculator', name: 'Calculatrice', icon: 'calculator' },
     { id: 'paint', name: 'Paint', icon: 'palette' },
     { id: 'settings', name: 'Paramètres', icon: 'settings' },
+    { id: 'taskmanager', name: 'Gestionnaire des tâches', icon: 'activity' },
     { id: 'explorer', name: 'Ce PC', icon: 'folder' },
-    { id: 'edge', name: 'Bing Web', icon: 'globe' },
+    { id: 'photos', name: 'Galerie', icon: 'image' },
     { id: 'settings', name: 'Affichage', icon: 'sliders' },
     { id: 'notepad', name: 'Mémos', icon: 'file-text' },
     { id: 'terminal', name: 'PowerShell', icon: 'terminal' },
   ]
 
   // Liste complète de toutes les applications du système (épinglées + fichiers)
-  const allUniqueApps = Array.from(
-    new Map([
-      ...pinnedApps.map(a => [a.name, a]),
-      ...files.map(f => [f.name, { id: f.type === 'folder' ? 'folder' : 'file', name: f.name, icon: f.type === 'folder' ? 'folder' : 'file-text' } as AppGridItem]),
-    ]).values()
-  )
+  const allUniqueApps: AppGridItem[] = Object.values(APP_DEFINITIONS).map(app => ({
+    id: app.id,
+    name: app.name,
+    icon: app.icon,
+  }))
 
   const filteredApps = (searchFilter.trim()
     ? (viewAllApps
@@ -71,7 +71,7 @@ export const StartMenu: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '104px',
+        bottom: '56px',
         left: '50%',
         transform: 'translateX(-50%)',
         width: '600px',
@@ -184,17 +184,14 @@ export const StartMenu: React.FC = () => {
           }}
         >
           <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Nos recommandations
+            Accès rapide aux fichiers
           </span>
-          <span
-            style={{
-              fontSize: '11.5px',
-              color: 'var(--win-accent-cyan)',
-              cursor: 'pointer',
-            }}
+          <button
+            onClick={() => { openWindow('explorer'); closeAllFlyouts() }}
+            style={{ fontSize: '11.5px', color: 'var(--win-accent-cyan)', cursor: 'pointer', border: 'none', background: 'transparent' }}
           >
-            Plus &gt;
-          </span>
+            Ouvrir l’Explorateur &gt;
+          </button>
         </div>
 
         {/* Recommended Items Grid */}
@@ -248,7 +245,7 @@ export const StartMenu: React.FC = () => {
                 >
                   {rf.name}
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Récemment ouvert</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Disponible dans vos fichiers</div>
               </div>
             </div>
           ))}

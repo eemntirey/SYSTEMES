@@ -8,17 +8,23 @@ import { SearchFlyout } from './components/search/SearchFlyout'
 import { QuickSettings } from './components/actioncenter/QuickSettings'
 import { CalendarFlyout } from './components/actioncenter/CalendarFlyout'
 import { WidgetsBoard } from './components/widgets/WidgetsBoard'
+import { TaskView } from './components/taskview/TaskView'
 import { LockScreen } from './components/lockscreen/LockScreen'
-import { MenuBar } from './components/menu/MenuBar'
 
 // App components
 import { FileExplorerApp } from './components/apps/FileExplorerApp'
 import { NotepadApp } from './components/apps/NotepadApp'
-import { EdgeApp } from './components/apps/EdgeApp'
+import { PhotosApp } from './components/apps/PhotosApp'
+import { RecycleBinApp } from './components/apps/RecycleBinApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { CalculatorApp } from './components/apps/CalculatorApp'
 import { SettingsApp } from './components/apps/SettingsApp'
+import { ProcessManagerApp } from './components/apps/ProcessManagerApp'
 import { PaintApp } from './components/apps/PaintApp'
+import { ClockApp } from './components/apps/ClockApp'
+import { MusicApp } from './components/apps/MusicApp'
+import { StoreApp } from './components/apps/StoreApp'
+import { ControlPanelApp } from './components/apps/ControlPanelApp'
 import { WindowState } from './types'
 
 const WindowsDesktopContent: React.FC = () => {
@@ -38,18 +44,31 @@ const WindowsDesktopContent: React.FC = () => {
             fileId={win.customData?.fileId as string | undefined}
             filePath={win.customData?.filePath as string | undefined}
             fileContent={win.customData?.fileContent as string | undefined}
+            nativeFile={win.customData?.nativeFile as boolean | undefined}
           />
         )
-      case 'edge':
-        return <EdgeApp />
+      case 'photos':
+        return <PhotosApp />
+      case 'recycle':
+        return <RecycleBinApp />
       case 'terminal':
         return <TerminalApp />
       case 'calculator':
         return <CalculatorApp />
       case 'settings':
         return <SettingsApp />
+      case 'taskmanager':
+        return <ProcessManagerApp />
       case 'paint':
         return <PaintApp />
+      case 'clock':
+        return <ClockApp />
+      case 'music':
+        return <MusicApp />
+      case 'store':
+        return <StoreApp />
+      case 'controlpanel':
+        return <ControlPanelApp />
       default:
         return (
           <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>
@@ -61,9 +80,6 @@ const WindowsDesktopContent: React.FC = () => {
 
   return (
     <div style={{ position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0 }}>
-      {/* macOS-style Menu Bar */}
-      <MenuBar />
-
       {/* Desktop & Window Container */}
       <Desktop>
         {windows.map(win => (
@@ -79,6 +95,7 @@ const WindowsDesktopContent: React.FC = () => {
       <QuickSettings />
       <CalendarFlyout />
       <WidgetsBoard />
+      <TaskView />
 
       {/* Centered Taskbar */}
       <Taskbar />

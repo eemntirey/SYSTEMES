@@ -1,10 +1,17 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 
 export const WidgetsBoard: React.FC = () => {
-  const { isWidgetsOpen, openWindow, closeAllFlyouts } = useOS()
-  const [note, setNote] = useState('Penser à tester la nouvelle mise à jour de Windows 11.')
+  const { isWidgetsOpen, closeAllFlyouts } = useOS()
+  const [note, setNote] = useState(() => {
+    try { return localStorage.getItem('systemes-widget-note') ?? 'Penser à tester la nouvelle mise à jour de Windows 11.' }
+    catch { return 'Penser à tester la nouvelle mise à jour de Windows 11.' }
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem('systemes-widget-note', note) } catch { /* stockage local indisponible */ }
+  }, [note])
 
   if (!isWidgetsOpen) return null
 
@@ -13,7 +20,7 @@ export const WidgetsBoard: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '60px',
+        bottom: '56px',
         left: '12px',
         width: '460px',
         maxHeight: 'calc(100vh - 80px)',
@@ -57,8 +64,8 @@ export const WidgetsBoard: React.FC = () => {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontSize: '13px', fontWeight: 600 }}>Paris, France</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Ensoleillé avec passages nuageux</div>
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>Météo · démonstration</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Prévisions fictives — aucune donnée météo en direct</div>
           </div>
           <div style={{ fontSize: '28px', fontWeight: 700 }}>19°C</div>
         </div>
@@ -81,7 +88,7 @@ export const WidgetsBoard: React.FC = () => {
         </div>
       </div>
 
-      {/* Stocks & Markets */}
+      {/* Données boursières de démonstration : ne pas présenter comme des cours en direct. */}
       <div
         style={{
           display: 'grid',
@@ -124,7 +131,7 @@ export const WidgetsBoard: React.FC = () => {
         }}
       >
         <div style={{ fontSize: '12px', fontWeight: 600, color: '#facc15', marginBottom: '6px' }}>
-          Mémo rapide
+          Mémo rapide · enregistré sur cet appareil
         </div>
         <textarea
           value={note}
@@ -142,9 +149,9 @@ export const WidgetsBoard: React.FC = () => {
         />
       </div>
 
-      {/* News Feed */}
+      {/* Actualités d’exemple : pas de flux temps réel connecté. */}
       <div>
-        <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>Actualités à la une</div>
+        <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>Actualités · exemples non actualisés</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {[
             {
@@ -163,7 +170,7 @@ export const WidgetsBoard: React.FC = () => {
             <div
               key={i}
               onClick={() => {
-                openWindow('edge')
+                window.open('https://www.google.com/search?q=' + encodeURIComponent(news.title), '_blank', 'noopener,noreferrer')
                 closeAllFlyouts()
               }}
               style={{

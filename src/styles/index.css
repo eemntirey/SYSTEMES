@@ -217,7 +217,156 @@ input, textarea, [contenteditable="true"] {
   -webkit-backdrop-filter: var(--backdrop-blur);
 }
 
-/* ---------- Dock macOS Style ---------- */
+/* ---------- Windows 11 Taskbar (Fluent) ---------- */
+.taskbar-w11 {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: var(--taskbar-bg);
+  backdrop-filter: blur(30px) saturate(165%);
+  -webkit-backdrop-filter: blur(30px) saturate(165%);
+  border-top: 1px solid var(--taskbar-border);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.04);
+  display: flex;
+  align-items: center;
+  z-index: 999990;
+  user-select: none;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  animation: taskbar-enter 0.5s ease-out;
+}
+
+@keyframes taskbar-enter {
+  from { transform: translateY(48px); }
+  to { transform: translateY(0); }
+}
+
+.taskbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.taskbar-center.align-left {
+  left: 8px;
+  transform: none;
+}
+
+.taskbar-tray {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding-right: 4px;
+}
+
+.taskbar-btn {
+  position: relative;
+  height: 40px;
+  min-width: 40px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.14s ease;
+  font-family: inherit;
+}
+.taskbar-btn:hover { background: var(--taskbar-item-hover); }
+.taskbar-btn.open { background: var(--taskbar-item-hover); }
+
+/* Win11 app icon with running-indicator pill */
+.taskbar-app {
+  position: relative;
+  height: 40px;
+  width: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.14s ease, transform 0.1s ease;
+  color: var(--text-primary);
+}
+.taskbar-app:hover { background: var(--taskbar-item-hover); }
+.taskbar-app:active { transform: scale(0.88); }
+.taskbar-app.active { background: var(--taskbar-item-active); }
+
+.taskbar-indicator {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 3px;
+  border-radius: 3px;
+  background: var(--text-secondary);
+  transition: width 0.18s ease, background 0.18s ease;
+}
+.taskbar-indicator.inactive { width: 6px; background: var(--text-tertiary, rgba(255,255,255,0.4)); }
+.taskbar-indicator.active { width: 16px; background: var(--win-accent); box-shadow: 0 0 6px var(--win-accent); }
+
+.taskbar-clock {
+  height: 40px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  line-height: 1.15;
+  transition: background 0.14s ease;
+  font-family: inherit;
+}
+.taskbar-clock:hover { background: var(--taskbar-item-hover); }
+
+.taskbar-showdesktop {
+  width: 6px;
+  height: 100%;
+  border: none;
+  border-left: 1px solid var(--taskbar-border);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.taskbar-showdesktop:hover { background: var(--taskbar-item-hover); }
+
+/* Flyout chevron tray (hidden icons) */
+.tray-flyout {
+  position: absolute;
+  bottom: 52px;
+  right: 8px;
+  background: var(--flyout-bg);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid var(--flyout-border);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  z-index: 999995;
+  display: flex;
+  gap: 6px;
+  animation: flyoutOpen 0.16s ease-out;
+}
+
+/* ---------- Legacy macOS Dock (kept for reference) ---------- */
 .dock-container {
   position: fixed;
   bottom: 20px;

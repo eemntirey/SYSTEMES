@@ -1,29 +1,12 @@
-﻿import React, { useMemo, useState } from 'react'
+﻿import React, { useEffect, useMemo, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { FileItem } from '../../types'
+import { NativeBridge } from '../../services/NativeBridge'
 
 interface FileExplorerAppProps {
   initialPath?: string
 }
-
-const quickAccessItems = [
-  { name: 'Bureau', path: 'C:/Users/eemntirey/Desktop', icon: 'folder' },
-  { name: 'Documents', path: 'C:/Users/eemntirey/Documents', icon: 'folder' },
-  { name: 'Téléchargements', path: 'C:/Users/eemntirey/Downloads', icon: 'folder' },
-  { name: 'Images', path: 'C:/Users/eemntirey/Pictures', icon: 'folder' },
-  { name: 'Ce PC (Racine)', path: 'C:/Users/eemntirey', icon: 'pc' },
-]
-
-const storageItems = [
-  {
-    name: 'NVMe SSD (C:)',
-    icon: 'pc',
-    health: 'Santé: 99%',
-    usedPercent: 68,
-    free: '142 Go libres / 476 Go',
-  },
-]
 
 const NavButton: React.FC<{
   icon: string
@@ -188,11 +171,19 @@ const FileCard: React.FC<{
 )
 
 export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
-  initialPath = 'C:/Users/eemntirey',
+  initialPath = '',
 }) => {
-  const { files, createFolder, createFile, deleteItem, openWindow } = useOS()
+  const { openWindow } = useOS()
 
   const [currentPath, setCurrentPath] = useState<string>(initialPath)
+  const [nativeFiles, setNativeFiles] = useState<FileItem[]>([])
+  const [nativeLocations, setNativeLocations] = useState<{ name: string; path: string; icon?: string }[]>([])
+  const [nativeDisks, setNativeDisks] = useState<{ name: string; totalBytes: number; availableBytes: number; format: string }[]>([])
+  const [nativeError, setNativeError] = useState<string | null>(null)
+  const [isNativeLoading, setIsNativeLoading] = useState(true)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [permissionText, setPermissionText] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([initialPath])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
@@ -203,6 +194,55 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [newFileName, setNewFileName] = useState('')
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
+  const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
+
+  const refreshDirectory = async (path = currentPath) => {
+    setIsNativeLoading(true)
+    setNativeError(null)
+    try {
+      const result = await NativeBridge.listFiles(path) as {
+        path?: string
+        items?: { id: string; name: string; type: 'file' | 'folder'; path: string; sizeBytes?: number | null; modified?: string; extension?: string | null }[]
+      }
+      if (!result || !Array.isArray(result.items) || !result.path) throw new Error('Le moteur Windows a retourné un contenu de dossier invalide.')
+      setNativeFiles(result.items.map(item => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        path: item.path,
+        size: item.type === 'folder' ? 'Dossier' : (item.sizeBytes == null ? '—' : item.sizeBytes < 1024 ? item.sizeBytes + ' o' : (item.sizeBytes / 1024).toFixed(1) + ' Ko'),
+        modified: item.modified || '—',
+        extension: item.extension || undefined,
+      })))
+      if (!path) {
+        setCurrentPath(initialPath || result.path)
+        setHistory([initialPath || result.path])
+        setHistoryIndex(0)
+      }
+    } catch (cause) {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+      setNativeFiles([])
+    } finally {
+      setIsNativeLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshDirectory(currentPath)
+  }, [currentPath])
+
+  useEffect(() => {
+    void NativeBridge.getFileLocations().then((result: any) => {
+      if (Array.isArray(result?.locations)) setNativeLocations(result.locations)
+    }).catch((cause: unknown) => {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+    })
+    void NativeBridge.readHardware().then((result: any) => {
+      if (Array.isArray(result?.disks)) setNativeDisks(result.disks.filter((disk: any) => disk && typeof disk.name === 'string' && Number.isFinite(disk.totalBytes) && Number.isFinite(disk.availableBytes)))
+    }).catch((cause: unknown) => {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+    })
+  }, [])
 
   const navigateTo = (path: string) => {
     const formatted = path.replace(/\/+/g, '/')
@@ -241,7 +281,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   }
 
   const currentItems = useMemo(() => {
-    return files.filter((f) => {
+    const visible = nativeFiles.filter((f) => {
       const parts = f.path.split('/')
       parts.pop()
       const parent = parts.join('/')
@@ -258,18 +298,23 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
       }
       return true
     })
-  }, [files, currentPath, searchQuery])
+    return [...visible].sort((a, b) => {
+      if (sortBy === 'type') return a.type.localeCompare(b.type) || a.name.localeCompare(b.name)
+      if (sortBy === 'modified') return b.modified.localeCompare(a.modified) || a.name.localeCompare(b.name)
+      return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
+    })
+  }, [nativeFiles, currentPath, searchQuery, sortBy])
 
   const selectedItem = useMemo(
-    () => files.find((f) => f.id === selectedItemId) || null,
-    [files, selectedItemId],
+    () => nativeFiles.find((f) => f.id === selectedItemId) || null,
+    [nativeFiles, selectedItemId],
   )
 
   const handleItemDoubleClick = (item: FileItem) => {
     if (item.type === 'folder') {
       navigateTo(item.path)
     } else {
-      openWindow('notepad', { fileId: item.id, filePath: item.path, fileContent: item.content || '' }, `${item.name} - Bloc-notes`)
+      void NativeBridge.readTextFile(item.path).then((result: any) => openWindow('notepad', { fileId: item.id, filePath: item.path, fileContent: result?.content || '' }, `${item.name} - Bloc-notes`)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
     }
   }
 
@@ -280,21 +325,39 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
   const handleCreateFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (newFolderName.trim()) {
-      createFolder(currentPath, newFolderName.trim())
+    const name = newFolderName.trim()
+    if (!name) return
+    void NativeBridge.createDirectory(currentPath + '/' + name).then(() => {
       setNewFolderName('')
       setIsCreatingFolder(false)
-    }
+      return refreshDirectory()
+    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
   }
 
   const handleCreateFileSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (newFileName.trim()) {
-      createFile(currentPath, newFileName.trim(), '')
+    const name = newFileName.trim()
+    if (!name) return
+    void NativeBridge.createFile(currentPath + '/' + name, '').then(() => {
       setNewFileName('')
       setIsCreatingFile(false)
+      return refreshDirectory()
+    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
+  }
+
+  const handleRename = async () => {
+    if (!selectedItem || !renameValue.trim()) return
+    try {
+      await NativeBridge.renameFile(selectedItem.path, renameValue.trim())
+      setIsRenaming(false)
+      setRenameValue('')
+      setSelectedItemId(null)
+      await refreshDirectory()
+    } catch (cause) {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
     }
   }
+
 
   return (
     <div
@@ -375,7 +438,16 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </div>
         </div>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label htmlFor="explorer-sort" style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Trier</label>
+          <select id="explorer-sort" aria-label="Trier les éléments" value={sortBy} onChange={e => setSortBy(e.target.value as 'name' | 'type' | 'modified')} style={{ maxWidth: 112, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontSize: 11 }}>
+            <option value="name">Nom</option>
+            <option value="type">Type</option>
+            <option value="modified">Date</option>
+          </select>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <ActionButton icon="trash" label="Corbeille" onClick={() => { void NativeBridge.openRecycleBin().catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} />
           <ActionButton icon="folder" label="Nouveau dossier" onClick={() => setIsCreatingFolder(true)} />
           <ActionButton icon="file-text" label="Nouveau fichier" onClick={() => setIsCreatingFile(true)} />
           <ToggleButton icon="sliders" label="Inspecteur & Aperçu" active={showInspector} onClick={() => setShowInspector((v) => !v)} />
@@ -398,7 +470,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 <span>Favoris</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', padding: '2px 6px' }}>
-                {quickAccessItems.map((item) => (
+                {nativeLocations.map((item) => (
                   <div
                     key={item.path}
                     onClick={() => navigateTo(item.path)}
@@ -423,7 +495,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                       if (currentPath !== item.path) e.currentTarget.style.background = 'transparent'
                     }}
                   >
-                    <FluentIcon name={item.icon} size={16} />
+                    <FluentIcon name={item.icon || "folder"} size={16} />
                     <span>{item.name}</span>
                   </div>
                 ))}
@@ -435,35 +507,30 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 <FluentIcon name="pc" size={14} />
                 <span>Stockage</span>
               </div>
-              <div
-                onClick={() => navigateTo('C:/Users/eemntirey')}
-                style={{
-                  padding: '10px',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--flyout-card)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'background 0.12s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <FluentIcon name="pc" size={20} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '12px' }}>{storageItems[0].name}</span>
-                      <span style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>{storageItems[0].health}</span>
+              {nativeDisks.map(disk => {
+                const usedBytes = Math.max(0, disk.totalBytes - disk.availableBytes)
+                const usedPercent = disk.totalBytes > 0 ? Math.min(100, Math.round(usedBytes / disk.totalBytes * 100)) : 0
+                const formatSize = (bytes: number) => (bytes / 1024 ** 3).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Gio'
+                return <div key={disk.name} role="button" tabIndex={0} onClick={() => navigateTo(disk.name)} onKeyDown={event => { if (event.key === 'Enter') navigateTo(disk.name) }} style={{ padding: 10, marginBottom: 6, borderRadius: 'var(--radius-sm)', background: 'var(--flyout-card)', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <FluentIcon name="pc" size={20} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12 }}>{disk.name}</div>
+                      <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginTop: 5 }}>
+                        <div style={{ height: '100%', width: usedPercent + '%', background: 'var(--win-accent-cyan)' }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>{formatSize(disk.availableBytes)} libres / {formatSize(disk.totalBytes)} · {disk.format}</div>
                     </div>
-                    <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginTop: 4 }}>
-                      <div style={{ height: '100%', width: `${storageItems[0].usedPercent}%`, background: 'var(--win-accent-cyan)', boxShadow: '0 0 6px var(--win-accent-cyan)' }} />
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 4 }}>{storageItems[0].free}</div>
                   </div>
                 </div>
-              </div>
+              })}
+              {!nativeDisks.length && <div style={{ padding: 8, fontSize: 10, color: 'var(--text-tertiary)' }}>Volumes Windows indisponibles.</div>}
             </div>
           </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column' }}>
+          {nativeError && <div role="alert" style={{ padding: 10, marginBottom: 12, borderRadius: 8, background: 'rgba(185,28,28,.18)', color: '#fecaca', fontSize: 12 }}>{nativeError}</div>}
+          {isNativeLoading && <div role="status" style={{ padding: 8, color: 'var(--text-tertiary)', fontSize: 11 }}>Lecture du dossier Windows…</div>}
           {isCreatingFolder && (
             <form onSubmit={handleCreateFolderSubmit} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: 'var(--radius-sm)', background: 'rgba(139, 92, 246, 0.2)', border: 'none' }}>
               <FluentIcon name="folder" size={26} />
@@ -494,7 +561,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             ))}
           </div>
 
-          {currentItems.length === 0 && !isCreatingFolder && !isCreatingFile && (
+          {currentItems.length === 0 && !isNativeLoading && !isCreatingFolder && !isCreatingFile && (
             <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '12.5px' }}>
               Aucun élément ne correspond à votre recherche.
             </div>
@@ -554,7 +621,11 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                     {selectedItem.type === 'file' && (
                       <button onClick={() => handleItemDoubleClick(selectedItem)} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--win-accent)', color: '#fff', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Ouvrir dans le Bloc-notes</button>
                     )}
-                    <button onClick={() => deleteItem(selectedItem.id)} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Supprimer cet élément</button>
+                    <button onClick={() => { setRenameValue(selectedItem.name); setIsRenaming(true) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Renommer</button>
+                    <button type="button" onClick={() => { void NativeBridge.readPermissions(selectedItem.path).then(result => setPermissionText(result.acl)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Permissions Windows</button>
+                    {permissionText && <pre aria-label="Permissions Windows" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 10, color: 'var(--text-secondary)' }}>{permissionText}</pre>}
+                    {isRenaming && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><input aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} /><button type="button" onClick={() => void handleRename()}>Valider</button></div>}
+                    <button onClick={() => { if (!window.confirm('Envoyer « ' + selectedItem.name + ' » vers la Corbeille Windows ?')) return; void NativeBridge.deleteFile(selectedItem.path).then((result: any) => { setPermissionText(result?.note || 'Élément envoyé vers la Corbeille Windows.'); setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Envoyer vers la Corbeille</button>
                   </div>
                 </>
               ) : (

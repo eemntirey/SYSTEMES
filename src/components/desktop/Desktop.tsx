@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react'
 import { useOS } from '../../context/OSContext'
 import { DesktopIcon } from './DesktopIcon'
-import { ContextMenu } from './ContextMenu'
+import { ContextMenu, DesktopSortMode } from './ContextMenu'
 import { AppId, FileItem } from '../../types'
 import { MENU_BAR_HEIGHT } from '../../data/constants'
 
@@ -26,12 +26,12 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
     closeAllFlyouts,
     files,
     showDesktopLabels,
-    addNotification,
   } = useOS()
 
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const [selectedIconIds, setSelectedIconIds] = useState<string[]>([])
   const [iconSize, setIconSize] = useState<'small' | 'medium' | 'large'>('medium')
+  const [sortBy, setSortBy] = useState<DesktopSortMode>('name')
 
   // Lasso selection state
   const [selectionBox, setSelectionBox] = useState<{
@@ -48,7 +48,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   const defaultShortcuts: DesktopShortcut[] = [
     { id: 'pc', name: 'Ce PC', icon: 'pc', appId: 'explorer' },
     { id: 'recycle', name: 'Corbeille', icon: 'recycle' },
-    { id: 'edge', name: 'Microsoft Edge', icon: 'edge', appId: 'edge' },
+    { id: 'photos', name: 'Photos', icon: 'image', appId: 'photos' },
     { id: 'explorer', name: 'Explorateur', icon: 'explorer', appId: 'explorer' },
     { id: 'notepad', name: 'Bloc-notes', icon: 'notepad', appId: 'notepad' },
     { id: 'terminal', name: 'Terminal', icon: 'terminal', appId: 'terminal' },
@@ -67,7 +67,42 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
       fileItem: f,
     }))
 
-  const allShortcuts = [...defaultShortcuts, ...desktopFiles]
+  const parseSize = (s?: string): number => {
+    if (!s) return 0
+    const m = s.replace(',', '.').match(/([\d.]+)/)
+    if (!m) return 0
+    const value = parseFloat(m[1])
+    if (/Mo|MБ/i.test(s)) return value * 1024
+    if (/Go|GB/i.test(s)) return value * 1024 * 1024
+    return value
+  }
+
+  // Tri façon Windows 11 : les icônes système (Ce PC, Corbeille…) restent en tête,
+  // les fichiers/dossiers du bureau sont triés selon le mode choisi.
+  const sortedFiles = [...desktopFiles].sort((a, b) => {
+    switch (sortBy) {
+      case 'size':
+        return parseSize(b.fileItem?.size) - parseSize(a.fileItem?.size)
+      case 'type': {
+        const ta = a.fileItem?.type ?? ''
+        const tb = b.fileItem?.type ?? ''
+        if (ta !== tb) return ta.localeCompare(tb)
+        return a.name.localeCompare(b.name, 'fr')
+      }
+      case 'modified': {
+        const da = a.fileItem?.modified ?? ''
+        const db = b.fileItem?.modified ?? ''
+        const pa = Date.parse(da)
+        const pb = Date.parse(db)
+        if (!Number.isNaN(pa) && !Number.isNaN(pb)) return pb - pa
+        return db.localeCompare(da)
+      }
+      default:
+        return a.name.localeCompare(b.name, 'fr')
+    }
+  })
+
+  const allShortcuts = [...defaultShortcuts, ...sortedFiles]
 
   // Mouse handlers for selection lasso
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -126,7 +161,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   // Handle double clicking shortcut
   const handleShortcutDoubleClick = (sc: DesktopShortcut) => {
     if (sc.id === 'recycle') {
-      addNotification('Corbeille', 'La corbeille est vide ou contient 3 éléments.', 'Explorateur')
+      openWindow('recycle')
       return
     }
     if (sc.appId) {
@@ -169,7 +204,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
         position: 'relative',
         width: '100vw',
         height: '100vh',
-        backgroundImage: `linear-gradient(135deg, rgba(10,10,18,0.65) 0%, rgba(30,30,45,0.35) 100%), url(${wallpaper.url})`,
+        backgroundImage: `url(${wallpaper.url})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
@@ -210,8 +245,8 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
       <div
         style={{
           position: 'absolute',
-          top: `${MENU_BAR_HEIGHT + 16}px`,
-          left: '16px',
+          top: `${MENU_BAR_HEIGHT + 20}px`,
+          left: '20px',
           display: 'flex',
           flexWrap: 'wrap',
           alignContent: 'flex-start',
@@ -258,6 +293,8 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
           onClose={() => setContextMenuPos(null)}
           iconSize={iconSize}
           onIconSizeChange={setIconSize}
+          sortBy={sortBy}
+          onSortChange={setSortBy}
         />
       )}
     </div>

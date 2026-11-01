@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react'
 import {
   AppId,
   FileItem,
@@ -9,6 +9,12 @@ import {
   WindowState,
 } from '../types'
 import { APP_DEFINITIONS, INITIAL_FILES, MENU_BAR_HEIGHT, WALLPAPERS } from '../data/constants'
+import { NativeBridge } from '../services/NativeBridge'
+
+export interface RecycleItem extends FileItem {
+  originalPath: string
+  deletedAt: string
+}
 
 interface OSContextType {
   // Windows
@@ -31,11 +37,13 @@ interface OSContextType {
   isActionCenterOpen: boolean
   isCalendarOpen: boolean
   isWidgetsOpen: boolean
+  isTaskViewOpen: boolean
   toggleStartMenu: () => void
   toggleSearch: () => void
   toggleActionCenter: () => void
   toggleCalendar: () => void
   toggleWidgets: () => void
+  toggleTaskView: () => void
   closeAllFlyouts: () => void
 
   // System Settings
@@ -50,6 +58,7 @@ interface OSContextType {
   setVolume: (vol: number) => void
   isMuted: boolean
   toggleMute: () => void
+  audioDeviceName: string | null
   brightness: number
   setBrightness: (b: number) => void
   wifiEnabled: boolean
@@ -145,6 +154,10 @@ interface OSContextType {
 
   // File System
   files: FileItem[]
+  recycleItems: RecycleItem[]
+  restoreItem: (id: string) => void
+  permanentlyDeleteItem: (id: string) => void
+  emptyRecycleBin: () => void
   createFolder: (parentPath: string, name: string) => void
   createFile: (parentPath: string, name: string, content?: string) => FileItem
   updateFileContent: (id: string, content: string) => void
@@ -163,6 +176,13 @@ interface OSContextType {
 };
 
 export const OSContext = createContext<OSContextType | undefined>(undefined)
+
+const readPreference = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = window.localStorage.getItem(`systemes:${key}`)
+    return raw === null ? fallback : (JSON.parse(raw) as T)
+  } catch { return fallback }
+}
 
 export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Windows state - initialized with open File Explorer
@@ -189,26 +209,28 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isActionCenterOpen, setIsActionCenterOpen] = useState(false)
   const [isCalendarOpen, setIsCalendarOpen] = useState(false)
   const [isWidgetsOpen, setIsWidgetsOpen] = useState(false)
+  const [isTaskViewOpen, setIsTaskViewOpen] = useState(false)
 
   // Settings state
-  const [theme, setTheme] = useState<ThemeMode>('dark')
-  const [wallpaper, setWallpaper] = useState<Wallpaper>(WALLPAPERS[0])
-  const [accentColor, setAccentColor] = useState('#0078d4')
-  const [volume, setVolume] = useState(70)
+  const [theme, setTheme] = useState<ThemeMode>(() => readPreference('theme', 'dark'))
+  const [wallpaper, setWallpaper] = useState<Wallpaper>(() => WALLPAPERS.find(item => item.id === readPreference('wallpaperId', WALLPAPERS[0].id)) ?? WALLPAPERS[0])
+  const [accentColor, setAccentColor] = useState(() => readPreference('accentColor', '#0078d4'))
+  const [volume, setVolume] = useState(() => readPreference('volume', 70))
   const [isMuted, setIsMuted] = useState(false)
-  const [brightness, setBrightness] = useState(90)
-  const [wifiEnabled, setWifiEnabled] = useState(true)
-  const [bluetoothEnabled, setBluetoothEnabled] = useState(true)
-  const [nightLight, setNightLight] = useState(false)
-  const [batterySaver, setBatterySaver] = useState(false)
+  const [audioDeviceName, setAudioDeviceName] = useState<string | null>(null)
+  const [brightness, setBrightness] = useState(() => readPreference('brightness', 90))
+  const [wifiEnabled, setWifiEnabled] = useState(() => readPreference('wifiEnabled', true))
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(() => readPreference('bluetoothEnabled', true))
+  const [nightLight, setNightLight] = useState(() => readPreference('nightLight', false))
+  const [batterySaver, setBatterySaver] = useState(() => readPreference('batterySaver', false))
 
   // Display settings
   const [showDesktopLabels, setShowDesktopLabels] = useState(true)
-  const [fontSize, setFontSize] = useState(100)
-  const [resolution, setResolution] = useState('1920x1080')
-  const [refreshRate, setRefreshRate] = useState('60Hz')
+  const [fontSize, setFontSize] = useState(() => readPreference('fontSize', 100))
+  const [resolution, setResolution] = useState(() => readPreference('resolution', '1920x1080'))
+  const [refreshRate, setRefreshRate] = useState(() => readPreference('refreshRate', '60Hz'))
   const [focusAssist, setFocusAssist] = useState(false)
-  const [taskbarAlignment, setTaskbarAlignment] = useState<'center' | 'left'>('center')
+  const [taskbarAlignment, setTaskbarAlignment] = useState<'center' | 'left'>(() => readPreference('taskbarAlignment', 'center'))
 
   // Privacy
   const [locationEnabled, setLocationEnabled] = useState(true)
@@ -252,6 +274,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
   // File System state
   const [files, setFiles] = useState<FileItem[]>(INITIAL_FILES)
+  const [recycleItems, setRecycleItems] = useState<RecycleItem[]>([])
 
   // Notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>([
@@ -278,6 +301,14 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // Persist system preferences across browser reloads.
+  useEffect(() => {
+    const preferences = { theme, wallpaperId: wallpaper.id, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment }
+    try { Object.entries(preferences).forEach(([key, value]) => window.localStorage.setItem(`systemes:${key}`, JSON.stringify(value))) } catch { /* storage unavailable */ }
+    document.documentElement.style.setProperty('--win-accent', accentColor)
+  }, [theme, wallpaper, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment])
+
+
   // Keep active window valid after close/minimize
   useEffect(() => {
     setActiveWindowId(prev => {
@@ -296,6 +327,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     setIsActionCenterOpen(false)
     setIsCalendarOpen(false)
     setIsWidgetsOpen(false)
+    setIsTaskViewOpen(false)
   }, [])
 
   // Toggle flyout helpers
@@ -307,6 +339,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -320,6 +353,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -333,6 +367,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -346,6 +381,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsActionCenterOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -359,6 +395,21 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
+        setIsTaskViewOpen(false)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleTaskView = useCallback(() => {
+    setIsTaskViewOpen(prev => {
+      const next = !prev
+      if (next) {
+        setIsStartMenuOpen(false)
+        setIsSearchOpen(false)
+        setIsActionCenterOpen(false)
+        setIsCalendarOpen(false)
+        setIsWidgetsOpen(false)
       }
       return next
     })
@@ -597,13 +648,33 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   }, [])
 
   const deleteItem = useCallback((id: string) => {
-    setFiles(prev => {
-      const target = prev.find(f => f.id === id)
-      if (!target) return prev
-      const folderPath = target.path + '/'
-      return prev.filter(f => f.id !== id && !f.path.startsWith(folderPath))
-    })
-  }, [])
+    const target = files.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.path + '/'
+    const removed = files.filter(item => item.id === id || (target.type === 'folder' && item.path.startsWith(folderPrefix)))
+    const deletedAt = new Date().toLocaleString('fr-FR')
+    setRecycleItems(current => [...current, ...removed.map(item => ({ ...item, originalPath: item.path, deletedAt }))])
+    setFiles(current => current.filter(item => !removed.some(removedItem => removedItem.id === item.id)))
+  }, [files])
+
+  const restoreItem = useCallback((id: string) => {
+    const target = recycleItems.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.originalPath + '/'
+    const restoring = recycleItems.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(folderPrefix)))
+    setFiles(current => [...current, ...restoring.map(({ originalPath, deletedAt, ...item }) => ({ ...item, path: originalPath }))])
+    setRecycleItems(current => current.filter(item => !restoring.some(restored => restored.id === item.id)))
+  }, [recycleItems])
+
+  const permanentlyDeleteItem = useCallback((id: string) => {
+    const target = recycleItems.find(item => item.id === id)
+    if (!target) return
+    const folderPrefix = target.originalPath + '/'
+    const removing = recycleItems.filter(item => item.id === id || (target.type === 'folder' && item.originalPath.startsWith(folderPrefix)))
+    setRecycleItems(current => current.filter(item => !removing.some(removedItem => removedItem.id === item.id)))
+  }, [recycleItems])
+
+  const emptyRecycleBin = useCallback(() => setRecycleItems([]), [])
 
   const renameItem = useCallback((id: string, newName: string) => {
     setFiles(prev => {
@@ -652,9 +723,57 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
 
-  const toggleMute = useCallback(() => {
-    setIsMuted(prev => !prev)
+  // ===== Synchronisation audio réel (Core Audio via host SYSTEMES) =====
+  // Best-effort : hors host WebView2, les opérations échouent silencieusement
+  // et l'état reste porté par localStorage comme avant.
+  const nativeAudioAvailable = useRef(true)
+  const muteRef = useRef(isMuted)
+  const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => { muteRef.current = isMuted }, [isMuted])
+
+  const tryNativeAudio = useCallback(async (op: () => Promise<unknown>) => {
+    if (!nativeAudioAvailable.current) return
+    try { await op() } catch { nativeAudioAvailable.current = false }
   }, [])
+
+  // Lecture initiale : volume/mute réels du périphérique de sortie par défaut.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const audio = await NativeBridge.readAudio()
+        if (cancelled) return
+        if (audio?.error || typeof audio?.volume !== 'number') {
+          nativeAudioAvailable.current = false
+          return
+        }
+        setVolume(audio.volume)
+        setIsMuted(!!audio.isMuted)
+        if (audio.deviceName) setAudioDeviceName(audio.deviceName)
+      } catch {
+        nativeAudioAvailable.current = false
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const syncVolumeToNative = useCallback((vol: number) => {
+    if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
+    volumeTimerRef.current = setTimeout(() => {
+      void tryNativeAudio(() => NativeBridge.setAudioVolume(vol))
+    }, 150)
+  }, [tryNativeAudio])
+
+  const setVolumeAndSync = useCallback((vol: number) => {
+    setVolume(vol)
+    syncVolumeToNative(vol)
+  }, [syncVolumeToNative])
+
+  const toggleMute = useCallback(() => {
+    const next = !muteRef.current
+    setIsMuted(next)
+    void tryNativeAudio(() => NativeBridge.setAudioMuted(next))
+  }, [tryNativeAudio])
 
   const toggleWifi = useCallback(() => {
     setWifiEnabled(prev => !prev)
@@ -811,11 +930,13 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         isActionCenterOpen,
         isCalendarOpen,
         isWidgetsOpen,
+        isTaskViewOpen,
         toggleStartMenu,
         toggleSearch,
         toggleActionCenter,
         toggleCalendar,
         toggleWidgets,
+        toggleTaskView,
         closeAllFlyouts,
 
         theme,
@@ -826,9 +947,10 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         accentColor,
         setAccentColor,
         volume,
-        setVolume,
+        setVolume: setVolumeAndSync,
         isMuted,
         toggleMute,
+        audioDeviceName,
         brightness,
         setBrightness,
         wifiEnabled,
@@ -920,6 +1042,10 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         shutdownOS,
 
         files,
+        recycleItems,
+        restoreItem,
+        permanentlyDeleteItem,
+        emptyRecycleBin,
         createFolder,
         createFile,
         updateFileContent,
