@@ -1,15 +1,31 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ProcessManagerApp } from './ProcessManagerApp'
 
 const mocks = vi.hoisted(() => ({
   readProcesses: vi.fn(),
+  readMemory: vi.fn(),
   killProcess: vi.fn(),
 }))
 
 vi.mock('../../services/NativeBridge', () => ({
   NativeBridge: mocks,
 }))
+
+beforeEach(() => {
+  mocks.readMemory.mockResolvedValue({
+    totalPhysicalBytes: 16 * 1024 ** 3,
+    availablePhysicalBytes: 4 * 1024 ** 3,
+    usedPhysicalBytes: 12 * 1024 ** 3,
+    memoryLoadPercent: 75,
+    totalPageFileBytes: 20 * 1024 ** 3,
+    availablePageFileBytes: 8 * 1024 ** 3,
+    totalVirtualBytes: 100 * 1024 ** 3,
+    availableVirtualBytes: 80 * 1024 ** 3,
+    sampleSource: 'Windows GlobalMemoryStatusEx',
+    sampledAtUtc: '2026-11-01T12:00:00Z',
+  })
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -31,6 +47,8 @@ describe('ProcessManagerApp', () => {
 
     expect(await screen.findByText('editor')).toBeDefined()
     expect(screen.getByText('125,5 Mo')).toBeDefined()
+    expect(screen.getByText('12 / 16 Gio')).toBeDefined()
+    expect(screen.getByText('75 % utilisés · 4 Gio disponibles')).toBeDefined()
     expect(screen.getAllByText('12,4 %').length).toBeGreaterThan(0)
     expect(screen.getByText('8')).toBeDefined()
     expect(mocks.readProcesses).toHaveBeenCalledTimes(1)
