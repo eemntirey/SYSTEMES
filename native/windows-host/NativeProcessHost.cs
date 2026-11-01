@@ -29,9 +29,19 @@ internal sealed class NativeProcessHost : IAsyncDisposable
 
         _process = Process.Start(startInfo) ?? throw new InvalidOperationException("Impossible de démarrer SYSTEMES Native Core.");
         _ = DrainErrorsAsync(_process.StandardError);
-        await Task.Yield();
-        if (_process.HasExited)
-            throw new InvalidOperationException($"SYSTEMES Native Core s'est arrêté (code {_process.ExitCode}).");
+
+        using var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var handshake = await SendAsync(
+            JsonSerializer.Serialize(new { id = "systemes-startup", method = "system/ping", @params = new { } }),
+            startupTimeout.Token);
+
+        using var response = JsonDocument.Parse(handshake);
+        if (!response.RootElement.TryGetProperty("result", out var result)
+            || !result.TryGetProperty("status", out var status)
+            || status.GetString() != "ready")
+        {
+            throw new InvalidOperationException("SYSTEMES Native Core a démarré sans confirmer son état prêt.");
+        }
     }
 
     public async Task<string> SendAsync(string requestJson, CancellationToken cancellationToken = default)
