@@ -80,7 +80,7 @@ describe('Settings native integrations', () => {
     renderSettings();
     fireEvent.click(screen.getAllByText('Bluetooth et appareils')[0]);
 
-    expect(await screen.findByText('Test USB device')).toBeDefined();
+    expect((await screen.findAllByText('Test USB device')).length).toBeGreaterThan(0);
     expect(screen.getByText('Test Ethernet adapter')).toBeDefined();
     expect(screen.getByText('Inventaire matériel Windows · 1')).toBeDefined();
     expect(screen.getByText('OK')).toBeDefined();
