@@ -70,6 +70,10 @@ describe('Settings native integrations', () => {
     nativeMocks.readDevices.mockResolvedValue({
       usb: ['Test USB device'],
       network: ['Test Ethernet adapter'],
+      devices: [{ name: 'Test USB device', deviceClass: 'USB', status: 'OK', manufacturer: 'Test vendor', healthy: true, configManagerErrorCode: 0 }],
+      count: 1,
+      problemCount: 0,
+      source: 'WMI Win32_PnPEntity',
       note: 'Détection WMI',
     });
 
@@ -78,6 +82,8 @@ describe('Settings native integrations', () => {
 
     expect(await screen.findByText('Test USB device')).toBeDefined();
     expect(screen.getByText('Test Ethernet adapter')).toBeDefined();
+    expect(screen.getByText('Inventaire matériel Windows · 1')).toBeDefined();
+    expect(screen.getByText('OK')).toBeDefined();
     expect(nativeMocks.readDevices).toHaveBeenCalledTimes(1);
   });
 
