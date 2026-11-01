@@ -37,6 +37,7 @@ export const StartMenu: React.FC = () => {
     { id: 'calculator', name: 'Calculatrice', icon: 'calculator' },
     { id: 'paint', name: 'Paint', icon: 'palette' },
     { id: 'settings', name: 'Paramètres', icon: 'settings' },
+    { id: 'taskmanager', name: 'Gestionnaire des tâches', icon: 'activity' },
     { id: 'explorer', name: 'Ce PC', icon: 'folder' },
     { id: 'photos', name: 'Galerie', icon: 'image' },
     { id: 'settings', name: 'Affichage', icon: 'sliders' },

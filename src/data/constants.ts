@@ -96,6 +96,15 @@ export const APP_DEFINITIONS: Record<string, AppDefinition> = {
     defaultSize: { width: 340, height: 520 },
     minSize: { width: 320, height: 480 },
   },
+  taskmanager: {
+    id: 'taskmanager',
+    name: 'Gestionnaire des tâches',
+    icon: 'activity',
+    description: 'Surveiller et arrêter les processus Windows',
+    pinned: false,
+    defaultSize: { width: 900, height: 620 },
+    minSize: { width: 640, height: 420 },
+  },
   settings: {
     id: 'settings',
     name: 'Paramètres',

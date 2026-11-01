@@ -19,6 +19,7 @@ import { RecycleBinApp } from './components/apps/RecycleBinApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { CalculatorApp } from './components/apps/CalculatorApp'
 import { SettingsApp } from './components/apps/SettingsApp'
+import { ProcessManagerApp } from './components/apps/ProcessManagerApp'
 import { PaintApp } from './components/apps/PaintApp'
 import { WindowState } from './types'
 
@@ -51,6 +52,8 @@ const WindowsDesktopContent: React.FC = () => {
         return <CalculatorApp />
       case 'settings':
         return <SettingsApp />
+      case 'taskmanager':
+        return <ProcessManagerApp />
       case 'paint':
         return <PaintApp />
       default:

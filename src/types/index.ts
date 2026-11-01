@@ -8,6 +8,7 @@ export type AppId =
   | 'photos'
   | 'recycle'
   | 'widgets'
+  | 'taskmanager'
 
 export type SnapPosition =
   | 'left-half'
