@@ -29,6 +29,9 @@ namespace Systemes.Native.Core
                         case "system/ping":
                             result = new { status = "ready", engine = "SYSTEMES Native Core" };
                             break;
+                        case "security/read":
+                            result = SecurityManager.ReadSecurityContext();
+                            break;
                         case "system/open-settings":
                             result = SettingsNative.OpenSettingsPage(args["page"]?.Value<string>() ?? "");
                             break;
