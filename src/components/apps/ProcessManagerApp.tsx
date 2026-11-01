@@ -19,6 +19,8 @@ interface ProcessSnapshot {
   logicalProcessorCount?: number
   note?: string
 }
+type NativeMemorySnapshot = Awaited<ReturnType<typeof NativeBridge.readMemory>>
+const formatGiB = (bytes: number) => (bytes / (1024 ** 3)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })
 type SortMode = 'cpu' | 'memory' | 'name'
 
 const protectedProcessNames = new Set([
@@ -40,6 +42,7 @@ export const ProcessManagerApp: React.FC = () => {
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [busyPid, setBusyPid] = useState<number | null>(null)
   const [logicalProcessors, setLogicalProcessors] = useState<number | null>(null)
+  const [memory, setMemory] = useState<NativeMemorySnapshot | null>(null)
   const refreshing = useRef(false)
 
   const refresh = useCallback(async (silent = false) => {
@@ -48,13 +51,37 @@ export const ProcessManagerApp: React.FC = () => {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      const snapshot = await NativeBridge.readProcesses() as ProcessSnapshot
+      const [processResult, memoryResult] = await Promise.allSettled([
+        NativeBridge.readProcesses() as Promise<ProcessSnapshot>,
+        NativeBridge.readMemory(),
+      ])
+      if (processResult.status !== 'fulfilled') throw processResult.reason
+      const snapshot = processResult.value
       if (!snapshot || !Array.isArray(snapshot.processes)) {
         throw new Error('Le moteur natif a retourné une liste de processus invalide.')
       }
       setProcesses(snapshot.processes)
       setLogicalProcessors(snapshot.logicalProcessorCount ?? null)
-      setNotice(snapshot.note || null)
+
+      if (memoryResult.status === 'fulfilled') {
+        const memorySnapshot = memoryResult.value
+        if (!Number.isFinite(memorySnapshot.totalPhysicalBytes) ||
+            !Number.isFinite(memorySnapshot.availablePhysicalBytes) ||
+            memorySnapshot.totalPhysicalBytes <= 0 ||
+            memorySnapshot.availablePhysicalBytes < 0 ||
+            memorySnapshot.availablePhysicalBytes > memorySnapshot.totalPhysicalBytes ||
+            memorySnapshot.memoryLoadPercent < 0 ||
+            memorySnapshot.memoryLoadPercent > 100) {
+          setMemory(null)
+          setError('Les compteurs mémoire Windows retournés sont invalides.')
+        } else {
+          setMemory(memorySnapshot)
+        }
+      } else {
+        setMemory(null)
+        setError(`Mesure de la RAM indisponible : ${memoryResult.reason instanceof Error ? memoryResult.reason.message : String(memoryResult.reason)}`)
+      }
+      setNotice(snapshot.note || 'Processus Windows réels · mémoire physique mesurée via GlobalMemoryStatusEx.')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -85,8 +112,8 @@ export const ProcessManagerApp: React.FC = () => {
   }, [processes, query, sortBy])
 
   const selectedProcess = processes.find(process => process.id === selectedPid) ?? null
-  const totalMemory = processes.reduce((sum, process) => sum + (process.memoryMB || 0), 0)
   const totalCpu = Math.min(100, processes.reduce((sum, process) => sum + (process.cpuUsagePercent ?? 0), 0))
+  const usedMemoryPercent = memory?.memoryLoadPercent ?? null
   const sampledCount = processes.filter(process => process.cpuUsagePercent != null).length
 
   const stopProcess = async (process: NativeProcess) => {
