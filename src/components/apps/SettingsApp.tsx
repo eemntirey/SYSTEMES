@@ -149,38 +149,10 @@ export const SettingsApp: React.FC = () => {
     theme, setTheme,
     wallpaper, setWallpaper,
     accentColor, setAccentColor,
-    brightness, setBrightness,
-    volume, setVolume,
-    isMuted, toggleMute,
     wifiEnabled,
-    nightLight, toggleNightLight,
-    batterySaver, toggleBatterySaver,
     fontSize, setFontSize,
-    resolution, setResolution,
-    refreshRate, setRefreshRate,
-    focusAssist, setFocusAssist,
     taskbarAlignment, setTaskbarAlignment,
-    autoUpdate, setAutoUpdate,
-    notificationsEnabled, toggleNotifications,
     addNotification,
-    airplaneMode, mobileHotspot,
-    toggleAirplaneMode, toggleMobileHotspot,
-    gameBarEnabled, toggleGameBar,
-    gameModeEnabled, toggleGameMode,
-    audioRecordingEnabled, toggleAudioRecording,
-    vrrEnabled, toggleVRR,
-    hardwareGpuScheduling, toggleHardwareGpuScheduling,
-    magnifierEnabled, toggleMagnifier,
-    colorFilterEnabled, toggleColorFilter,
-    highContrastEnabled, toggleHighContrast,
-    captionsEnabled, toggleCaptions,
-    audioAlertsEnabled, toggleAudioAlerts,
-    voiceAccessEnabled, toggleVoiceAccess,
-    syncSettings, toggleSyncSettings,
-    setTimeAutomatically, toggleSetTimeAutomatically,
-    setTimeZoneAutomatically, toggleSetTimeZoneAutomatically,
-    lockScreenBackground, toggleLockScreenBackground,
-    lockScreenAppStatus, toggleLockScreenAppStatus,
   } = useOS()
 
   const [section, setSection] = useState<SettingsSection>('home')
@@ -204,6 +176,7 @@ export const SettingsApp: React.FC = () => {
   const [nearbyBluetooth, setNearbyBluetooth] = useState<{ id: string; name: string }[]>([])
   const [bluetoothMessage, setBluetoothMessage] = useState('')
   const [bluetoothBusy, setBluetoothBusy] = useState(false)
+  const [audioInfo, setAudioInfo] = useState<{ volume: number; isMuted: boolean; deviceName?: string } | null>(null)
 
   const refreshWifi = async () => {
     setWifiBusy(true)
@@ -257,6 +230,7 @@ export const SettingsApp: React.FC = () => {
     if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth') void NativeBridge.readBluetoothStatus().then(setBluetoothStatus).catch((error: unknown) => setBluetoothMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'network') void refreshWifi()
+    if (section === 'system') void NativeBridge.readAudio().then((value: any) => { if (Number.isFinite(value?.volume) && typeof value?.isMuted === 'boolean') setAudioInfo(value) }).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'system') void NativeBridge.readPowerSchemes().then((value: any) => {
       const schemes = Array.isArray(value?.schemes) ? value.schemes : []
       setPowerSchemes(schemes)
@@ -265,6 +239,25 @@ export const SettingsApp: React.FC = () => {
     }).catch((error: unknown) => setPowerMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'system') void NativeBridge.readServices().then((value: any) => setServices(Array.isArray(value?.services) ? value.services : [])).catch((error: unknown) => setServiceMessage(error instanceof Error ? error.message : String(error)))
   }, [section])
+
+  const openWindowsPage = async (page: Parameters<typeof NativeBridge.openWindowsSettings>[0]) => {
+    try { await NativeBridge.openWindowsSettings(page) }
+    catch (error) { setUpdateMessage(error instanceof Error ? error.message : String(error)) }
+  }
+
+  const changeAudioVolume = async (value: number) => {
+    setAudioInfo(current => current ? { ...current, volume: value } : { volume: value, isMuted: false })
+    try { await NativeBridge.setAudioVolume(value) }
+    catch (error) { setUpdateMessage(error instanceof Error ? error.message : String(error)) }
+  }
+
+  const toggleAudioMute = async () => {
+    if (!audioInfo) return
+    try {
+      const result: any = await NativeBridge.setAudioMuted(!audioInfo.isMuted)
+      setAudioInfo({ ...audioInfo, isMuted: result?.isMuted ?? !audioInfo.isMuted })
+    } catch (error) { setUpdateMessage(error instanceof Error ? error.message : String(error)) }
+  }
 
   const applyPowerScheme = async () => {
     if (!selectedPowerGuid || !window.confirm('Appliquer ce plan d’alimentation Windows ?')) return
@@ -503,25 +496,25 @@ export const SettingsApp: React.FC = () => {
                 </select>
               </div>
             </div>
-            <SettingRow icon="moon" title="Éclairage nocturne" desc="Réduit la lumière bleue le soir pour protéger vos yeux" toggle={nightLight} onToggle={toggleNightLight} />
+            <SettingRow icon="moon" title="Éclairage nocturne" desc="Ouvrir le réglage natif de lumière nocturne Windows" onClick={() => { void openWindowsPage('night-light') }} />
             <SettingRow icon="maximize" title="Taille du texte" desc={`${fontSize}% — Mise à l'échelle de l'affichage`}>
               <input type="range" min="80" max="200" step="5" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />
             </SettingRow>
 
             <SectionTitle>Son</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="volume" title="Volume maître" desc={isMuted ? 'Muet' : `${volume}%`} toggle={!isMuted} onToggle={toggleMute}>
-              {!isMuted && <input type="range" min="0" max="100" value={volume} onChange={e => setVolume(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent-cyan)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />}
+            <SettingRow icon="volume" title="Volume maître" desc={audioInfo ? (audioInfo.isMuted ? 'Muet' : `${audioInfo.volume}% · ${audioInfo.deviceName || 'Périphérique audio Windows'}`) : 'Lecture audio Windows indisponible'} toggle={audioInfo ? !audioInfo.isMuted : undefined} onToggle={() => void toggleAudioMute()} onClick={!audioInfo ? () => { void openWindowsPage('sound') } : undefined}>
+              {audioInfo && !audioInfo.isMuted && <input type="range" min="0" max="100" value={audioInfo.volume} onChange={e => void changeAudioVolume(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent-cyan)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />}
             </SettingRow>
 
             <SectionTitle>Notifications</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="bell" title="Notifications" desc="Recevoir des notifications des applications et des autres expéditeurs" toggle={notificationsEnabled} onToggle={toggleNotifications} />
-            <SettingRow icon="moon" title="Assistance Focus" desc="Masquer les notifications pendant les activités importantes" toggle={focusAssist} onToggle={() => setFocusAssist(!focusAssist)} />
+            <SettingRow icon="bell" title="Notifications" desc="Gérer les notifications dans Windows" onClick={() => { void openWindowsPage('notifications') }} />
+            <SettingRow icon="moon" title="Assistance Focus" desc="Gérer les périodes de concentration dans Windows" onClick={() => { void openWindowsPage('quiet-hours') }} />
 
             <SectionTitle>Alimentation</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="battery-charging" title="Économiseur de batterie" desc="Réduit la consommation pour prolonger l'autonomie" toggle={batterySaver} onToggle={toggleBatterySaver} />
+            <SettingRow icon="battery-charging" title="Économiseur de batterie" desc="Gérer l’économiseur de batterie Windows" onClick={() => { void openWindowsPage('battery') }} />
             <SettingRow icon="power" title="Mise en veille de l'écran" desc="Après 10 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="10 min" />
             <SettingRow icon="power" title="Mode veille" desc="Après 30 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="30 min" />
           </div>
@@ -587,8 +580,8 @@ export const SettingsApp: React.FC = () => {
                         <SectionTitle>Paramètres avancés</SectionTitle>
             <SettingRow icon="sliders" title="Ethernet" desc="Non connecté" onClick={() => addNotification('Réseau', 'Ethernet', 'Paramètres', 'sliders')} />
             <SettingRow icon="lock" title="VPN" desc="Aucun VPN configuré" onClick={() => addNotification('Réseau', 'VPN', 'Paramètres', 'lock')} />
-            <SettingRow icon="sliders" title="Mode avion" desc={airplaneMode ? 'Activé' : 'Désactivé'} toggle={airplaneMode} onToggle={toggleAirplaneMode} />
-            <SettingRow icon="sliders" title="Point d'accès mobile" desc={mobileHotspot ? 'Activé — partage de connexion' : 'Désactivé'} toggle={mobileHotspot} onToggle={toggleMobileHotspot} />
+            <SettingRow icon="sliders" title="Mode avion" desc="Gérer le mode avion dans Windows" onClick={() => { void openWindowsPage('airplane-mode') }} />
+            <SettingRow icon="sliders" title="Point d'accès mobile" desc="Gérer le partage de connexion Windows" onClick={() => { void openWindowsPage('mobile-hotspot') }} />
             <SettingRow icon="sliders" title="Utilisation des données" desc="6,3 Go utilisés ce mois-ci" onClick={() => addNotification('Réseau', 'Utilisation des données', 'Paramètres', 'sliders')} badge="6,3 Go" />
             <SettingRow icon="sliders" title="Paramètres proxy" desc="Aucun proxy configuré" onClick={() => addNotification('Réseau', 'Proxy', 'Paramètres', 'sliders')} />
           </div>
@@ -658,8 +651,8 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Afficher le badge, la sélection de fenêtres, le bouton afficher le bureau" onClick={() => addNotification('Barre des tâches', 'Les options avancées de comportement ne sont pas encore disponibles.', 'Paramètres', 'info')} />
 
             <SectionTitle>Écran de verrouillage</SectionTitle>
-            <SettingRow icon="lock" title="Arrière-plan de l'écran de verrouillage" desc="Windows à la une" toggle={lockScreenBackground} onToggle={toggleLockScreenBackground} />
-            <SettingRow icon="clock" title="Afficher l'état des applications" desc="Afficher des informations rapides sur l'écran de verrouillage" toggle={lockScreenAppStatus} onToggle={toggleLockScreenAppStatus} />
+            <SettingRow icon="lock" title="Arrière-plan de l'écran de verrouillage" desc="Gérer l’arrière-plan dans Windows" onClick={() => { void openWindowsPage('lock-screen') }} />
+            <SettingRow icon="clock" title="Afficher l'état des applications" desc="Gérer les widgets d’état de l’écran de verrouillage dans Windows" onClick={() => { void openWindowsPage('lock-screen') }} />
           </div>
         )}
 
@@ -717,7 +710,7 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Paramètres du compte</SectionTitle>
             <SettingRow icon="lock" title="Options de connexion" desc="Windows Hello, code PIN, clé de sécurité, mot de passe" onClick={() => addNotification('Comptes', 'Options de connexion', 'Paramètres', 'lock')} />
-            <SettingRow icon="sliders" title="Synchronisation de vos paramètres" desc="Les paramètres, thèmes et mots de passe sont synchronisés" toggle={syncSettings} onToggle={toggleSyncSettings} />
+            <SettingRow icon="sliders" title="Synchronisation de vos paramètres" desc="Gérer la synchronisation du compte Windows" onClick={() => { void openWindowsPage('accounts-sync') }} />
             <SettingRow icon="pc" title="Accès professionnel ou scolaire" desc="Se connecter à l'organisation, MDM ou Azure AD" onClick={() => addNotification('Comptes', 'Accès professionnel ou scolaire', 'Paramètres', 'pc')} />
 
             <SectionTitle>Autres utilisateurs</SectionTitle>
@@ -742,8 +735,8 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SectionTitle>Date et heure</SectionTitle>
-            <SettingRow icon="clock" title="Définir l'heure automatiquement" desc="Synchronisé via time.windows.com" toggle={setTimeAutomatically} onToggle={toggleSetTimeAutomatically} />
-            <SettingRow icon="clock" title="Définir le fuseau horaire automatiquement" desc="Europe/Paris (UTC+2)" toggle={setTimeZoneAutomatically} onToggle={toggleSetTimeZoneAutomatically} />
+            <SettingRow icon="clock" title="Définir l'heure automatiquement" desc="Gérer l’heure système dans Windows" onClick={() => { void openWindowsPage('date-time') }} />
+            <SettingRow icon="clock" title="Définir le fuseau horaire automatiquement" desc="Gérer le fuseau horaire système dans Windows" onClick={() => { void openWindowsPage('date-time') }} />
             <SettingRow icon="clock" title="Afficher les heures supplémentaires dans la barre des tâches" desc="Ajouter des horloges pour d'autres fuseaux horaires" onClick={() => addNotification('Heure', 'Horloges supplémentaires', 'Paramètres', 'clock')} />
 
             <SectionTitle>Région</SectionTitle>
@@ -777,20 +770,20 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Xbox Game Bar</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="terminal" title="Xbox Game Bar" desc="Superposition pour les captures d'écran, l'enregistrement et plus" toggle={gameBarEnabled} onToggle={toggleGameBar} />
+            <SettingRow icon="terminal" title="Xbox Game Bar" desc="Gérer Xbox Game Bar dans Windows" onClick={() => { void openWindowsPage('gaming') }} />
             <SettingRow icon="terminal" title="Raccourci clavier Game Bar" desc="Win + G pour ouvrir la Game Bar" onClick={() => addNotification('Jeux', 'Raccourci Game Bar (Win + G)', 'Paramètres', 'terminal')} badge="Win+G" />
 
             <SectionTitle>Captures</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="square" title="Enregistrement audio lors des captures" desc="Inclure le son du jeu et le microphone" toggle={audioRecordingEnabled} onToggle={toggleAudioRecording} />
+            <SettingRow icon="square" title="Enregistrement audio lors des captures" desc="Gérer les options de capture dans Windows" onClick={() => { void openWindowsPage('gaming') }} />
             <SettingRow icon="sliders" title="Qualité vidéo" desc="30 fps, qualité standard" onClick={() => addNotification('Jeux', 'Qualité vidéo', 'Paramètres', 'sliders')} badge="30 fps" />
             <SettingRow icon="sliders" title="Dossier des captures" desc="C:/Utilisateurs/eemntirey/Vidéos/Captures" onClick={() => addNotification('Jeux', 'Dossier des captures', 'Paramètres', 'sliders')} />
 
             <SectionTitle>Mode jeu</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="terminal" title="Mode Jeu" desc="Optimise le PC pour les jeux en priorisant les ressources GPU/CPU" toggle={gameModeEnabled} onToggle={toggleGameMode} badge="Recommandé" />
-            <SettingRow icon="sliders" title="Planification GPU accélérée par le matériel" desc="Améliore les performances et la latence vidéo" toggle={hardwareGpuScheduling} onToggle={toggleHardwareGpuScheduling} />
-            <SettingRow icon="sliders" title="Variable Refresh Rate (VRR)" desc="Taux de rafraîchissement variable pour les jeux compatibles" toggle={vrrEnabled} onToggle={toggleVRR} />
+            <SettingRow icon="terminal" title="Mode Jeu" desc="Gérer le mode Jeu dans Windows" onClick={() => { void openWindowsPage('game-mode') }} />
+            <SettingRow icon="sliders" title="Planification GPU accélérée par le matériel" desc="Consulter le réglage graphique natif de Windows" onClick={() => { void openWindowsPage('graphics') }} />
+            <SettingRow icon="sliders" title="Variable Refresh Rate (VRR)" desc="Consulter les options graphiques natives de Windows" onClick={() => { void openWindowsPage('graphics') }} />
           </div>
         )}
 
@@ -805,20 +798,20 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="maximize" title="Taille du texte" desc="Agrandir le texte sans modifier d'autres éléments" onClick={() => addNotification('Accessibilité', 'Taille du texte', 'Paramètres', 'maximize')} />
             <SettingRow icon="maximize" title="Effets visuels" desc="Animations, transparences, fond d'écran animé" onClick={() => addNotification('Accessibilité', 'Effets visuels', 'Paramètres', 'maximize')} />
             <SettingRow icon="maximize" title="Pointeur de la souris et interaction tactile" desc="Modifier l'apparence du curseur" onClick={() => addNotification('Accessibilité', 'Pointeur et tactile', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Loupe" desc="Agrandir une zone de l'écran" toggle={magnifierEnabled} onToggle={toggleMagnifier} />
-            <SettingRow icon="maximize" title="Filtre de couleur" desc="Daltonisme — Désactivé" toggle={colorFilterEnabled} onToggle={toggleColorFilter} />
-            <SettingRow icon="maximize" title="Contraste élevé" desc="Rend le texte et les applications plus faciles à distinguer" toggle={highContrastEnabled} onToggle={toggleHighContrast} />
+            <SettingRow icon="maximize" title="Loupe" desc="Gérer la loupe dans Windows" onClick={() => { void openWindowsPage('accessibility-magnifier') }} />
+            <SettingRow icon="maximize" title="Filtre de couleur" desc="Gérer les filtres de couleur dans Windows" onClick={() => { void openWindowsPage('accessibility-color-filters') }} />
+            <SettingRow icon="maximize" title="Contraste élevé" desc="Gérer le contraste dans Windows" onClick={() => { void openWindowsPage('accessibility-display') }} />
 
             <SectionTitle>Audition</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="volume" title="Légendes" desc="Afficher des sous-titres automatiques pour l'audio" toggle={captionsEnabled} onToggle={toggleCaptions} />
-            <SettingRow icon="volume" title="Alertes audio" desc="Utiliser des alertes visuelles pour les sons système" toggle={audioAlertsEnabled} onToggle={toggleAudioAlerts} />
+            <SettingRow icon="volume" title="Légendes" desc="Gérer les sous-titres dans Windows" onClick={() => { void openWindowsPage('accessibility-captions') }} />
+            <SettingRow icon="volume" title="Alertes audio" desc="Gérer les paramètres d’accessibilité audio dans Windows" onClick={() => { void openWindowsPage('accessibility-speech') }} />
 
             <SectionTitle>Interaction</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
             <SettingRow icon="square" title="Clavier" desc="Clavier visuel, touches rémanentes, filtres de touches" onClick={() => addNotification('Accessibilité', 'Clavier', 'Paramètres', 'square')} />
             <SettingRow icon="sliders" title="Souris" desc="Touches souris, vitesse du pointeur" onClick={() => addNotification('Accessibilité', 'Souris', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Commande vocale" desc="Dicter du texte et contrôler votre PC par la voix" toggle={voiceAccessEnabled} onToggle={toggleVoiceAccess} />
+            <SettingRow icon="sliders" title="Commande vocale" desc="Gérer la commande vocale dans Windows" onClick={() => { void openWindowsPage('accessibility-speech') }} />
           </div>
         )}
 
@@ -878,7 +871,7 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="refresh" title="Ouvrir l’historique réel des mises à jour" desc="Consulter l’historique directement dans les paramètres Windows" onClick={() => { void NativeBridge.openWindowsSettings('windows-update') }} />
 
             <SectionTitle>Options avancées</SectionTitle>
-            <SettingRow icon="clock" title="Mises à jour actives" desc="Choisissez quand les mises à jour sont installées" toggle={autoUpdate} onToggle={() => setAutoUpdate(!autoUpdate)} />
+            <SettingRow icon="clock" title="Mises à jour actives" desc="Gérer les mises à jour directement dans Windows" onClick={() => { void openWindowsPage('windows-update') }} />
             <SettingRow icon="sliders" title="Heures actives" desc="Prévenir les redémarrages entre 08:00 et 23:00" onClick={() => addNotification('Mise à jour', 'Heures actives', 'Paramètres', 'sliders')} badge="08:00 – 23:00" />
             <SettingRow icon="sliders" title="Mises à jour optionnelles" desc="Pilotes et mises à jour non critiques" onClick={() => addNotification('Mise à jour', 'Mises à jour optionnelles', 'Paramètres', 'sliders')} />
             <SettingRow icon="sliders" title="Windows Insider Program" desc="Accéder aux versions préliminaires de Windows" onClick={() => addNotification('Mise à jour', 'Windows Insider Program', 'Paramètres', 'sliders')} />
