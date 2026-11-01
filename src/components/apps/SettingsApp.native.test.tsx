@@ -32,6 +32,7 @@ beforeEach(() => {
   nativeMocks.readWifiStatus.mockResolvedValue({ connected: false });
   nativeMocks.scanWifi.mockResolvedValue({ networks: [] });
   nativeMocks.readServices.mockResolvedValue({ services: [], count: 0 });
+  nativeMocks.readPowerSchemes.mockResolvedValue({ schemes: [], activeGuid: '' });
 });
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
