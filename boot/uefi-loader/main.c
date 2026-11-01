@@ -32,7 +32,7 @@ static VOID debug_out(UINT8 value) {
     __asm__ __volatile__("outb %0, $0xE9" : : "a"(value));
 }
 
-static VOID serial_text(const CHAR8 *text) {
+static VOID debug_text(const CHAR8 *text) {
     while (*text) debug_out((UINT8)*text++);
 }
 
