@@ -226,7 +226,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
         name: item.name,
         type: item.type,
         path: item.path,
-        size: item.type === 'folder' ? 'Dossier' : (item.sizeBytes == null ? '—' : item.sizeBytes < 1024 ? item.sizeBytes + ' o' : (item.sizeBytes / 1024).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' Ko'),
+        size: item.type === 'folder' ? 'Dossier' : (item.sizeBytes == null ? '—' : item.sizeBytes < 1024 ? item.sizeBytes + ' o' : (item.sizeBytes / 1024).toFixed(1) + ' Ko'),
         modified: item.modified || '—',
         extension: item.extension || undefined,
       })))
