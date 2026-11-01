@@ -8,6 +8,7 @@ namespace SYSTEMES.WindowsHost;
 public partial class MainWindow : Window
 {
     private readonly NativeProcessHost _native = new();
+    private bool _uiSmokeReported;
 
     public MainWindow()
     {
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
             DesktopView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             DesktopView.CoreWebView2.Settings.AreDevToolsEnabled = false;
             DesktopView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            DesktopView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
 
             var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
             var entryPoint = Path.Combine(webRoot, "index.html");
@@ -37,9 +39,68 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            ReportUiSmokeFailure(ex);
             MessageBox.Show(this, ex.Message, "SYSTEMES — démarrage impossible",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             Close();
+        }
+    }
+
+    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        var resultPath = Environment.GetEnvironmentVariable("SYSTEMES_UI_SMOKE_RESULT");
+        if (string.IsNullOrWhiteSpace(resultPath) || _uiSmokeReported)
+            return;
+
+        try
+        {
+            if (!e.IsSuccess)
+                throw new InvalidOperationException($"WebView2 navigation failed: {e.WebErrorStatus}");
+
+            var raw = await DesktopView.CoreWebView2.ExecuteScriptAsync(
+                "JSON.stringify({readyState:document.readyState,title:document.title,url:location.href,rootChildren:document.querySelector('#root')?.childElementCount ?? 0,bodyTextLength:document.body?.innerText?.trim().length ?? 0})");
+            using var document = JsonDocument.Parse(raw.Trim('"').Replace("\\", "\").Replace("\\u0022", "\""));
+            var state = JsonDocument.Parse(JsonSerializer.Deserialize<string>(raw) ?? "{}");
+            var rootChildren = state.RootElement.GetProperty("rootChildren").GetInt32();
+            var bodyTextLength = state.RootElement.GetProperty("bodyTextLength").GetInt32();
+            var readyState = state.RootElement.GetProperty("readyState").GetString();
+
+            if (readyState != "complete" || rootChildren < 1 || bodyTextLength < 1)
+                throw new InvalidOperationException($"React UI did not render: readyState={readyState}, rootChildren={rootChildren}, bodyTextLength={bodyTextLength}");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultPath)!);
+            await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(new
+            {
+                status = "ready",
+                title = state.RootElement.GetProperty("title").GetString(),
+                url = state.RootElement.GetProperty("url").GetString(),
+                rootChildren,
+                bodyTextLength,
+                webView2 = "navigation-completed"
+            }));
+            _uiSmokeReported = true;
+        }
+        catch (Exception ex)
+        {
+            ReportUiSmokeFailure(ex);
+        }
+    }
+
+    private void ReportUiSmokeFailure(Exception exception)
+    {
+        var resultPath = Environment.GetEnvironmentVariable("SYSTEMES_UI_SMOKE_RESULT");
+        if (string.IsNullOrWhiteSpace(resultPath) || _uiSmokeReported)
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(resultPath)!);
+            File.WriteAllText(resultPath, JsonSerializer.Serialize(new { status = "failed", error = exception.ToString() }));
+            _uiSmokeReported = true;
+        }
+        catch
+        {
+            // Preserve the original startup failure; CI will report a missing result file.
         }
     }
 
@@ -65,7 +126,10 @@ public partial class MainWindow : Window
     private async void OnClosed(object? sender, EventArgs e)
     {
         if (DesktopView.CoreWebView2 is { } coreWebView)
+        {
             coreWebView.WebMessageReceived -= OnWebMessageReceived;
+            coreWebView.NavigationCompleted -= OnNavigationCompleted;
+        }
         await _native.DisposeAsync();
     }
 }
