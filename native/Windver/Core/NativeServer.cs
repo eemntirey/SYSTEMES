@@ -41,6 +41,9 @@ namespace Systemes.Native.Core
                         case "hardware/read":
                             result = HardwareManager.ReadRealHardware();
                             break;
+                        case "memory/read":
+                            result = MemoryManager.ReadRealMemory();
+                            break;
                         case "processes/read":
                             result = ProcessManager.ReadRealProcesses();
                             break;
