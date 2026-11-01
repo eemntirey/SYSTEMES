@@ -180,7 +180,6 @@ export const SettingsApp: React.FC = () => {
     volume, setVolume,
     isMuted, toggleMute,
     wifiEnabled, toggleWifi,
-    bluetoothEnabled, toggleBluetooth,
     nightLight, toggleNightLight,
     batterySaver, toggleBatterySaver,
     fontSize, setFontSize,
@@ -495,7 +494,7 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Bluetooth et appareils</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos appareils connectés</p>
 
-            <SettingRow icon="sliders" title="Bluetooth" desc={bluetoothEnabled ? 'Activé — visible par d\'autres appareils' : 'Désactivé'} toggle={bluetoothEnabled} onToggle={toggleBluetooth} />
+            <SettingRow icon="sliders" title="Bluetooth" desc="État réel du contrôleur non encore exposé. Ce panneau ne modifie pas le paramètre Windows." />
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
             <SectionTitle>Périphériques détectés par Windows</SectionTitle>
