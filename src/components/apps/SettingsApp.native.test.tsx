@@ -7,6 +7,7 @@ const nativeMocks = vi.hoisted(() => ({
   readHardware: vi.fn(),
   readDevices: vi.fn(),
   checkWindowsUpdate: vi.fn(),
+  openWindowsSettings: vi.fn(),
 }));
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -62,12 +63,40 @@ describe('Settings native integrations', () => {
       note: 'Service interrogé sur Windows',
     });
 
+    nativeMocks.openWindowsSettings.mockResolvedValue({ opened: true, page: 'windows-update' });
+
     renderSettings();
     fireEvent.click(screen.getAllByText('Windows Update')[0]);
     fireEvent.click(screen.getByText('Vérifier le service'));
+    fireEvent.click(screen.getByText('Ouvrir Windows Update'));
 
     expect(await screen.findByText('Service Windows Update actif')).toBeDefined();
+    expect(nativeMocks.openWindowsSettings).toHaveBeenCalledWith('windows-update');
     expect(screen.getByText(/La recherche du catalogue de mises à jour/)).toBeDefined();
     expect(nativeMocks.checkWindowsUpdate).toHaveBeenCalledTimes(1);
   });
+  it('opens real Windows privacy controls instead of changing a local mock toggle', async () => {
+    nativeMocks.openWindowsSettings.mockResolvedValue({ opened: true, page: 'privacy-location' })
+
+    renderSettings()
+    fireEvent.click(screen.getAllByText('Confidentialité et sécurité')[0])
+    fireEvent.click(await screen.findByText('Position'))
+
+    expect(nativeMocks.openWindowsSettings).toHaveBeenCalledWith('privacy-location')
+  })
+
+  it('shows real active network adapters in the network settings section', async () => {
+    nativeMocks.readDevices.mockResolvedValue({
+      usb: [],
+      network: ['Real Wi-Fi adapter'],
+      note: 'WMI network adapter enumeration',
+    })
+
+    renderSettings()
+    fireEvent.click(screen.getAllByText('Réseau et Internet')[0])
+
+    expect(await screen.findByText('Real Wi-Fi adapter')).toBeDefined()
+    expect(nativeMocks.readDevices).toHaveBeenCalledTimes(1)
+  })
+
 });

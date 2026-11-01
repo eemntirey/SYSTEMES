@@ -1,6 +1,21 @@
 // Typed native operations built on the single WebView2 transport.
 import { nativeBridge as webViewBridge } from '../native/NativeBridge';
 
+export type WindowsSettingsPage =
+  | 'display' | 'night-light' | 'accessibility-display' | 'sound' | 'notifications'
+  | 'quiet-hours' | 'battery' | 'power' | 'bluetooth' | 'printers'
+  | 'network-status' | 'network-ethernet' | 'network-vpn' | 'airplane-mode'
+  | 'mobile-hotspot' | 'data-usage' | 'proxy' | 'taskbar' | 'lock-screen'
+  | 'optional-features' | 'default-apps' | 'accounts' | 'sign-in-options'
+  | 'accounts-sync' | 'work-access' | 'other-users' | 'date-time' | 'region'
+  | 'language' | 'gaming' | 'game-mode' | 'graphics' | 'accessibility-magnifier'
+  | 'accessibility-color-filters' | 'accessibility-captions' | 'accessibility-keyboard'
+  | 'accessibility-mouse' | 'accessibility-speech' | 'windows-security'
+  | 'device-encryption' | 'privacy' | 'privacy-diagnostics' | 'privacy-activity'
+  | 'privacy-location' | 'privacy-camera' | 'privacy-microphone' | 'privacy-notifications'
+  | 'windows-update' | 'windows-update-hours' | 'windows-update-optional'
+  | 'windows-insider' | 'about' | 'pen-touch' | 'mobile-devices' | 'advanced-system' | 'device-manager';
+
 type NativeReply<T = unknown> = {
   id?: string;
   result?: T;
@@ -80,6 +95,11 @@ export const NativeBridge = {
   async renameFile(path: string, newName: string) {
     if (!path.trim() || !newName.trim()) throw new Error('Le chemin et le nouveau nom sont obligatoires.');
     const response = await request('files/rename', { path, newName });
+    return response.result;
+  },
+
+  async openWindowsSettings(page: WindowsSettingsPage) {
+    const response = await request('system/open-settings', { page });
     return response.result;
   },
 

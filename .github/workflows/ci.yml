@@ -92,6 +92,7 @@ jobs:
             $testDir = Join-Path $testRoot "created-dir"
             $requests = @(
               @{ id = "phase2-ping"; method = "system/ping"; params = @{} },
+              @{ id = "phase-settings-invalid"; method = "system/open-settings"; params = @{ page = "arbitrary-command" } },
               @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
               @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
               @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
@@ -136,6 +137,7 @@ jobs:
             }
 
             if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
+            if (-not $responses["phase-settings-invalid"].error) { throw "system/open-settings must reject pages outside its allowlist." }
             if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
             if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
             if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }

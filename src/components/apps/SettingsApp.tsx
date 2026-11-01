@@ -176,44 +176,7 @@ export const SettingsApp: React.FC = () => {
     theme, setTheme,
     wallpaper, setWallpaper,
     accentColor, setAccentColor,
-    brightness, setBrightness,
-    volume, setVolume,
-    isMuted, toggleMute,
-    wifiEnabled, toggleWifi,
-    nightLight, toggleNightLight,
-    batterySaver, toggleBatterySaver,
-    fontSize, setFontSize,
-    resolution, setResolution,
-    refreshRate, setRefreshRate,
-    focusAssist, setFocusAssist,
-    taskbarAlignment, setTaskbarAlignment,
-    locationEnabled, setLocationEnabled,
-    cameraEnabled, setCameraEnabled,
-    micEnabled, setMicEnabled,
-    diagnosticData, setDiagnosticData,
-    autoUpdate, setAutoUpdate,
-    notificationsEnabled, toggleNotifications,
     addNotification,
-    airplaneMode, mobileHotspot,
-    toggleAirplaneMode, toggleMobileHotspot,
-    gameBarEnabled, toggleGameBar,
-    gameModeEnabled, toggleGameMode,
-    audioRecordingEnabled, toggleAudioRecording,
-    vrrEnabled, toggleVRR,
-    hardwareGpuScheduling, toggleHardwareGpuScheduling,
-    magnifierEnabled, toggleMagnifier,
-    colorFilterEnabled, toggleColorFilter,
-    highContrastEnabled, toggleHighContrast,
-    captionsEnabled, toggleCaptions,
-    audioAlertsEnabled, toggleAudioAlerts,
-    voiceAccessEnabled, toggleVoiceAccess,
-    personalizedExperiences, togglePersonalizedExperiences,
-    activityHistory, toggleActivityHistory,
-    syncSettings, toggleSyncSettings,
-    setTimeAutomatically, toggleSetTimeAutomatically,
-    setTimeZoneAutomatically, toggleSetTimeZoneAutomatically,
-    lockScreenBackground, toggleLockScreenBackground,
-    lockScreenAppStatus, toggleLockScreenAppStatus,
   } = useOS()
 
   const [section, setSection] = useState<SettingsSection>('home')
@@ -229,7 +192,7 @@ export const SettingsApp: React.FC = () => {
   const [devicesError, setDevicesError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (section !== 'bluetooth') return
+    if (section !== 'bluetooth' && section !== 'network') return
     let cancelled = false
     setDevicesLoading(true)
     setDevicesError(null)
@@ -278,6 +241,17 @@ export const SettingsApp: React.FC = () => {
     }
   }
 
+  const openWindowsSettings = async (page: Parameters<typeof NativeBridge.openWindowsSettings>[0], label: string) => {
+    try {
+      const result = await NativeBridge.openWindowsSettings(page) as { opened?: boolean }
+      if (!result?.opened) throw new Error('Windows n’a pas confirmé l’ouverture de la page Paramètres.')
+      addNotification('Paramètres Windows', `Demande d’ouverture transmise à Windows : ${label}.`, 'Paramètres', 'settings')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      addNotification('Paramètres Windows', `Impossible d’ouvrir ${label} : ${message}`, 'Paramètres', 'info')
+    }
+  }
+
   const navItems: { id: SettingsSection; label: string; icon: string; desc?: string }[] = [
     { id: 'home', label: 'Accueil', icon: 'pc' },
     { id: 'system', label: 'Système', icon: 'sliders', desc: 'Écran, son, notifications, alimentation' },
@@ -317,8 +291,8 @@ export const SettingsApp: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(0,212,255,0.06))', border: '1px solid rgba(139,92,246,0.2)', marginBottom: '14px', boxShadow: '0 4px 20px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
             <div style={{ width: '46px', height: '46px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--win-accent), var(--win-accent-cyan))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '18px', flexShrink: 0, boxShadow: '0 0 16px rgba(139,92,246,0.5)' }}>W</div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Utilisateur Windows</div>
-              <div style={{ fontSize: '11.5px', color: 'var(--win-accent-cyan)', marginTop: '3px', fontWeight: 500 }}>eemntirey@outlook.com</div>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Session Windows</div>
+              <div style={{ fontSize: '11.5px', color: 'var(--win-accent-cyan)', marginTop: '3px', fontWeight: 500 }}>Identité non lue par SYSTEMES</div>
             </div>
           </div>
 
@@ -371,15 +345,15 @@ export const SettingsApp: React.FC = () => {
         {section === 'home' && (
           <div>
             <h1 style={{ fontSize: '36px', fontWeight: 800, marginBottom: '6px', letterSpacing: '-0.03em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Paramètres</h1>
-            <p style={{ fontSize: '13.5px', color: 'var(--win-accent-cyan)', marginBottom: '30px', marginTop: '6px', fontWeight: 500 }}>eemntirey@outlook.com</p>
+            <p style={{ fontSize: '13.5px', color: 'var(--win-accent-cyan)', marginBottom: '30px', marginTop: '6px', fontWeight: 500 }}>Configuration de cet appareil et des paramètres Windows</p>
 
             {/* Recommended settings cards */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '28px' }}>
               {[
-                { icon: 'moon', title: 'Mode Sombre activé', desc: 'Personnalisation › Couleurs', action: () => setSection('personalization') },
-                { icon: 'wifi', title: wifiEnabled ? 'Wi-Fi connecté' : 'Wi-Fi désactivé', desc: 'Réseau et Internet', action: () => setSection('network') },
-                { icon: 'refresh', title: 'Windows à jour', desc: 'Dernière vérif : aujourd\'hui', action: () => setSection('update') },
-                { icon: 'battery-charging', title: 'Batterie 94%', desc: 'Alimentation et veille', action: () => setSection('system') },
+                { icon: 'pc', title: 'Affichage Windows', desc: 'Ouvrir les réglages réels de l’écran', action: () => void openWindowsSettings('display', 'Affichage') },
+                { icon: 'wifi', title: 'Réseau et Internet', desc: 'Consulter les connexions Windows', action: () => setSection('network') },
+                { icon: 'refresh', title: 'Windows Update', desc: 'Ouvrir la gestion des mises à jour', action: () => setSection('update') },
+                { icon: 'lock', title: 'Confidentialité', desc: 'Gérer les autorisations Windows', action: () => setSection('privacy') },
               ].map(card => (
                 <div key={card.title} onClick={card.action} style={{
                   padding: '20px 22px', borderRadius: '18px',
@@ -443,58 +417,33 @@ export const SettingsApp: React.FC = () => {
         {section === 'system' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Système</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Écran, son, notifications, alimentation</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Les réglages matériels sont désormais délégués aux paramètres Windows réels.</p>
 
             <SectionTitle>Affichage</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="sun" title="Luminosité" desc={`${brightness}% — Ajustez la luminosité intégrée`}>
-              <input type="range" min="20" max="100" value={brightness} onChange={e => setBrightness(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent-cyan)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />
-            </SettingRow>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-              <div style={{ padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(139,92,246,0.06), rgba(0,212,255,0.04))', border: '1px solid rgba(139,92,246,0.2)', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Résolution d'affichage</div>
-                <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', outline: 'none', padding: '8px 10px', appearance: 'none' }}>
-                  {['2560x1440', '1920x1080', '1680x1050', '1280x720'].map(r => <option key={r} value={r} style={{ background: '#1a1a2e', color: '#fff' }}>{r}</option>)}
-                </select>
-              </div>
-              <div style={{ padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(139,92,246,0.06), rgba(0,212,255,0.04))', border: '1px solid rgba(139,92,246,0.2)', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Fréquence de rafraîchissement</div>
-                <select value={refreshRate} onChange={e => setRefreshRate(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', outline: 'none', padding: '8px 10px', appearance: 'none' }}>
-                  {['144Hz', '120Hz', '75Hz', '60Hz'].map(r => <option key={r} value={r} style={{ background: '#1a1a2e', color: '#fff' }}>{r}</option>)}
-                </select>
-              </div>
-            </div>
-            <SettingRow icon="moon" title="Éclairage nocturne" desc="Réduit la lumière bleue le soir pour protéger vos yeux" toggle={nightLight} onToggle={toggleNightLight} />
-            <SettingRow icon="maximize" title="Taille du texte" desc={`${fontSize}% — Mise à l'échelle de l'affichage`}>
-              <input type="range" min="80" max="200" step="5" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />
-            </SettingRow>
+            <SettingRow icon="sun" title="Luminosité et affichage" desc="Ouvrir la résolution, la luminosité et les écrans dans Windows." onClick={() => void openWindowsSettings('display', 'Affichage')} />
+            <SettingRow icon="moon" title="Éclairage nocturne" desc="Gérer la température de couleur directement dans Windows." onClick={() => void openWindowsSettings('night-light', 'Éclairage nocturne')} />
+            <SettingRow icon="maximize" title="Taille du texte et mise à l’échelle" desc="Modifier les paramètres d’accessibilité de Windows." onClick={() => void openWindowsSettings('accessibility-display', 'Taille du texte')} />
 
             <SectionTitle>Son</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="volume" title="Volume maître" desc={isMuted ? 'Muet' : `${volume}%`} toggle={!isMuted} onToggle={toggleMute}>
-              {!isMuted && <input type="range" min="0" max="100" value={volume} onChange={e => setVolume(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent-cyan)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />}
-            </SettingRow>
+            <SettingRow icon="volume" title="Volume et périphériques audio" desc="Ouvrir le mélangeur et les périphériques audio Windows." onClick={() => void openWindowsSettings('sound', 'Son')} />
 
             <SectionTitle>Notifications</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="bell" title="Notifications" desc="Recevoir des notifications des applications et des autres expéditeurs" toggle={notificationsEnabled} onToggle={toggleNotifications} />
-            <SettingRow icon="moon" title="Assistance Focus" desc="Masquer les notifications pendant les activités importantes" toggle={focusAssist} onToggle={() => setFocusAssist(!focusAssist)} />
+            <SettingRow icon="bell" title="Notifications des applications" desc="Configurer les notifications dans Windows." onClick={() => void openWindowsSettings('notifications', 'Notifications')} />
+            <SettingRow icon="moon" title="Ne pas déranger et assistance Focus" desc="Gérer les périodes silencieuses dans Windows." onClick={() => void openWindowsSettings('quiet-hours', 'Ne pas déranger')} />
 
             <SectionTitle>Alimentation</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="battery-charging" title="Économiseur de batterie" desc="Réduit la consommation pour prolonger l'autonomie" toggle={batterySaver} onToggle={toggleBatterySaver} />
-            <SettingRow icon="power" title="Mise en veille de l'écran" desc="Après 10 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="10 min" />
-            <SettingRow icon="power" title="Mode veille" desc="Après 30 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="30 min" />
+            <SettingRow icon="battery-charging" title="Batterie et économiseur d’énergie" desc="Consulter et modifier les paramètres d’alimentation Windows." onClick={() => void openWindowsSettings('battery', 'Batterie et énergie')} />
+            <SettingRow icon="power" title="Veille et alimentation" desc="Modifier les délais de veille et les boutons d’alimentation." onClick={() => void openWindowsSettings('power', 'Alimentation et veille')} />
           </div>
         )}
 
-        {/* BLUETOOTH */}
+                {/* BLUETOOTH */}
         {section === 'bluetooth' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Bluetooth et appareils</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos appareils connectés</p>
 
-            <SettingRow icon="sliders" title="Bluetooth" desc="État réel du contrôleur non encore exposé. Ce panneau ne modifie pas le paramètre Windows." />
+            <SettingRow icon="sliders" title="Bluetooth" desc="Ouvrir les contrôles Bluetooth réels de Windows." onClick={() => void openWindowsSettings('bluetooth', 'Bluetooth')} />
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
             <SectionTitle>Périphériques détectés par Windows</SectionTitle>
@@ -521,10 +470,10 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SectionTitle>Autres appareils</SectionTitle>
-            <SettingRow icon="sliders" title="Imprimantes et scanners" desc="État réel des imprimantes non encore exposé par le moteur natif." />
+            <SettingRow icon="square" title="Imprimantes et scanners" desc="Consulter et gérer les imprimantes installées dans Windows." onClick={() => void openWindowsSettings('printers', 'Imprimantes et scanners')} />
             
-            <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Personnaliser le comportement du stylo" onClick={() => addNotification('Appareils', 'Stylo et saisie tactile', 'Paramètres', 'pc')} />
-            <SettingRow icon="pc" title="Bluetooth mobile" desc="Partager des fichiers via Bluetooth avec des appareils à proximité" onClick={() => addNotification('Appareils', 'Bluetooth mobile', 'Paramètres', 'pc')} />
+            <SettingRow icon="pc" title="Stylo et saisie tactile" desc="Ouvrir les réglages de saisie Windows." onClick={() => void openWindowsSettings('pen-touch', 'Stylo et saisie tactile')} />
+            <SettingRow icon="pc" title="Appareils mobiles" desc="Gérer les appareils mobiles associés à Windows." onClick={() => void openWindowsSettings('mobile-devices', 'Appareils mobiles')} />
           </div>
         )}
 
@@ -532,58 +481,42 @@ export const SettingsApp: React.FC = () => {
         {section === 'network' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Réseau et Internet</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos connexions réseau</p>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '16px' }}></div>
-
-            {/* Connection status banner */}
-            <div style={{ padding: '18px 22px', borderRadius: '12px', background: wifiEnabled ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(0,212,255,0.1))' : 'var(--flyout-card)', border: `1px solid ${wifiEnabled ? 'rgba(0,212,255,0.4)' : 'var(--window-border)'}`, marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <FluentIcon name={wifiEnabled ? 'wifi' : 'wifi-off'} size={28} color={wifiEnabled ? 'var(--win-accent-cyan)' : 'var(--text-tertiary)'} />
-              <div>
-                <div style={{ fontSize: '15px', fontWeight: 600 }}>{wifiEnabled ? 'Wi-Fi 6E – Connecté' : 'Aucune connexion active'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{wifiEnabled ? 'Réseau_Maison_5G · Sécurisé · 1.2 Gbps · IPv6 activé' : 'Activez le Wi-Fi ou connectez un câble Ethernet'}</div>
-              </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Les réseaux et connexions sont gérés par Windows, sans état fictif dans SYSTEMES.</p>
+            <div style={{ padding: '16px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              SYSTEMES ne prétend plus connaître le nom du Wi-Fi, son débit ou l’état d’une connexion sans mesure native vérifiée. Utilisez les pages Windows ci-dessous pour consulter ou modifier la configuration réelle.
             </div>
-
-            <SettingRow icon="wifi" title="Wi-Fi" desc={wifiEnabled ? 'Réseau_Maison_5G — Connecté' : 'Désactivé'} toggle={wifiEnabled} onToggle={toggleWifi} />
-
-            {wifiEnabled && (
-              <>
-                <SectionTitle>Réseaux disponibles</SectionTitle>
-                {[
-                  { name: 'Réseau_Maison_5G', security: 'WPA3', strength: '▂▄▆█', connected: true },
-                  { name: 'BBOX-A1B2C3', security: 'WPA2', strength: '▂▄▆_', connected: false },
-                  { name: 'FiberBox_7E24', security: 'WPA2', strength: '▂▄__', connected: false },
-                  { name: 'iPhone de Kevin', security: 'Partage de connexion', strength: '▂___', connected: false },
-                ].map(net => (
-                  <div key={net.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderRadius: '10px', backgroundColor: net.connected ? 'var(--win-accent-light)' : 'var(--flyout-card)', border: `1px solid ${net.connected ? 'rgba(139,92,246,0.5)' : 'var(--window-border)'}`, marginBottom: '6px', cursor: 'pointer' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <FluentIcon name="wifi" size={18} color={net.connected ? 'var(--win-accent)' : 'var(--text-secondary)'} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: net.connected ? 600 : 400 }}>{net.name} {net.connected ? '✓' : ''}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{net.security} · {net.strength}</div>
-                      </div>
-                    </div>
-                    {!net.connected && <button style={{ padding: '5px 14px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.25)', background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(0,212,255,0.08))', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(0,212,255,0.15))'; }} onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(0,212,255,0.08))'; }}>Se connecter</button>}
-                  </div>
-                ))}
-              </>
-            )}
-
-            <SectionTitle>Paramètres avancés</SectionTitle>
-            <SettingRow icon="sliders" title="Ethernet" desc="Non connecté" onClick={() => addNotification('Réseau', 'Ethernet', 'Paramètres', 'sliders')} />
-            <SettingRow icon="lock" title="VPN" desc="Aucun VPN configuré" onClick={() => addNotification('Réseau', 'VPN', 'Paramètres', 'lock')} />
-            <SettingRow icon="sliders" title="Mode avion" desc={airplaneMode ? 'Activé' : 'Désactivé'} toggle={airplaneMode} onToggle={toggleAirplaneMode} />
-            <SettingRow icon="sliders" title="Point d'accès mobile" desc={mobileHotspot ? 'Activé — partage de connexion' : 'Désactivé'} toggle={mobileHotspot} onToggle={toggleMobileHotspot} />
-            <SettingRow icon="sliders" title="Utilisation des données" desc="6,3 Go utilisés ce mois-ci" onClick={() => addNotification('Réseau', 'Utilisation des données', 'Paramètres', 'sliders')} badge="6,3 Go" />
-            <SettingRow icon="sliders" title="Paramètres proxy" desc="Aucun proxy configuré" onClick={() => addNotification('Réseau', 'Proxy', 'Paramètres', 'sliders')} />
+            <SectionTitle>Adaptateurs réseau actifs détectés par Windows</SectionTitle>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '14px' }}>
+              {devicesLoading ? (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Lecture des adaptateurs réseau…</div>
+              ) : devicesError ? (
+                <div role="alert" style={{ fontSize: '12.5px', color: '#f87171' }}>Lecture impossible : {devicesError}</div>
+              ) : devicesSnapshot ? (
+                <>
+                  {(devicesSnapshot.network ?? []).length > 0
+                    ? devicesSnapshot.network?.map((adapter, index) => <div key={`adapter-${index}-${adapter}`} style={{ fontSize: '12.5px', color: 'var(--text-secondary)', padding: '4px 0' }}>{adapter}</div>)
+                    : <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Aucun adaptateur avec NetEnabled actif n’a été retourné par WMI.</div>}
+                  <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 8 }}>{devicesSnapshot.note}</div>
+                </>
+              ) : (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Données réseau non lues. Lancez SYSTEMES depuis l’hôte Windows.</div>
+              )}
+            </div>
+            <SettingRow icon="wifi" title="Wi-Fi et état de connexion" desc="Voir le réseau actif, les réseaux disponibles et les connexions." onClick={() => void openWindowsSettings('network-status', 'Réseau et Internet')} />
+            <SettingRow icon="globe" title="Ethernet" desc="Consulter les adaptateurs et paramètres Ethernet." onClick={() => void openWindowsSettings('network-ethernet', 'Ethernet')} />
+            <SettingRow icon="lock" title="VPN" desc="Gérer les connexions VPN Windows." onClick={() => void openWindowsSettings('network-vpn', 'VPN')} />
+            <SettingRow icon="refresh" title="Mode avion" desc="Consulter et modifier l’état réel du mode avion." onClick={() => void openWindowsSettings('airplane-mode', 'Mode avion')} />
+            <SettingRow icon="wifi" title="Point d’accès mobile" desc="Configurer le partage de connexion Windows." onClick={() => void openWindowsSettings('mobile-hotspot', 'Point d’accès mobile')} />
+            <SettingRow icon="info" title="Utilisation des données" desc="Consulter les données réellement mesurées par Windows." onClick={() => void openWindowsSettings('data-usage', 'Utilisation des données')} />
+            <SettingRow icon="sliders" title="Paramètres proxy" desc="Voir et modifier le proxy système." onClick={() => void openWindowsSettings('proxy', 'Proxy')} />
           </div>
         )}
 
-        {/* PERSONALIZATION */}
+                {/* PERSONALIZATION */}
         {section === 'personalization' && (
           <div>
-            <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Personnalisation</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '22px', marginTop: '4px' }}>Personnalisez l'apparence de Windows</p>
+            <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Personnalisation de SYSTEMES</h1>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '22px', marginTop: '4px' }}>Ces choix modifient l’apparence de l’interface SYSTEMES, pas les paramètres du bureau Windows.</p>
 
             {/* Wallpaper preview */}
             <div style={{ height: '160px', borderRadius: '14px', backgroundImage: `url(${wallpaper.url})`, backgroundSize: 'cover', backgroundPosition: 'center', border: '1px solid var(--window-border)', marginBottom: '20px', position: 'relative', display: 'flex', alignItems: 'flex-end', padding: '14px' }}>
@@ -628,23 +561,9 @@ export const SettingsApp: React.FC = () => {
               })}
             </div>
 
-            <SectionTitle>Barre des tâches</SectionTitle>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px' }}>
-              <div style={{ fontSize: '13.5px', fontWeight: 500, marginBottom: '10px' }}>Alignement de la barre des tâches</div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {(['center', 'left'] as const).map(align => (
-                  <button key={align} onClick={() => setTaskbarAlignment(align)} style={{ flex: 1, padding: '8px', borderRadius: '8px', backgroundColor: taskbarAlignment === align ? 'var(--win-accent-light)' : 'rgba(255,255,255,0.05)', border: taskbarAlignment === align ? '1px solid var(--win-accent)' : '1px solid var(--window-border)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: taskbarAlignment === align ? 600 : 400, cursor: 'pointer' }}>
-                    {align === 'center' ? 'Centré (défaut)' : 'Gauche'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <SettingRow icon="square" title="Éléments masqués du coin système" desc="Gérez les icônes dans l'angle de la barre des tâches" onClick={() => addNotification('Barre des tâches', 'La gestion individuelle des icônes du coin système n’est pas encore disponible.', 'Paramètres', 'info')} />
-            <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Afficher le badge, la sélection de fenêtres, le bouton afficher le bureau" onClick={() => addNotification('Barre des tâches', 'Les options avancées de comportement ne sont pas encore disponibles.', 'Paramètres', 'info')} />
-
-            <SectionTitle>Écran de verrouillage</SectionTitle>
-            <SettingRow icon="lock" title="Arrière-plan de l'écran de verrouillage" desc="Windows à la une" toggle={lockScreenBackground} onToggle={toggleLockScreenBackground} />
-            <SettingRow icon="clock" title="Afficher l'état des applications" desc="Afficher des informations rapides sur l'écran de verrouillage" toggle={lockScreenAppStatus} onToggle={toggleLockScreenAppStatus} />
+            <SectionTitle>Paramètres Windows</SectionTitle>
+            <SettingRow icon="square" title="Barre des tâches" desc="Ouvrir les paramètres Windows réels de la barre des tâches." onClick={() => void openWindowsSettings('taskbar', 'Barre des tâches')} />
+            <SettingRow icon="lock" title="Écran de verrouillage" desc="Gérer l’arrière-plan et les informations de l’écran de verrouillage Windows." onClick={() => void openWindowsSettings('lock-screen', 'Écran de verrouillage')} />
           </div>
         )}
 
@@ -679,8 +598,8 @@ export const SettingsApp: React.FC = () => {
             ))}
 
             <SectionTitle>Fonctionnalités optionnelles</SectionTitle>
-            <SettingRow icon="plus" title="Ajouter une fonctionnalité optionnelle" desc="Internet Explorer, OpenSSH, Media Player hérité..." onClick={() => addNotification('Apps', 'Fonctionnalités optionnelles', 'Paramètres', 'plus')} />
-            <SettingRow icon="square" title="Applications par défaut" desc="Choisissez les applications par défaut pour le courrier, la musique, les photos..." onClick={() => addNotification('Apps', 'Applications par défaut', 'Paramètres', 'square')} />
+            <SettingRow icon="plus" title="Ajouter une fonctionnalité optionnelle" desc="Ouvrir la gestion réelle des fonctionnalités facultatives Windows." onClick={() => void openWindowsSettings('optional-features', 'Fonctionnalités facultatives')} />
+            <SettingRow icon="square" title="Applications par défaut" desc="Choisir les applications par défaut dans Windows." onClick={() => void openWindowsSettings('default-apps', 'Applications par défaut')} />
           </div>
         )}
 
@@ -688,35 +607,20 @@ export const SettingsApp: React.FC = () => {
         {section === 'accounts' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Comptes</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Votre profil et paramètres de connexion</p>
-
-            {/* Profile card */}
-            <div style={{ padding: '20px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(0,212,255,0.08))', border: '1px solid rgba(139,92,246,0.35)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-              <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--win-accent), var(--win-accent-cyan))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', fontWeight: 700, color: '#fff', boxShadow: '0 0 20px rgba(139,92,246,0.5)' }}>W</div>
-              <div>
-                <div style={{ fontSize: '20px', fontWeight: 700 }}>Utilisateur Windows</div>
-                <div style={{ fontSize: '13px', color: 'var(--win-accent-cyan)', marginTop: '3px' }}>eemntirey@outlook.com</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>Compte Microsoft · Administrateur</div>
-              </div>
-            </div>
-
-            <SectionTitle>Paramètres du compte</SectionTitle>
-            <SettingRow icon="lock" title="Options de connexion" desc="Windows Hello, code PIN, clé de sécurité, mot de passe" onClick={() => addNotification('Comptes', 'Options de connexion', 'Paramètres', 'lock')} />
-            <SettingRow icon="sliders" title="Synchronisation de vos paramètres" desc="Les paramètres, thèmes et mots de passe sont synchronisés" toggle={syncSettings} onToggle={toggleSyncSettings} />
-            <SettingRow icon="pc" title="Accès professionnel ou scolaire" desc="Se connecter à l'organisation, MDM ou Azure AD" onClick={() => addNotification('Comptes', 'Accès professionnel ou scolaire', 'Paramètres', 'pc')} />
-
-            <SectionTitle>Autres utilisateurs</SectionTitle>
-            <SettingRow icon="plus" title="Ajouter un autre utilisateur" desc="Créer un compte local ou ajouter un compte Microsoft" onClick={() => addNotification('Comptes', 'Ajouter un utilisateur', 'Paramètres', 'plus')} />
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Les informations du compte ne sont pas simulées : Windows reste la source de vérité.</p>
+            <SettingRow icon="pc" title="Vos informations" desc="Consulter le compte Windows réellement connecté." onClick={() => void openWindowsSettings('accounts', 'Informations du compte')} />
+            <SettingRow icon="lock" title="Options de connexion" desc="Windows Hello, code PIN, clé de sécurité et mot de passe." onClick={() => void openWindowsSettings('sign-in-options', 'Options de connexion')} />
+            <SettingRow icon="refresh" title="Synchronisation des paramètres" desc="Consulter les options de synchronisation de votre compte Windows." onClick={() => void openWindowsSettings('accounts-sync', 'Synchronisation du compte')} />
+            <SettingRow icon="pc" title="Accès professionnel ou scolaire" desc="Gérer les comptes professionnels et l’inscription de l’appareil." onClick={() => void openWindowsSettings('work-access', 'Accès professionnel ou scolaire')} />
+            <SettingRow icon="pc" title="Autres utilisateurs" desc="Gérer les comptes locaux et les utilisateurs de cet appareil." onClick={() => void openWindowsSettings('other-users', 'Autres utilisateurs')} />
           </div>
         )}
 
-        {/* TIME */}
+                {/* TIME */}
         {section === 'time' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Heure et langue</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Fuseau horaire, région, langue et clavier</p>
-
-            {/* Current time display */}
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Horloge locale de l’appareil · configuration gérée par Windows</p>
             <div style={{ padding: '20px', borderRadius: '14px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '20px', textAlign: 'center' }}>
               <div style={{ fontSize: '48px', fontWeight: 200, letterSpacing: '0.05em', color: 'var(--win-accent-cyan)', fontVariantNumeric: 'tabular-nums' }}>
                 {new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
@@ -725,116 +629,62 @@ export const SettingsApp: React.FC = () => {
                 {new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </div>
             </div>
-
-            <SectionTitle>Date et heure</SectionTitle>
-            <SettingRow icon="clock" title="Définir l'heure automatiquement" desc="Synchronisé via time.windows.com" toggle={setTimeAutomatically} onToggle={toggleSetTimeAutomatically} />
-            <SettingRow icon="clock" title="Définir le fuseau horaire automatiquement" desc="Europe/Paris (UTC+2)" toggle={setTimeZoneAutomatically} onToggle={toggleSetTimeZoneAutomatically} />
-            <SettingRow icon="clock" title="Afficher les heures supplémentaires dans la barre des tâches" desc="Ajouter des horloges pour d'autres fuseaux horaires" onClick={() => addNotification('Heure', 'Horloges supplémentaires', 'Paramètres', 'clock')} />
-
-            <SectionTitle>Région</SectionTitle>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px' }}>Pays ou région</div>
-              <select defaultValue="FR" style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer', outline: 'none' }}>
-                <option value="FR" style={{ background: '#1a1a2e' }}>France</option>
-                <option value="US" style={{ background: '#1a1a2e' }}>États-Unis</option>
-                <option value="DE" style={{ background: '#1a1a2e' }}>Allemagne</option>
-                <option value="GB" style={{ background: '#1a1a2e' }}>Royaume-Uni</option>
-              </select>
-            </div>
-
-            <SectionTitle>Langue</SectionTitle>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: '13.5px', fontWeight: 500 }}>Français (France)</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Langue d'affichage Windows</div>
-              </div>
-              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--win-accent-light)', color: 'var(--win-accent)' }}>Défaut</span>
-            </div>
-            <SettingRow icon="plus" title="Ajouter une langue" desc="Installer des packs de langue supplémentaires" onClick={() => addNotification('Heure', 'Ajouter une langue', 'Paramètres', 'plus')} />
+            <SettingRow icon="clock" title="Date et heure" desc="Régler l’heure automatique, le fuseau horaire et l’heure d’été." onClick={() => void openWindowsSettings('date-time', 'Date et heure')} />
+            <SettingRow icon="globe" title="Région et format" desc="Consulter et modifier le pays, les formats régionaux et le calendrier." onClick={() => void openWindowsSettings('region', 'Région')} />
+            <SettingRow icon="globe" title="Langue et clavier" desc="Gérer les langues d’affichage et les dispositions du clavier." onClick={() => void openWindowsSettings('language', 'Langue et clavier')} />
           </div>
         )}
 
-        {/* GAMING */}
+                {/* GAMING */}
         {section === 'gaming' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Jeux</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Optimisations pour les jeux et Xbox</p>
-
-            <SectionTitle>Xbox Game Bar</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="terminal" title="Xbox Game Bar" desc="Superposition pour les captures d'écran, l'enregistrement et plus" toggle={gameBarEnabled} onToggle={toggleGameBar} />
-            <SettingRow icon="terminal" title="Raccourci clavier Game Bar" desc="Win + G pour ouvrir la Game Bar" onClick={() => addNotification('Jeux', 'Raccourci Game Bar (Win + G)', 'Paramètres', 'terminal')} badge="Win+G" />
-
-            <SectionTitle>Captures</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="square" title="Enregistrement audio lors des captures" desc="Inclure le son du jeu et le microphone" toggle={audioRecordingEnabled} onToggle={toggleAudioRecording} />
-            <SettingRow icon="sliders" title="Qualité vidéo" desc="30 fps, qualité standard" onClick={() => addNotification('Jeux', 'Qualité vidéo', 'Paramètres', 'sliders')} badge="30 fps" />
-            <SettingRow icon="sliders" title="Dossier des captures" desc="C:/Utilisateurs/eemntirey/Vidéos/Captures" onClick={() => addNotification('Jeux', 'Dossier des captures', 'Paramètres', 'sliders')} />
-
-            <SectionTitle>Mode jeu</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="terminal" title="Mode Jeu" desc="Optimise le PC pour les jeux en priorisant les ressources GPU/CPU" toggle={gameModeEnabled} onToggle={toggleGameMode} badge="Recommandé" />
-            <SettingRow icon="sliders" title="Planification GPU accélérée par le matériel" desc="Améliore les performances et la latence vidéo" toggle={hardwareGpuScheduling} onToggle={toggleHardwareGpuScheduling} />
-            <SettingRow icon="sliders" title="Variable Refresh Rate (VRR)" desc="Taux de rafraîchissement variable pour les jeux compatibles" toggle={vrrEnabled} onToggle={toggleVRR} />
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Les fonctions Xbox et les optimisations sont pilotées par Windows.</p>
+            <SettingRow icon="terminal" title="Xbox Game Bar et captures" desc="Ouvrir les réglages réels de la Game Bar, des captures et de l’enregistrement." onClick={() => void openWindowsSettings('gaming', 'Xbox Game Bar et captures')} />
+            <SettingRow icon="terminal" title="Mode Jeu" desc="Consulter et modifier le Mode Jeu de Windows." onClick={() => void openWindowsSettings('game-mode', 'Mode Jeu')} />
+            <SettingRow icon="pc" title="Fonctionnalités graphiques" desc="Gérer les options graphiques Windows et les préférences GPU." onClick={() => void openWindowsSettings('graphics', 'Paramètres graphiques')} />
           </div>
         )}
 
-        {/* ACCESSIBILITY */}
+                {/* ACCESSIBILITY */}
         {section === 'accessibility' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Accessibilité</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Rendez Windows plus facile à utiliser</p>
-
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Ouverture des contrôles d’accessibilité réellement appliqués par Windows.</p>
             <SectionTitle>Vision</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="maximize" title="Taille du texte" desc="Agrandir le texte sans modifier d'autres éléments" onClick={() => addNotification('Accessibilité', 'Taille du texte', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Effets visuels" desc="Animations, transparences, fond d'écran animé" onClick={() => addNotification('Accessibilité', 'Effets visuels', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Pointeur de la souris et interaction tactile" desc="Modifier l'apparence du curseur" onClick={() => addNotification('Accessibilité', 'Pointeur et tactile', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Loupe" desc="Agrandir une zone de l'écran" toggle={magnifierEnabled} onToggle={toggleMagnifier} />
-            <SettingRow icon="maximize" title="Filtre de couleur" desc="Daltonisme — Désactivé" toggle={colorFilterEnabled} onToggle={toggleColorFilter} />
-            <SettingRow icon="maximize" title="Contraste élevé" desc="Rend le texte et les applications plus faciles à distinguer" toggle={highContrastEnabled} onToggle={toggleHighContrast} />
-
+            <SettingRow icon="maximize" title="Affichage et taille du texte" desc="Régler la taille du texte, la loupe et les effets visuels." onClick={() => void openWindowsSettings('accessibility-display', 'Affichage et taille du texte')} />
+            <SettingRow icon="maximize" title="Loupe" desc="Activer et configurer la loupe Windows." onClick={() => void openWindowsSettings('accessibility-magnifier', 'Loupe')} />
+            <SettingRow icon="maximize" title="Filtres de couleur et contraste" desc="Configurer les filtres de couleur et le contraste élevé." onClick={() => void openWindowsSettings('accessibility-color-filters', 'Filtres de couleur et contraste')} />
             <SectionTitle>Audition</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="volume" title="Légendes" desc="Afficher des sous-titres automatiques pour l'audio" toggle={captionsEnabled} onToggle={toggleCaptions} />
-            <SettingRow icon="volume" title="Alertes audio" desc="Utiliser des alertes visuelles pour les sons système" toggle={audioAlertsEnabled} onToggle={toggleAudioAlerts} />
-
+            <SettingRow icon="volume" title="Légendes et sous-titres" desc="Gérer les sous-titres et les alertes visuelles." onClick={() => void openWindowsSettings('accessibility-captions', 'Légendes')} />
             <SectionTitle>Interaction</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="square" title="Clavier" desc="Clavier visuel, touches rémanentes, filtres de touches" onClick={() => addNotification('Accessibilité', 'Clavier', 'Paramètres', 'square')} />
-            <SettingRow icon="sliders" title="Souris" desc="Touches souris, vitesse du pointeur" onClick={() => addNotification('Accessibilité', 'Souris', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Commande vocale" desc="Dicter du texte et contrôler votre PC par la voix" toggle={voiceAccessEnabled} onToggle={toggleVoiceAccess} />
+            <SettingRow icon="square" title="Clavier" desc="Configurer le clavier visuel, les touches rémanentes et les filtres." onClick={() => void openWindowsSettings('accessibility-keyboard', 'Clavier')} />
+            <SettingRow icon="square" title="Souris et pointeur" desc="Modifier la vitesse et les options d’accessibilité du pointeur." onClick={() => void openWindowsSettings('accessibility-mouse', 'Souris et pointeur')} />
+            <SettingRow icon="volume" title="Commande vocale" desc="Configurer l’accès vocal et la dictée Windows." onClick={() => void openWindowsSettings('accessibility-speech', 'Commande vocale')} />
           </div>
         )}
 
-        {/* PRIVACY */}
+                {/* PRIVACY */}
         {section === 'privacy' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Confidentialité et sécurité</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Contrôlez vos données et autorisations</p>
-
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Les autorisations ne sont plus présentées comme activées sans lecture système vérifiée.</p>
             <SectionTitle>Sécurité Windows</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="lock" title="Sécurité Windows" desc="Protection antivirus, pare-feu, performances" onClick={() => addNotification('Confidentialité', 'Sécurité Windows', 'Paramètres', 'lock')} badge="Protégé ✓" />
-            <SettingRow icon="lock" title="Chiffrement BitLocker" desc="Lecteur C: chiffré" onClick={() => addNotification('Confidentialité', 'BitLocker', 'Paramètres', 'lock')} badge="Activé" />
-
+            <SettingRow icon="lock" title="Sécurité Windows" desc="Ouvrir le tableau de bord de sécurité réel de Windows." onClick={() => void openWindowsSettings('windows-security', 'Sécurité Windows')} />
+            <SettingRow icon="lock" title="Chiffrement de l’appareil" desc="Consulter l’état réel du chiffrement disponible sur cet appareil." onClick={() => void openWindowsSettings('device-encryption', 'Chiffrement de l’appareil')} />
             <SectionTitle>Autorisations Windows</SectionTitle>
-            <SettingRow icon="sliders" title="Données de diagnostic" desc="Envoyer des données de diagnostic à Microsoft" toggle={diagnosticData} onToggle={() => setDiagnosticData(!diagnosticData)} />
-            <SettingRow icon="sliders" title="Expériences personnalisées" desc="Personnaliser les publicités et les recommandations" toggle={personalizedExperiences} onToggle={togglePersonalizedExperiences} />
-            <SettingRow icon="sliders" title="Historique des activités" desc="Microsoft collecte les activités de cet appareil" toggle={activityHistory} onToggle={toggleActivityHistory} />
-
+            <SettingRow icon="sliders" title="Données de diagnostic et commentaires" desc="Consulter les paramètres de diagnostic Windows." onClick={() => void openWindowsSettings('privacy-diagnostics', 'Données de diagnostic')} />
+            <SettingRow icon="sliders" title="Expériences personnalisées" desc="Gérer les recommandations et expériences personnalisées." onClick={() => void openWindowsSettings('privacy', 'Confidentialité')} />
+            <SettingRow icon="clock" title="Historique des activités" desc="Consulter les paramètres d’historique des activités." onClick={() => void openWindowsSettings('privacy-activity', 'Historique des activités')} />
             <SectionTitle>Autorisations des applications</SectionTitle>
-            <SettingRow icon="sliders" title="Position" desc="Accès à la localisation activée pour les applications" toggle={locationEnabled} onToggle={() => setLocationEnabled(!locationEnabled)} />
-            <SettingRow icon="sliders" title="Caméra" desc="Certaines applications peuvent accéder à la caméra" toggle={cameraEnabled} onToggle={() => setCameraEnabled(!cameraEnabled)} />
-            <SettingRow icon="volume" title="Microphone" desc="Certaines applications peuvent accéder au microphone" toggle={micEnabled} onToggle={() => setMicEnabled(!micEnabled)} />
-            <SettingRow icon="bell" title="Notifications" desc="Envoyer des notifications depuis les applications" toggle={notificationsEnabled} onToggle={toggleNotifications} />
-            <SettingRow icon="sliders" title="Informations du compte" desc="Nom, image et autres informations du compte" onClick={() => addNotification('Confidentialité', 'Informations du compte', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Contacts" desc="Accès aux contacts depuis les applications" onClick={() => addNotification('Confidentialité', 'Contacts', 'Paramètres', 'sliders')} />
-            <SettingRow icon="clock" title="Historique des appels" desc="Accès à l'historique des appels depuis les applications" onClick={() => addNotification('Confidentialité', 'Historique des appels', 'Paramètres', 'clock')} />
+            <SettingRow icon="globe" title="Position" desc="Gérer les autorisations de localisation des applications." onClick={() => void openWindowsSettings('privacy-location', 'Position')} />
+            <SettingRow icon="image" title="Caméra" desc="Gérer les autorisations d’accès à la caméra." onClick={() => void openWindowsSettings('privacy-camera', 'Caméra')} />
+            <SettingRow icon="volume" title="Microphone" desc="Gérer les autorisations d’accès au microphone." onClick={() => void openWindowsSettings('privacy-microphone', 'Microphone')} />
+            <SettingRow icon="bell" title="Notifications" desc="Gérer les autorisations de notifications." onClick={() => void openWindowsSettings('privacy-notifications', 'Notifications')} />
           </div>
         )}
 
-        {/* UPDATE */}
+                {/* UPDATE */}
         {section === 'update' && (
           <div>
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Windows Update</h1>
@@ -854,11 +704,14 @@ export const SettingsApp: React.FC = () => {
                   {updateError ?? updateSnapshot?.note ?? 'Le contrôle interroge le service Windows Update sur cet ordinateur.'}
                 </div>
               </div>
-              <button
-                disabled={updateLoading}
-                style={{ padding: '10px 20px', borderRadius: '10px', border: '1px solid var(--window-border)', background: 'var(--win-accent-light)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, cursor: updateLoading ? 'wait' : 'pointer', opacity: updateLoading ? 0.65 : 1 }}
-                onClick={handleCheckWindowsUpdate}
-              >{updateLoading ? 'Vérification…' : 'Vérifier le service'}</button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button
+                  disabled={updateLoading}
+                  style={{ padding: '10px 20px', borderRadius: '10px', border: '1px solid var(--window-border)', background: 'var(--win-accent-light)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, cursor: updateLoading ? 'wait' : 'pointer', opacity: updateLoading ? 0.65 : 1 }}
+                  onClick={handleCheckWindowsUpdate}
+                >{updateLoading ? 'Vérification…' : 'Vérifier le service'}</button>
+                <button type="button" onClick={() => void openWindowsSettings('windows-update', 'Windows Update')} style={{ padding: '10px 20px', borderRadius: '10px', border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>Ouvrir Windows Update</button>
+              </div>
             </div>
 
             <SectionTitle>Portée du contrôle</SectionTitle>
@@ -867,10 +720,10 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SectionTitle>Options avancées</SectionTitle>
-            <SettingRow icon="clock" title="Mises à jour actives" desc="Choisissez quand les mises à jour sont installées" toggle={autoUpdate} onToggle={() => setAutoUpdate(!autoUpdate)} />
-            <SettingRow icon="sliders" title="Heures actives" desc="Prévenir les redémarrages entre 08:00 et 23:00" onClick={() => addNotification('Mise à jour', 'Heures actives', 'Paramètres', 'sliders')} badge="08:00 – 23:00" />
-            <SettingRow icon="sliders" title="Mises à jour optionnelles" desc="Pilotes et mises à jour non critiques" onClick={() => addNotification('Mise à jour', 'Mises à jour optionnelles', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Windows Insider Program" desc="Accéder aux versions préliminaires de Windows" onClick={() => addNotification('Mise à jour', 'Windows Insider Program', 'Paramètres', 'sliders')} />
+            <SettingRow icon="clock" title="Heures actives" desc="Configurer les heures de redémarrage autorisées dans Windows." onClick={() => void openWindowsSettings('windows-update-hours', 'Heures actives')} />
+            <SettingRow icon="sliders" title="Mises à jour facultatives" desc="Consulter les pilotes et mises à jour optionnelles proposés par Windows." onClick={() => void openWindowsSettings('windows-update-optional', 'Mises à jour facultatives')} />
+            <SettingRow icon="sliders" title="Windows Insider Program" desc="Gérer l’inscription aux versions préliminaires Windows." onClick={() => void openWindowsSettings('windows-insider', 'Windows Insider Program')} />
+            
           </div>
         )}
 
@@ -923,20 +776,12 @@ export const SettingsApp: React.FC = () => {
               Les identifiants de périphérique, l'édition exacte, la date d'installation et les fonctions tactiles ne sont pas encore exposés par le moteur natif. Ils ne sont donc pas affichés comme des valeurs vérifiées.
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              {[
-                'Renommer ce PC',
-                'Paramètres système avancés',
-                'Protection de l\'appareil',
-                'Gestionnaire de périphériques',
-                'Connexions réseau avancées',
-              ].map(action => (
-                <button key={action} style={{ padding: '8px 16px', borderRadius: '10px', border: '1px solid rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.06)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s ease' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.12)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.35)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.06)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.2)'; }}
-                >{action}</button>
-              ))}
-            </div>
+            <SectionTitle>Outils Windows</SectionTitle>
+            <SettingRow icon="pc" title="Renommer ce PC" desc="Ouvrir la page À propos de Windows." onClick={() => void openWindowsSettings('about', 'Renommer ce PC')} />
+            <SettingRow icon="sliders" title="Paramètres système avancés" desc="Ouvrir les propriétés système avancées." onClick={() => void openWindowsSettings('advanced-system', 'Paramètres système avancés')} />
+            <SettingRow icon="lock" title="Sécurité Windows" desc="Ouvrir le tableau de bord de sécurité." onClick={() => void openWindowsSettings('windows-security', 'Sécurité Windows')} />
+            <SettingRow icon="pc" title="Gestionnaire de périphériques" desc="Ouvrir le gestionnaire natif des périphériques." onClick={() => void openWindowsSettings('device-manager', 'Gestionnaire de périphériques')} />
+            <SettingRow icon="globe" title="Connexions réseau avancées" desc="Ouvrir les paramètres réseau Windows." onClick={() => void openWindowsSettings('network-status', 'Réseau et Internet')} />
           </div>
         )}
       </div>
