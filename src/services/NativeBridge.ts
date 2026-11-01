@@ -206,6 +206,22 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readBluetoothStatus() {
+    const response = await request('bluetooth/status');
+    return response.result as { adapterPresent: boolean; powered: boolean; adapterName?: string | null; devices?: { id: string; name: string; status: string }[]; error?: string };
+  },
+
+  async scanBluetooth(timeoutSeconds = 6) {
+    const response = await request('bluetooth/scan', { timeoutSeconds });
+    return response.result as { devices?: { id: string; name: string }[]; error?: string };
+  },
+
+  async pairBluetoothDevice(deviceId: string) {
+    if (!deviceId.trim()) throw new Error('Identifiant de périphérique Bluetooth manquant.');
+    const response = await request('bluetooth/pair', { deviceId });
+    return response.result;
+  },
+
   async fileOperate(action: 'read' | 'write' | 'delete' | 'rename', path: string, content?: string) {
     switch (action) {
       case 'read': return this.readFile(path);
