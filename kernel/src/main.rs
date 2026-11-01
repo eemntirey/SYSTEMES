@@ -8,11 +8,11 @@ use systemes_kernel::{BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 const DEBUG_PORT: u16 = 0xE9;
 
 unsafe fn outb(port: u16, value: u8) {
-    // SAFETY: The boot environment is x86_64 and COM1 is the conventional debug UART.
+    // SAFETY: The boot environment is x86_64 and the QEMU debug port 0xE9.
     unsafe { asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags)) };
 }
 
-unsafe fn serial_write(text: &[u8]) {
+unsafe fn debug_write(text: &[u8]) {
     for byte in text {
         unsafe { outb(DEBUG_PORT, *byte) };
     }
