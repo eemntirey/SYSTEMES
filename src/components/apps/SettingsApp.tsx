@@ -826,6 +826,8 @@ export const SettingsApp: React.FC = () => {
               <div style={{ fontWeight: 700, marginBottom: 8 }}>Contexte de sécurité Windows</div>
               <div style={{ fontSize: 12 }}>Compte : {securityInfo.userName} · Appareil : {securityInfo.machineName}</div>
               <div style={{ fontSize: 12 }}>Session administrateur élevée : {securityInfo.isAdministrator ? 'Oui' : 'Non'}</div>
+              <div style={{ fontSize: 12 }}>Identité authentifiée : {securityInfo.isAuthenticated ? 'Oui' : 'Non'} · Compte système : {securityInfo.isSystem ? 'Oui' : 'Non'} · Invité : {securityInfo.isGuest ? 'Oui' : 'Non'}</div>
+              <div style={{ fontSize: 12 }}>Niveau d’impersonation : {securityInfo.impersonationLevel || 'Non fourni'} · Groupes du jeton : {securityInfo.groupCount ?? securityInfo.groups?.length ?? 0}</div>
               <div style={{ fontSize: 12 }}>UAC : {securityInfo.uacEnabled == null ? 'Indisponible' : securityInfo.uacEnabled ? 'Activé' : 'Désactivé'}</div>
               <div style={{ fontSize: 12 }}>Bureau sécurisé : {securityInfo.secureDesktopEnabled == null ? 'Indisponible' : securityInfo.secureDesktopEnabled ? 'Activé' : 'Désactivé'}</div>
               <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6 }}>{securityInfo.source} · lecture seule</div>
