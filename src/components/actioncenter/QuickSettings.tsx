@@ -19,6 +19,7 @@ export const QuickSettings: React.FC = () => {
     setVolume,
     isMuted,
     toggleMute,
+    audioDeviceName,
     openWindow,
     closeAllFlyouts,
   } = useOS()
@@ -65,8 +66,8 @@ export const QuickSettings: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        top: '60px',
-        right: '20px',
+        bottom: '56px',
+        right: '8px',
         width: '350px',
         backgroundColor: '#1a1a1a',
         backdropFilter: 'var(--backdrop-blur)',
@@ -172,6 +173,22 @@ export const QuickSettings: React.FC = () => {
           <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 32 }}>{isMuted ? 0 : volume}%</span>
           </label>
         </div>
+
+        {audioDeviceName && (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-tertiary)',
+              marginTop: -6,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={audioDeviceName}
+          >
+            Sortie : {audioDeviceName}
+          </div>
+        )}
       </div>
 
       {/* Footer Info: Battery & Settings link */}

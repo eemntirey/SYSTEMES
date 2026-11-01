@@ -2,245 +2,253 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon, WindowsLogo } from '../common/FluentIcon'
 import { TaskbarIcon } from './TaskbarIcon'
+import { APP_DEFINITIONS } from '../../data/constants'
 import { AppId } from '../../types'
+
+/** Apps pinned by default on the Windows 11 taskbar. */
+const PINNED: AppId[] = ['explorer', 'notepad', 'terminal', 'calculator', 'settings', 'photos', 'paint']
 
 export const Taskbar: React.FC = () => {
   const {
     windows,
     activeWindowId,
     openWindow,
-    toggleWindowMinimize,
+    bringToFront,
     isStartMenuOpen,
     toggleStartMenu,
+    isSearchOpen,
+    toggleSearch,
+    isActionCenterOpen,
+    toggleActionCenter,
     isCalendarOpen,
     toggleCalendar,
+    isWidgetsOpen,
+    toggleWidgets,
+    isTaskViewOpen,
+    toggleTaskView,
+    closeAllFlyouts,
     notifications,
     taskbarAlignment,
+    volume,
+    isMuted,
+    wifiEnabled,
+    batterySaver,
+    minimizeWindow,
   } = useOS()
 
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [showCustomize, setShowCustomize] = useState(false)
-  const [customizeAppIds, setCustomizeAppIds] = useState<AppId[]>([
-    'photos', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'
-  ])
-
-  const [hoveredAppId, setHoveredAppId] = useState<string | null>(null)
-  const [showAppGroup, setShowAppGroup] = useState(false)
+  const [showTray, setShowTray] = useState(false)
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
 
-  const formattedTime = currentTime.toLocaleTimeString('fr-FR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
-  const formattedDate = currentTime.toLocaleDateString('fr-FR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  })
-
-  const allTaskbarAppIds = Array.from(
-    new Set([...customizeAppIds, ...windows.map(w => w.appId)])
-  )
-
+  const formattedTime = currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  const formattedDate = currentTime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const unreadCount = notifications.filter(n => n.unread).length
 
-  // Magnification logic: compute scale for each icon based on distance from hovered
-  const getIconScale = useCallback(
-    (_appId: string, index: number) => {
-      if (!hoveredAppId) return 1
-      const hoveredIndex = allTaskbarAppIds.findIndex(a => a === hoveredAppId)
-      if (hoveredIndex === -1) return 1
-      const distance = Math.abs(index - hoveredIndex)
-      if (distance === 0) return 1.55
-      if (distance === 1) return 1.2
-      if (distance === 2) return 1.08
-      return 1
+  // Union of pinned apps + apps with open windows, in stable order.
+  const openAppIds = new Set(windows.map(w => w.appId))
+  const appIds = Array.from(new Set([...PINNED, ...openAppIds]))
+
+  const handleAppClick = useCallback(
+    (appId: AppId) => {
+      const appWindows = windows.filter(w => w.appId === appId)
+      if (appWindows.length === 0) {
+        openWindow(appId)
+        return
+      }
+      const activeOfApp = appWindows.find(w => w.id === activeWindowId)
+      if (activeOfApp && !activeOfApp.isMinimized) {
+        minimizeWindow(activeOfApp.id)
+      } else {
+        bringToFront((activeOfApp ?? appWindows[0]).id)
+      }
     },
-    [hoveredAppId, allTaskbarAppIds]
+    [windows, activeWindowId, openWindow, minimizeWindow, bringToFront]
   )
 
+  // "Afficher le bureau" : minimise tout (et restaure au clic suivant si tout est minimisé).
+  const allMinimized = windows.length > 0 && windows.every(w => w.isMinimized)
+  const handleShowDesktop = () => {
+    if (allMinimized) {
+      windows.forEach(w => bringToFront(w.id))
+    } else {
+      windows.forEach(w => minimizeWindow(w.id))
+    }
+  }
+
+  const volumeIcon = isMuted || volume === 0 ? 'volume-x' : 'volume'
+
   return (
-    <div className="dock-container" style={{ justifyContent: taskbarAlignment === 'left' ? 'flex-start' : 'center' }}>
-      {/* Left separator + Start (Launchpad style) */}
-      <button
-        onClick={toggleStartMenu}
-        title="Démarrer"
-        className="dock-icon"
-        style={{
-          width: 52,
-          height: 52,
-          borderRadius: '50%',
-          border: isStartMenuOpen ? '1.5px solid rgba(139,92,246,0.5)' : '1.5px solid transparent',
-          backgroundColor: isStartMenuOpen ? 'rgba(139,92,246,0.15)' : 'transparent',
-          boxShadow: isStartMenuOpen ? '0 0 18px rgba(139,92,246,0.5)' : 'none',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          animation: isStartMenuOpen ? 'bounce-click 0.35s ease' : 'none',
-        }}
-        onMouseEnter={() => setHoveredAppId('start')}
-        onMouseLeave={() => setHoveredAppId(null)}
-      >
-        <WindowsLogo size={28} />
-      </button>
-
-      <button
-        onClick={() => setShowCustomize(!showCustomize)}
-        title="Personnaliser"
-        style={{ width: 36, height: 36, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: '#777', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, transition: 'all 0.15s' }}
-      >+
-      </button>
-
-      {showCustomize && (
-        <div style={{ position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', background: 'rgba(10,10,14,0.98)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 12, padding: '14px 16px', zIndex: 99999, boxShadow: 'none', minWidth: 220 }}>
-          <div style={{ fontWeight: 600, color: '#fff', marginBottom: 8, fontSize: 13 }}>Personnaliser la barre</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {['photos', 'explorer', 'notepad', 'terminal', 'calculator', 'paint', 'settings'].map(app => (
-              <button key={app} onClick={() => { if (!customizeAppIds.includes(app as AppId)) setCustomizeAppIds([...customizeAppIds, app as AppId]); else setCustomizeAppIds(customizeAppIds.filter(a => a !== app)) }} style={{ padding: '4px 10px', borderRadius: 6, border: customizeAppIds.includes(app as AppId) ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.1)', background: customizeAppIds.includes(app as AppId) ? 'rgba(255,255,255,0.08)' : 'transparent', color: '#ccc', cursor: 'pointer', fontSize: 11 }}>{app}</button>
-            ))}
-          </div>
-          <button onClick={() => setShowCustomize(false)} style={{ marginTop: 10, padding: '4px 12px', border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.1)', color: '#fff', cursor: 'pointer', fontSize: 11, width: '100%' }}>Fermer</button>
-        </div>
-      )}
-
-      {/* App Icons */}
-      {allTaskbarAppIds.map((appId, index) => {
-        const openWin = windows.find(w => w.appId === appId)
-        const isOpen = Boolean(openWin)
-        const isActive = Boolean(openWin && activeWindowId === openWin.id && !openWin.isMinimized)
-        const scale = getIconScale(appId, index)
-
-        return (
-          <div key={appId} onContextMenu={(e: React.MouseEvent) => { e.preventDefault(); setCustomizeAppIds(customizeAppIds.filter(a => a !== appId)) }}>
-            <TaskbarIcon
-            key={appId}
-            id={appId}
-            icon={appId}
-            title={appId}
-            isOpen={isOpen}
-            isActive={isActive}
-            scale={scale}
-            onMouseEnter={() => setHoveredAppId(appId)}
-            onMouseLeave={() => setHoveredAppId(null)}
-            onClick={() => { if (openWin) toggleWindowMinimize(openWin.id); else openWindow(appId) }}
-          />
-          </div>
-        )
-      })}
-
-
-      {/* App Group Block */}
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 52 }}>
+    <div className="taskbar-w11" role="toolbar" aria-label="Barre des tâches">
+      {/* ===== Centre : Démarrer, Recherche, Task View, Widgets, Copilot, apps ===== */}
+      <div className={`taskbar-center${taskbarAlignment === 'left' ? ' align-left' : ''}`}>
+        {/* Démarrer */}
         <button
-          title="Dossier d'apps"
-          className="dock-icon"
-          onClick={() => setShowAppGroup(v => !v)}
-          style={{ width: 52, height: 52, borderRadius: '50%', border: '1.5px solid transparent', backgroundColor: showAppGroup ? 'rgba(139,92,246,0.15)' : 'transparent', boxShadow: showAppGroup ? '0 0 12px rgba(139,92,246,0.4)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', cursor: 'pointer' }}
+          className={`taskbar-btn${isStartMenuOpen ? ' open' : ''}`}
+          onClick={toggleStartMenu}
+          aria-label="Démarrer"
+          aria-pressed={isStartMenuOpen}
+          title="Démarrer"
+          style={{ minWidth: 44 }}
         >
-          <FluentIcon name="folder" size={24} color="#f0f0f5" />
+          <WindowsLogo size={22} />
         </button>
-        {showAppGroup && (
-          <div style={{ position: 'absolute', bottom: '60px', left: '-80px', width: 220, background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '12px', boxShadow: '0 8px 20px rgba(0,0,0,0.2)', zIndex: 1000, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-            {customizeAppIds.map(appId => (
-              <button key={appId} onClick={() => { openWindow(appId); setShowAppGroup(false); }} title={appId} style={{ background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#ccc', fontSize: '11px' }}>
-                <FluentIcon name={appId} size={22} />
-                <span style={{ fontSize: '10px', whiteSpace: 'nowrap' }}>{appId}</span>
-              </button>
-            ))}
-          </div>
-        )}
+
+        {/* Recherche (boîte façon Win11) */}
+        <button
+          className={`taskbar-btn${isSearchOpen ? ' open' : ''}`}
+          onClick={toggleSearch}
+          aria-label="Rechercher"
+          aria-pressed={isSearchOpen}
+          title="Rechercher"
+          style={{ width: 164, justifyContent: 'flex-start', gap: 8, padding: '0 12px', borderRadius: 8 }}
+        >
+          <FluentIcon name="search" size={16} color="var(--text-secondary)" />
+          <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Rechercher</span>
+        </button>
+
+        {/* Task View */}
+        <button
+          className={`taskbar-btn${isTaskViewOpen ? ' open' : ''}`}
+          onClick={toggleTaskView}
+          aria-label="Vue des tâches"
+          aria-pressed={isTaskViewOpen}
+          title="Vue des tâches"
+        >
+          <FluentIcon name="taskview" size={21} />
+        </button>
+
+        {/* Widgets */}
+        <button
+          className={`taskbar-btn${isWidgetsOpen ? ' open' : ''}`}
+          onClick={toggleWidgets}
+          aria-label="Widgets"
+          aria-pressed={isWidgetsOpen}
+          title="Widgets"
+        >
+          <FluentIcon name="widgets" size={21} />
+        </button>
+
+        {/* Copilot */}
+        <button
+          className="taskbar-btn"
+          onClick={() => {
+            closeAllFlyouts()
+            openWindow('settings')
+          }}
+          aria-label="Copilot"
+          title="Copilot"
+        >
+          <FluentIcon name="copilot" size={22} />
+        </button>
+
+        {/* Séparateur discret */}
+        <div style={{ width: 1, height: 24, background: 'var(--taskbar-border)', margin: '0 4px' }} />
+
+        {/* Apps épinglées / ouvertes */}
+        {appIds.map(appId => {
+          const appWindows = windows.filter(w => w.appId === appId)
+          const isOpen = appWindows.length > 0
+          const isActive = appWindows.some(w => w.id === activeWindowId && !w.isMinimized)
+          const def = APP_DEFINITIONS[appId]
+          return (
+            <TaskbarIcon
+              key={appId}
+              id={appId}
+              icon={def?.icon ?? appId}
+              title={def?.name ?? appId}
+              isOpen={isOpen}
+              isActive={isActive}
+              onClick={() => handleAppClick(appId)}
+            />
+          )
+        })}
       </div>
 
-      {/* Divider before trash/bin area */}
-      <div className="dock-divider" />
+      {/* ===== Droite : system tray ===== */}
+      <div className="taskbar-tray">
+        {/* Icônes cachées (chevron) */}
+        <button
+          className="taskbar-btn"
+          onClick={() => setShowTray(v => !v)}
+          aria-label="Afficher les icônes cachées"
+          title="Afficher les icônes cachées"
+          style={{ minWidth: 28, padding: '0 4px' }}
+        >
+          <FluentIcon name="chevron-up" size={15} color="var(--text-secondary)" />
+        </button>
 
-      {/* Trash / Bin icon */}
-      <button
-        title="Corbeille"
-        className="dock-icon"
-        style={{
-          width: 52,
-          height: 52,
-          borderRadius: '50%',
-          border: '1.5px solid transparent',
-          backgroundColor: 'transparent',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
-        }}
-        onMouseEnter={() => setHoveredAppId('trash')}
-        onMouseLeave={() => setHoveredAppId(null)}
-      >
-        <FluentIcon name="trash" size={24} color="#a0a0c0" />
-      </button>
-
-      {/* System tray area on the right side of the dock */}
-      <div style={{ width: '16px' }} />
-
-      {/* Clock */}
-      <button
-        onClick={toggleCalendar}
-        title="Heure et date"
-        className="dock-icon-clock"
-        style={{
-          padding: '6px 10px',
-          borderRadius: '16px',
-          border: isCalendarOpen ? '1px solid rgba(139,92,246,0.3)' : '1px solid transparent',
-          backgroundColor: isCalendarOpen ? 'rgba(139,92,246,0.12)' : 'rgba(255,255,255,0.05)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          lineHeight: '1.2',
-        }}
-      >
-        <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.02em' }}>{formattedTime}</span>
-        <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{formattedDate}</span>
-      </button>
-
-      {/* Notification bell */}
-      <button
-        onClick={toggleCalendar}
-        title="Notifications"
-        className="dock-icon"
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          border: unreadCount > 0 ? '1.5px solid rgba(0,212,255,0.4)' : '1.5px solid transparent',
-          backgroundColor: unreadCount > 0 ? 'rgba(0,212,255,0.1)' : 'transparent',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s ease',
-          position: 'relative',
-        }}
-      >
-        <FluentIcon name="bell" size={18} color={unreadCount > 0 ? '#00d4ff' : '#a0a0c0'} />
-        {unreadCount > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: 4,
-              right: 4,
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              backgroundColor: '#00d4ff',
-              boxShadow: '0 0 6px rgba(0,212,255,0.6)',
-            }}
-          />
+        {showTray && (
+          <div className="tray-flyout">
+            <button className="taskbar-btn" title="Sécurité Windows"><FluentIcon name="shield" size={17} /></button>
+            <button className="taskbar-btn" title="OneDrive"><FluentIcon name="cloud" size={17} /></button>
+            <button className="taskbar-btn" title="NVIDIA"><FluentIcon name="palette" size={17} /></button>
+          </div>
         )}
-      </button>
+
+        {/* Réseau + Son + Batterie → ouvre le centre de contrôle rapide */}
+        <button
+          className={`taskbar-btn${isActionCenterOpen ? ' open' : ''}`}
+          onClick={toggleActionCenter}
+          aria-label="Réseau, son, batterie"
+          aria-pressed={isActionCenterOpen}
+          title="Réseau, son, batterie"
+          style={{ gap: 8, padding: '0 10px' }}
+        >
+          <FluentIcon name={wifiEnabled ? 'wifi' : 'wifi-off'} size={16} color="var(--text-primary)" />
+          <FluentIcon name={volumeIcon} size={16} color="var(--text-primary)" />
+          <FluentIcon name="battery" size={16} color={batterySaver ? 'var(--win-accent)' : 'var(--text-primary)'} />
+        </button>
+
+        {/* Micro (indicateur d'état) */}
+        <button className="taskbar-btn" title="Microphone" aria-label="Microphone" style={{ minWidth: 28, padding: '0 4px' }}>
+          <FluentIcon name="mic" size={15} color="var(--text-secondary)" />
+        </button>
+
+        {/* Horloge → ouvre calendrier / notifications */}
+        <button
+          className="taskbar-clock"
+          onClick={toggleCalendar}
+          aria-label="Heure, date et notifications"
+          aria-pressed={isCalendarOpen}
+          title={`${formattedDate} ${formattedTime}`}
+          style={{ position: 'relative' }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 400 }}>{formattedTime}</span>
+          <span style={{ fontSize: 12, fontWeight: 400 }}>{formattedDate}</span>
+          {unreadCount > 0 && (
+            <span
+              style={{
+                position: 'absolute', top: 4, right: 2, width: 6, height: 6,
+                borderRadius: '50%', background: 'var(--win-accent)', boxShadow: '0 0 6px var(--win-accent)',
+              }}
+            />
+          )}
+        </button>
+
+        {/* Notifications (bouton flèche) */}
+        <button
+          className={`taskbar-btn${isCalendarOpen ? ' open' : ''}`}
+          onClick={toggleCalendar}
+          aria-label="Notifications"
+          aria-pressed={isCalendarOpen}
+          title="Notifications"
+          style={{ minWidth: 28, padding: '0 4px' }}
+        >
+          <FluentIcon name="bell" size={15} color="var(--text-secondary)" />
+        </button>
+
+        {/* Afficher le bureau (liseré tout à droite) */}
+        <button
+          className="taskbar-showdesktop"
+          onClick={handleShowDesktop}
+          aria-label="Afficher le bureau"
+          title="Afficher le bureau"
+        />
+      </div>
     </div>
   )
 }

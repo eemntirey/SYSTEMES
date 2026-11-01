@@ -9,6 +9,10 @@ export type AppId =
   | 'recycle'
   | 'widgets'
   | 'taskmanager'
+  | 'clock'
+  | 'music'
+  | 'store'
+  | 'controlpanel'
 
 export type SnapPosition =
   | 'left-half'

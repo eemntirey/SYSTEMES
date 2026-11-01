@@ -6,7 +6,15 @@ export default defineConfig({
   server: {
     port: 5173,
     watch: {
-      ignored: ['**/native-core/src/obj/**', '**/native-core/src/bin/**', '**/*.assets.cache']
+      ignored: [
+        '**/native-core/src/obj/**',
+        '**/native-core/src/bin/**',
+        '**/*.assets.cache',
+        '**/native/**/obj/**',
+        '**/native/**/bin/**',
+        '**/*.WebView2/**',
+        '**/EBWebView/**',
+      ]
     }
   },
   test: {

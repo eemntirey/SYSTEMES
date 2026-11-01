@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react'
 import {
   AppId,
   FileItem,
@@ -9,6 +9,7 @@ import {
   WindowState,
 } from '../types'
 import { APP_DEFINITIONS, INITIAL_FILES, MENU_BAR_HEIGHT, WALLPAPERS } from '../data/constants'
+import { NativeBridge } from '../services/NativeBridge'
 
 export interface RecycleItem extends FileItem {
   originalPath: string
@@ -36,11 +37,13 @@ interface OSContextType {
   isActionCenterOpen: boolean
   isCalendarOpen: boolean
   isWidgetsOpen: boolean
+  isTaskViewOpen: boolean
   toggleStartMenu: () => void
   toggleSearch: () => void
   toggleActionCenter: () => void
   toggleCalendar: () => void
   toggleWidgets: () => void
+  toggleTaskView: () => void
   closeAllFlyouts: () => void
 
   // System Settings
@@ -55,6 +58,7 @@ interface OSContextType {
   setVolume: (vol: number) => void
   isMuted: boolean
   toggleMute: () => void
+  audioDeviceName: string | null
   brightness: number
   setBrightness: (b: number) => void
   wifiEnabled: boolean
@@ -205,6 +209,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isActionCenterOpen, setIsActionCenterOpen] = useState(false)
   const [isCalendarOpen, setIsCalendarOpen] = useState(false)
   const [isWidgetsOpen, setIsWidgetsOpen] = useState(false)
+  const [isTaskViewOpen, setIsTaskViewOpen] = useState(false)
 
   // Settings state
   const [theme, setTheme] = useState<ThemeMode>(() => readPreference('theme', 'dark'))
@@ -212,6 +217,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [accentColor, setAccentColor] = useState(() => readPreference('accentColor', '#0078d4'))
   const [volume, setVolume] = useState(() => readPreference('volume', 70))
   const [isMuted, setIsMuted] = useState(false)
+  const [audioDeviceName, setAudioDeviceName] = useState<string | null>(null)
   const [brightness, setBrightness] = useState(() => readPreference('brightness', 90))
   const [wifiEnabled, setWifiEnabled] = useState(() => readPreference('wifiEnabled', true))
   const [bluetoothEnabled, setBluetoothEnabled] = useState(() => readPreference('bluetoothEnabled', true))
@@ -321,6 +327,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     setIsActionCenterOpen(false)
     setIsCalendarOpen(false)
     setIsWidgetsOpen(false)
+    setIsTaskViewOpen(false)
   }, [])
 
   // Toggle flyout helpers
@@ -332,6 +339,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -345,6 +353,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -358,6 +367,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsCalendarOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -371,6 +381,7 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsActionCenterOpen(false)
         setIsWidgetsOpen(false)
+        setIsTaskViewOpen(false)
       }
       return next
     })
@@ -384,6 +395,21 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setIsSearchOpen(false)
         setIsActionCenterOpen(false)
         setIsCalendarOpen(false)
+        setIsTaskViewOpen(false)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleTaskView = useCallback(() => {
+    setIsTaskViewOpen(prev => {
+      const next = !prev
+      if (next) {
+        setIsStartMenuOpen(false)
+        setIsSearchOpen(false)
+        setIsActionCenterOpen(false)
+        setIsCalendarOpen(false)
+        setIsWidgetsOpen(false)
       }
       return next
     })
@@ -697,9 +723,57 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
 
-  const toggleMute = useCallback(() => {
-    setIsMuted(prev => !prev)
+  // ===== Synchronisation audio réel (Core Audio via host SYSTEMES) =====
+  // Best-effort : hors host WebView2, les opérations échouent silencieusement
+  // et l'état reste porté par localStorage comme avant.
+  const nativeAudioAvailable = useRef(true)
+  const muteRef = useRef(isMuted)
+  const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => { muteRef.current = isMuted }, [isMuted])
+
+  const tryNativeAudio = useCallback(async (op: () => Promise<unknown>) => {
+    if (!nativeAudioAvailable.current) return
+    try { await op() } catch { nativeAudioAvailable.current = false }
   }, [])
+
+  // Lecture initiale : volume/mute réels du périphérique de sortie par défaut.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const audio = await NativeBridge.readAudio()
+        if (cancelled) return
+        if (audio?.error || typeof audio?.volume !== 'number') {
+          nativeAudioAvailable.current = false
+          return
+        }
+        setVolume(audio.volume)
+        setIsMuted(!!audio.isMuted)
+        if (audio.deviceName) setAudioDeviceName(audio.deviceName)
+      } catch {
+        nativeAudioAvailable.current = false
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const syncVolumeToNative = useCallback((vol: number) => {
+    if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
+    volumeTimerRef.current = setTimeout(() => {
+      void tryNativeAudio(() => NativeBridge.setAudioVolume(vol))
+    }, 150)
+  }, [tryNativeAudio])
+
+  const setVolumeAndSync = useCallback((vol: number) => {
+    setVolume(vol)
+    syncVolumeToNative(vol)
+  }, [syncVolumeToNative])
+
+  const toggleMute = useCallback(() => {
+    const next = !muteRef.current
+    setIsMuted(next)
+    void tryNativeAudio(() => NativeBridge.setAudioMuted(next))
+  }, [tryNativeAudio])
 
   const toggleWifi = useCallback(() => {
     setWifiEnabled(prev => !prev)
@@ -856,11 +930,13 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         isActionCenterOpen,
         isCalendarOpen,
         isWidgetsOpen,
+        isTaskViewOpen,
         toggleStartMenu,
         toggleSearch,
         toggleActionCenter,
         toggleCalendar,
         toggleWidgets,
+        toggleTaskView,
         closeAllFlyouts,
 
         theme,
@@ -871,9 +947,10 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         accentColor,
         setAccentColor,
         volume,
-        setVolume,
+        setVolume: setVolumeAndSync,
         isMuted,
         toggleMute,
+        audioDeviceName,
         brightness,
         setBrightness,
         wifiEnabled,

@@ -34,6 +34,35 @@ export const NativeBridge = {
     return response.result;
   },
 
+  // ===== Audio (Core Audio réel) =====
+  async readAudio() {
+    const response = await request('audio/read');
+    return response.result as {
+      volume?: number;
+      isMuted?: boolean;
+      deviceName?: string;
+      deviceId?: string;
+      channels?: number;
+      error?: string;
+    };
+  },
+
+  async setAudioVolume(percent: number) {
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error('Volume invalide (0–100 attendu).');
+    const response = await request('audio/set-volume', { percent: Math.round(percent) });
+    return response.result;
+  },
+
+  async setAudioMuted(muted: boolean) {
+    const response = await request('audio/set-mute', { muted });
+    return response.result;
+  },
+
+  async listAudioDevices() {
+    const response = await request('audio/devices');
+    return response.result as { devices?: { id: string; name: string; flow: string }[]; error?: string };
+  },
+
   async readDevices() {
     const response = await request('devices/read');
     return response.result;

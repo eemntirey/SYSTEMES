@@ -45,7 +45,7 @@ export const CalendarFlyout: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '104px',
+        bottom: '56px',
         right: '12px',
         width: '360px',
         backgroundColor: 'var(--flyout-bg)',

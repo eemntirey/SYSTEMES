@@ -20,7 +20,7 @@ export const WidgetsBoard: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '60px',
+        bottom: '56px',
         left: '12px',
         width: '460px',
         maxHeight: 'calc(100vh - 80px)',

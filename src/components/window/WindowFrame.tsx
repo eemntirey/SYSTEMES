@@ -130,7 +130,23 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     isDraggingRef.current = false
     isResizingRef.current = false
     resizeDirectionRef.current = null
-  }, [])
+
+    // Snap par glissement : détecter si la fenêtre est proche des bords
+    if (!win.isMaximized && !isDraggingRef.current) {
+      const snapMargin = 30
+      const x = win.position.x
+      const y = win.position.y
+      const w = win.size.width
+      const screenW = window.innerWidth
+      const screenH = window.innerHeight
+
+      if (x < snapMargin) snapWindow(win.id, 'left-half')
+      else if (x + w > screenW - snapMargin) snapWindow(win.id, 'right-half')
+      else if (y < snapMargin + MENU_BAR_HEIGHT) snapWindow(win.id, 'top-left')
+      else if (x < snapMargin && y > screenH / 2) snapWindow(win.id, 'bottom-left')
+      else if (x + w > screenW - snapMargin && y > screenH / 2) snapWindow(win.id, 'bottom-right')
+    }
+  }, [win.id, snapWindow, win.isMaximized, win.position.x, win.position.y, win.size.width, win.size.height, MENU_BAR_HEIGHT])
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove)
@@ -203,40 +219,32 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
           </span>
         </div>
 
-        {/* Window Controls */}
-        <div style={{ display: 'flex', height: '100%', alignItems: 'center', paddingRight: '6px', gap: '4px' }}>
+        {/* Window Controls — boutons plats Windows 11 */}
+        <div style={{ display: 'flex', height: '100%', alignItems: 'stretch' }}>
           {/* Minimize */}
           <button
             onClick={() => minimizeWindow(win.id)}
             title="Réduire"
             style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
+              width: '46px',
               border: 'none',
               background: 'transparent',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
+              color: 'var(--text-primary)',
+              cursor: 'default',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              transition: 'background 0.15s, color 0.15s',
+              transition: 'background 0.1s',
             }}
-            onMouseEnter={e => {
-              e.currentTarget.style.backgroundColor = 'rgba(139,92,246,0.15)'
-              e.currentTarget.style.color = '#ffffff'
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.backgroundColor = 'transparent'
-              e.currentTarget.style.color = 'var(--text-secondary)'
-            }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.09)' }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
           >
-            <FluentIcon name="minus" size={13} />
+            <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1" /></svg>
           </button>
 
           {/* Maximize / Restore with Snap Menu Trigger */}
           <div
-            style={{ position: 'relative', height: '32px', display: 'flex', alignItems: 'center' }}
+            style={{ position: 'relative', display: 'flex' }}
             onMouseEnter={() => {
               snapTimeoutRef.current = window.setTimeout(() => setShowSnapMenu(true), 300)
             }}
@@ -249,28 +257,24 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
               onClick={() => maximizeWindow(win.id)}
               title={win.isMaximized ? 'Niveau inférieur' : 'Agrandir'}
               style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
+                width: '46px',
                 border: 'none',
                 background: 'transparent',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
+                color: 'var(--text-primary)',
+                cursor: 'default',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'background 0.15s, color 0.15s',
+                transition: 'background 0.1s',
               }}
-              onMouseEnter={e => {
-                e.currentTarget.style.backgroundColor = 'var(--control-hover)'
-                e.currentTarget.style.color = '#ffffff'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.backgroundColor = 'transparent'
-                e.currentTarget.style.color = 'var(--text-secondary)'
-              }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.09)' }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
             >
-              <FluentIcon name={win.isMaximized ? 'minimize' : 'square'} size={12} />
+              {win.isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><rect x="0.5" y="2.5" width="7" height="7" rx="1" /><path d="M2.5 0.5h6a1 1 0 011 1v6" /></svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5" /></svg>
+              )}
             </button>
 
             {/* Windows 11 Snap Layouts flyout */}
@@ -396,28 +400,26 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
             onClick={() => closeWindow(win.id)}
             title="Fermer"
             style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
+              width: '46px',
               border: 'none',
               background: 'transparent',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
+              color: 'var(--text-primary)',
+              cursor: 'default',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              transition: 'all 0.15s',
+              transition: 'background 0.1s',
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.backgroundColor = 'rgba(255, 80, 80, 0.2)'
-              e.currentTarget.style.color = '#ff5555'
+              e.currentTarget.style.backgroundColor = '#c42b1c'
+              e.currentTarget.style.color = '#ffffff'
             }}
             onMouseLeave={e => {
               e.currentTarget.style.backgroundColor = 'transparent'
-              e.currentTarget.style.color = 'var(--text-secondary)'
+              e.currentTarget.style.color = 'var(--text-primary)'
             }}
           >
-            <FluentIcon name="x" size={14} />
+            <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1"><line x1="0" y1="0" x2="10" y2="10" /><line x1="10" y1="0" x2="0" y2="10" /></svg>
           </button>
         </div>
       </div>

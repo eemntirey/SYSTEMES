@@ -79,6 +79,50 @@ namespace Systemes.Native.Core
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();
                             break;
+                        case "audio/read":
+                            result = AudioManager.ReadRealAudio();
+                            break;
+                        case "audio/set-volume":
+                            result = AudioManager.SetRealVolume(args["percent"]?.Value<int>() ?? -1);
+                            break;
+                        case "audio/set-mute":
+                            result = AudioManager.SetRealMute(args["muted"]?.Value<bool>() ?? false);
+                            break;
+                        case "audio/devices":
+                            result = AudioManager.ListRealAudioDevices();
+                            break;
+                        case "display/read":
+                            result = DisplayManager.ReadRealDisplay();
+                            break;
+                        case "power/read":
+                            result = BrightnessAndBattery.ReadRealPower();
+                            break;
+                        case "network/read":
+                            result = NetworkManager.ReadRealNetwork();
+                            break;
+                        case "network/wifi/scan":
+                            result = NetworkManager.ScanWifi();
+                            break;
+                        case "network/wifi/status":
+                            result = NetworkManager.ReadWifiStatus();
+                            break;
+                        case "network/wifi/connect":
+                            result = NetworkManager.ConnectWifi(
+                                args["ssid"]?.Value<string>() ?? "",
+                                args["password"]?.Value<string>());
+                            break;
+                        case "network/wifi/disconnect":
+                            result = NetworkManager.DisconnectWifi();
+                            break;
+                        case "bluetooth/status":
+                            result = BluetoothManager.ReadStatus();
+                            break;
+                        case "bluetooth/scan":
+                            result = BluetoothManager.ScanDevices(args["timeoutSeconds"]?.Value<int>() ?? 6);
+                            break;
+                        case "bluetooth/pair":
+                            result = BluetoothManager.PairDevice(args["deviceId"]?.Value<string>() ?? "");
+                            break;
                         case "update/check":
                             result = WindowsUpdateNative.CheckRealUpdates();
                             break;

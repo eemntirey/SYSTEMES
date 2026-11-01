@@ -1,43 +1,51 @@
 import { AppDefinition, FileItem, Wallpaper } from '../types'
 
-/** Hauteur de la barre de menus fixée en haut de l'écran (cf. MenuBar). */
-export const MENU_BAR_HEIGHT = 44
+/**
+ * Hauteur réservée en haut de l'écran.
+ * Windows 11 n'a pas de barre de menus haute (contrairement au shell macOS) :
+ * les fenêtres occupent le bord supérieur. Conserve à 0 pour ne pas casser
+ * les calculs de positionnement existants (maximize/snap/drag).
+ */
+export const MENU_BAR_HEIGHT = 0
+
+/** Hauteur de la barre des tâches Windows 11 (bas de l'écran). */
+export const TASKBAR_HEIGHT = 48
 
 export const WALLPAPERS: Wallpaper[] = [
   {
     id: 'bloom-dark',
     name: 'Windows 11 Bloom (Sombre)',
-    url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=2560&q=80',
+    url: '/wallpapers/bloom-dark.svg',
     isDark: true,
-    previewColor: '#0a192f',
+    previewColor: '#0b2247',
   },
   {
     id: 'bloom-light',
     name: 'Windows 11 Bloom (Clair)',
-    url: 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?auto=format&fit=crop&w=2560&q=80',
+    url: '/wallpapers/bloom-light.svg',
     isDark: false,
-    previewColor: '#e0f2fe',
+    previewColor: '#bcd9f7',
   },
   {
     id: 'glow',
-    name: 'Glow Windows 11',
-    url: 'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?auto=format&fit=crop&w=2560&q=80',
+    name: 'Windows 11 Glow',
+    url: '/wallpapers/bloom-dark.svg',
     isDark: true,
-    previewColor: '#1e1b4b',
+    previewColor: '#123a6b',
   },
   {
     id: 'flow',
-    name: 'Flow Abstraction',
-    url: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=2560&q=80',
+    name: 'Windows 11 Flow',
+    url: '/wallpapers/bloom-light.svg',
     isDark: true,
     previewColor: '#0f172a',
   },
   {
     id: 'sunrise',
-    name: 'Sunrise Minimal',
-    url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=2560&q=80',
+    name: 'Windows 11 Aurore',
+    url: '/wallpapers/bloom-light.svg',
     isDark: false,
-    previewColor: '#fdba74',
+    previewColor: '#8fb6e6',
   },
 ]
 

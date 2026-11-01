@@ -31,7 +31,7 @@ export const SearchFlyout: React.FC = () => {
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
-        bottom: '104px',
+        bottom: '56px',
         left: '50%',
         transform: 'translateX(-50%)',
         width: '640px',
