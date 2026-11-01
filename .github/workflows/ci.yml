@@ -96,6 +96,7 @@ jobs:
               @{ id = "phase-power-read"; method = "system/power/read"; params = @{} },
               @{ id = "phase-power-invalid-set"; method = "system/power/set"; params = @{ guid = "not-a-guid" } },
               @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
+              @{ id = "phase2-memory"; method = "memory/read"; params = @{} },
               @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
               @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
               @{ id = "phase2-update"; method = "update/check"; params = @{} },
@@ -144,6 +145,12 @@ jobs:
             if (-not $responses["phase-power-read"].result.activeGuid) { throw "system/power/read returned no active power scheme." }
             if (-not $responses["phase-power-invalid-set"].error) { throw "system/power/set accepted an invalid scheme identifier." }
             if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
+            $memory = $responses["phase2-memory"].result
+            if ($null -eq $memory.totalPhysicalBytes -or $memory.totalPhysicalBytes -le 0) { throw "memory/read returned no physical RAM total." }
+            if ($null -eq $memory.availablePhysicalBytes -or $memory.availablePhysicalBytes -gt $memory.totalPhysicalBytes) { throw "memory/read returned an invalid available RAM counter." }
+            if ($null -eq $memory.usedPhysicalBytes -or $memory.usedPhysicalBytes -ne ($memory.totalPhysicalBytes - $memory.availablePhysicalBytes)) { throw "memory/read returned an inconsistent used RAM counter." }
+            if ($memory.memoryLoadPercent -lt 0 -or $memory.memoryLoadPercent -gt 100) { throw "memory/read returned a percentage outside 0-100." }
+            if ($memory.sampleSource -ne "Windows GlobalMemoryStatusEx") { throw "memory/read did not identify the real Windows measurement source." }
             if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
             if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }
             foreach ($process in $responses["phase2-processes"].result.processes) {
