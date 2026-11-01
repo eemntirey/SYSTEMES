@@ -32,28 +32,8 @@ static VOID serial_out(UINT16 port, UINT8 value) {
     __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
-static UINT8 serial_in(UINT16 port) {
-    UINT8 value;
-    __asm__ __volatile__("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-static VOID serial_init(VOID) {
-    serial_out(0x3F9, 0x00);
-    serial_out(0x3FB, 0x80);
-    serial_out(0x3F8, 0x01);
-    serial_out(0x3F9, 0x00);
-    serial_out(0x3FB, 0x03);
-    serial_out(0x3FA, 0xC7);
-    serial_out(0x3FC, 0x0B);
-}
-
 static VOID serial_text(const CHAR8 *text) {
-    while (*text) {
-        UINTN retries = 100000;
-        while (retries && !(serial_in(0x3FD) & 0x20)) --retries;
-        serial_out(0x3F8, (UINT8)*text++);
-    }
+    while (*text) serial_out(0x3F8, (UINT8)*text++);
 }
 
 static VOID fail(EFI_SYSTEM_TABLE *st, CHAR16 *message) {
@@ -71,16 +51,21 @@ static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_SYSTEM_TABLE *st, VOID **buf
     EFI_FILE_HANDLE file = NULL;
 
     status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, image, &LoadedImageProtocol, (VOID **)&loaded);
-    if (EFI_ERROR(status)) return status;
+    if (EFI_ERROR(status)) { serial_text("SYSTEMES_UEFI_FAIL_LOADED_IMAGE\\r\\n"); return status; }
+    serial_text("SYSTEMES_UEFI_LOADED_IMAGE_OK\\r\\n");
     status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, loaded->DeviceHandle, &FileSystemProtocol, (VOID **)&filesystem);
-    if (EFI_ERROR(status)) return status;
+    if (EFI_ERROR(status)) { serial_text("SYSTEMES_UEFI_FAIL_FILESYSTEM\\r\\n"); return status; }
+    serial_text("SYSTEMES_UEFI_FILESYSTEM_OK\\r\\n");
     status = uefi_call_wrapper(filesystem->OpenVolume, 2, filesystem, &root);
-    if (EFI_ERROR(status)) return status;
+    if (EFI_ERROR(status)) { serial_text("SYSTEMES_UEFI_FAIL_OPEN_VOLUME\\r\\n"); return status; }
+    serial_text("SYSTEMES_UEFI_VOLUME_OK\\r\\n");
     status = uefi_call_wrapper(root->Open, 5, root, &file, L"\\EFI\\BOOT\\KERNEL.BIN", EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status)) {
+        serial_text("SYSTEMES_UEFI_FAIL_KERNEL_OPEN\\r\\n");
         uefi_call_wrapper(root->Close, 1, root);
         return status;
     }
+    serial_text("SYSTEMES_UEFI_KERNEL_OPEN_OK\\r\\n");
 
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, KERNEL_MAX_BYTES, buffer);
     if (EFI_ERROR(status)) goto cleanup;
@@ -88,6 +73,8 @@ static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_SYSTEM_TABLE *st, VOID **buf
     *bytes = KERNEL_MAX_BYTES;
     status = uefi_call_wrapper(file->Read, 3, file, bytes, *buffer);
     if (!EFI_ERROR(status) && *bytes == KERNEL_MAX_BYTES) status = EFI_BAD_BUFFER_SIZE;
+    if (!EFI_ERROR(status)) serial_text("SYSTEMES_UEFI_KERNEL_READ_OK\\r\\n");
+    else serial_text("SYSTEMES_UEFI_FAIL_KERNEL_READ\\r\\n");
 
 cleanup:
     uefi_call_wrapper(file->Close, 1, file);
