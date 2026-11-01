@@ -24,6 +24,7 @@ export class NativeBridge {
   private readonly pending = new Map<string, {
     resolve: (value: NativeResponse) => void;
     reject: (reason: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
   }>();
 
   private readonly onMessage = (event: MessageEvent<NativeResponse>) => {
@@ -32,6 +33,7 @@ export class NativeBridge {
     const pending = this.pending.get(response.id);
     if (!pending) return;
     this.pending.delete(response.id);
+    clearTimeout(pending.timeout);
     if (response.error) pending.reject(new Error(response.error));
     else pending.resolve(response);
   };
@@ -56,11 +58,16 @@ export class NativeBridge {
       ?? `systemes-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Délai dépassé pour la requête native « ${method} » (15 s).`));
+      }, 15_000);
+      this.pending.set(id, { resolve, reject, timeout });
       try {
         transport.postMessage({ id, method, params });
       } catch (error) {
         this.pending.delete(id);
+        clearTimeout(timeout);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -73,6 +80,7 @@ export class NativeBridge {
     }
     this.connected = false;
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
       pending.reject(new Error('Connexion au moteur natif interrompue.'));
     }
     this.pending.clear();
