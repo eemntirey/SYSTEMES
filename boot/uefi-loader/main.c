@@ -28,6 +28,28 @@ typedef struct {
 static EFI_GUID Acpi20Guid = {0x8868e871, 0xe4f1, 0x11d3, {0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
 static EFI_GUID Acpi10Guid = {0xeb9d2d30, 0x2d88, 0x11d3, {0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
 
+static VOID serial_out(UINT16 port, UINT8 value) {
+    __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static VOID serial_init(VOID) {
+    serial_out(0x3F9, 0x00);
+    serial_out(0x3FB, 0x80);
+    serial_out(0x3F8, 0x01);
+    serial_out(0x3F9, 0x00);
+    serial_out(0x3FB, 0x03);
+    serial_out(0x3FA, 0xC7);
+    serial_out(0x3FC, 0x0B);
+}
+
+static VOID serial_text(const CHAR8 *text) {
+    while (*text) {
+        UINTN retries = 100000;
+        while (retries-- && !( ((UINT8)__extension__({ UINT8 value; __asm__ __volatile__("inb %1, %0" : "=a"(value) : "Nd"((UINT16)0x3FD)); value; })) & 0x20)) { }
+        serial_out(0x3F8, (UINT8)*text++);
+    }
+}
+
 static VOID fail(EFI_SYSTEM_TABLE *st, CHAR16 *message) {
     st->ConOut->OutputString(st->ConOut, message);
     st->ConOut->OutputString(st->ConOut, L"\r\n");
@@ -106,6 +128,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
     CopyMem((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
+    serial_text("SYSTEMES_UEFI_KERNEL_LOADED\\r\\n");
     uefi_call_wrapper(st->BootServices->FreePool, 1, kernel_buffer);
     kernel_buffer = NULL;
 
@@ -122,6 +145,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     }
 
     acpi_rsdp = find_acpi_rsdp(st);
+    serial_text(framebuffer ? "SYSTEMES_UEFI_GOP_OK\\r\\n" : "SYSTEMES_UEFI_GOP_UNAVAILABLE\\r\\n");
+    serial_text(acpi_rsdp ? "SYSTEMES_UEFI_ACPI_OK\\r\\n" : "SYSTEMES_UEFI_ACPI_UNAVAILABLE\\r\\n");
     status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, memory_map_size, (VOID **)&memory_map);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate UEFI memory map buffer");
 
@@ -147,14 +172,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
         boot_info->framebuffer_stride = stride;
         boot_info->framebuffer_pixel_format = pixel_format;
 
+        serial_text("SYSTEMES_UEFI_MEMORY_MAP_OK\\r\\n");
         status = uefi_call_wrapper(st->BootServices->ExitBootServices, 2, image, map_key);
         if (!EFI_ERROR(status)) {
+            serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK\\r\\n");
             typedef VOID (__attribute__((sysv_abi)) *kernel_entry_t)(SYSTEMES_BOOT_INFO *);
             kernel_entry_t entry = (kernel_entry_t)(UINTN)kernel_address;
             __asm__ __volatile__("cli" ::: "memory");
             entry(boot_info);
             return EFI_SUCCESS;
         }
+        serial_text("SYSTEMES_UEFI_EXIT_BOOT_SERVICES_RETRY\\r\\n");
         if (status != EFI_INVALID_PARAMETER) break;
     }
 
