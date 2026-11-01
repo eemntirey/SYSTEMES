@@ -26,7 +26,7 @@ namespace Systemes.Native.Core
                     return new
                     {
                         serviceRunning,
-                        updatesAvailable = null, // Nécessite WUA COM (non implémenté ici sans autorisation explicite)
+                        updatesAvailable = (bool?)null, // Nécessite WUA COM (non implémenté ici sans autorisation explicite)
                         note = "Service Windows Update détecté. Vérification réelle nécessite autorisation administrateur."
                     };
                 }
