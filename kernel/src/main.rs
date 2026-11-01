@@ -82,6 +82,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    unsafe { serial_init(); serial_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
+    unsafe { serial_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
     halt();
 }
