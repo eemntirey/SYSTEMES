@@ -59,7 +59,6 @@ public partial class MainWindow : Window
 
             var raw = await DesktopView.CoreWebView2.ExecuteScriptAsync(
                 "JSON.stringify({readyState:document.readyState,title:document.title,url:location.href,rootChildren:document.querySelector('#root')?.childElementCount ?? 0,bodyTextLength:document.body?.innerText?.trim().length ?? 0})");
-            using var document = JsonDocument.Parse(raw.Trim('"').Replace("\\", "\").Replace("\\u0022", "\""));
             var state = JsonDocument.Parse(JsonSerializer.Deserialize<string>(raw) ?? "{}");
             var rootChildren = state.RootElement.GetProperty("rootChildren").GetInt32();
             var bodyTextLength = state.RootElement.GetProperty("bodyTextLength").GetInt32();
