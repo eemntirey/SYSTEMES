@@ -6,6 +6,7 @@ import { FileExplorerApp } from './FileExplorerApp'
 const mocks = vi.hoisted(() => ({
   listFiles: vi.fn(),
   getFileLocations: vi.fn(),
+  readHardware: vi.fn(),
   readTextFile: vi.fn(),
   createDirectory: vi.fn(),
   createFile: vi.fn(),
@@ -37,6 +38,7 @@ describe('FileExplorer native integration', () => {
       }],
     })
     mocks.getFileLocations.mockResolvedValue({ locations: [{ name: 'Accueil', path: 'C:/Users/test', icon: 'home' }] })
+    mocks.readHardware.mockResolvedValue({ disks: [{ name: 'C:/', totalBytes: 100 * 1024 ** 3, availableBytes: 25 * 1024 ** 3, format: 'NTFS' }] })
 
     renderExplorer()
 
@@ -53,6 +55,7 @@ describe('FileExplorer native integration', () => {
       items: [],
     })
     mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readHardware.mockResolvedValue({ disks: [] })
     mocks.createDirectory.mockResolvedValue({ created: true })
 
     renderExplorer()
