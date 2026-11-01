@@ -8,8 +8,6 @@ import {
   Wallpaper,
   WindowState,
 } from '../types'
-// @ts-ignore: Phase 1 native bridge import to be wired to openWindow/hardware
-import { nativeBridge } from './NativeBridge';
 import { APP_DEFINITIONS, INITIAL_FILES, MENU_BAR_HEIGHT, WALLPAPERS } from '../data/constants'
 
 export interface RecycleItem extends FileItem {
