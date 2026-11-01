@@ -20,6 +20,9 @@ const nativeMocks = vi.hoisted(() => ({
   readServices: vi.fn(),
   controlService: vi.fn(),
   readSecurityContext: vi.fn(),
+  readAudio: vi.fn(),
+  setAudioVolume: vi.fn(),
+  setAudioMuted: vi.fn(),
 }));
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -35,6 +38,7 @@ beforeEach(() => {
   nativeMocks.readServices.mockResolvedValue({ services: [], count: 0 });
   nativeMocks.readPowerSchemes.mockResolvedValue({ schemes: [], activeGuid: '' });
   nativeMocks.readSecurityContext.mockResolvedValue({ userName: 'test', machineName: 'TEST-PC', isAdministrator: false, uacEnabled: true, secureDesktopEnabled: true, source: 'test' });
+  nativeMocks.readAudio.mockResolvedValue({ volume: 45, isMuted: false, deviceName: 'Test audio output' });
 });
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
