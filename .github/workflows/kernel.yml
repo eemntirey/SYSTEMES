@@ -66,7 +66,7 @@ jobs:
           mmd -i build/uefi/esp.img ::/EFI ::/EFI/BOOT
           mcopy -i build/uefi/esp.img build/uefi/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
           mcopy -i build/uefi/esp.img build/uefi/KERNEL.BIN ::/EFI/BOOT/KERNEL.BIN
-          xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e build/uefi/esp.img -no-emul-boot build/uefi/esp.img
+          xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/esp.img
           test -s build/uefi/systemes-k1.iso
       - name: Boot ISO in QEMU with OVMF
         shell: bash
