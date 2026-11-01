@@ -8,6 +8,8 @@ const nativeMocks = vi.hoisted(() => ({
   readDevices: vi.fn(),
   checkWindowsUpdate: vi.fn(),
   openWindowsSettings: vi.fn(),
+  readPowerSchemes: vi.fn(),
+  setPowerScheme: vi.fn(),
 }));
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -16,7 +18,7 @@ vi.mock('../../services/NativeBridge', () => ({
 
 const renderSettings = () => render(<OSProvider><SettingsApp /></OSProvider>);
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 describe('Settings native integrations', () => {
   it('shows real hardware values returned by the native bridge', async () => {
@@ -97,6 +99,33 @@ describe('Settings native integrations', () => {
 
     expect(await screen.findByText('Real Wi-Fi adapter')).toBeDefined()
     expect(nativeMocks.readDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads and applies a real Windows power scheme through the native engine', async () => {
+    const balanced = '381b4222-f694-41f0-9685-ff5bb260df2e'
+    const performance = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
+    nativeMocks.readPowerSchemes
+      .mockResolvedValueOnce({
+        schemes: [{ guid: balanced, name: 'Équilibré' }, { guid: performance, name: 'Performances élevées' }],
+        activeGuid: balanced,
+        note: 'Lecture powercfg réelle',
+      })
+      .mockResolvedValueOnce({
+        schemes: [{ guid: balanced, name: 'Équilibré' }, { guid: performance, name: 'Performances élevées' }],
+        activeGuid: performance,
+        note: 'Plan relu après application',
+      })
+    nativeMocks.setPowerScheme.mockResolvedValue({ changed: true, activeGuid: performance, activeName: 'Performances élevées' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderSettings()
+    fireEvent.click(screen.getAllByText('Système')[0])
+    const select = await screen.findByLabelText('Plan d’alimentation Windows')
+    fireEvent.change(select, { target: { value: performance } })
+    fireEvent.click(screen.getByRole('button', { name: 'Appliquer le plan à Windows' }))
+
+    expect(nativeMocks.setPowerScheme).toHaveBeenCalledWith(performance)
+    expect(await screen.findByText(/Plan actif : Performances élevées/)).toBeDefined()
   })
 
 });

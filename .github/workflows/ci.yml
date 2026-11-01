@@ -93,6 +93,8 @@ jobs:
             $requests = @(
               @{ id = "phase2-ping"; method = "system/ping"; params = @{} },
               @{ id = "phase-settings-invalid"; method = "system/open-settings"; params = @{ page = "arbitrary-command" } },
+              @{ id = "phase-power-read"; method = "system/power/read"; params = @{} },
+              @{ id = "phase-power-invalid-set"; method = "system/power/set"; params = @{ guid = "not-a-guid" } },
               @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
               @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
               @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
@@ -138,6 +140,9 @@ jobs:
 
             if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
             if (-not $responses["phase-settings-invalid"].error) { throw "system/open-settings must reject pages outside its allowlist." }
+            if ($null -eq $responses["phase-power-read"].result.schemes -or $responses["phase-power-read"].result.schemes.Count -lt 1) { throw "system/power/read returned no actual power schemes." }
+            if (-not $responses["phase-power-read"].result.activeGuid) { throw "system/power/read returned no active power scheme." }
+            if (-not $responses["phase-power-invalid-set"].error) { throw "system/power/set accepted an invalid scheme identifier." }
             if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
             if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
             if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }
@@ -167,6 +172,32 @@ jobs:
             if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
             if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
             if (-not (Test-Path (Join-Path $testRoot "renamed-dir"))) { throw "Native directory rename did not persist." }
+
+            $powerStart = New-Object System.Diagnostics.ProcessStartInfo
+            $powerStart.FileName = $engine
+            $powerStart.UseShellExecute = $false
+            $powerStart.CreateNoWindow = $true
+            $powerStart.RedirectStandardInput = $true
+            $powerStart.RedirectStandardOutput = $true
+            $powerStart.RedirectStandardError = $true
+            $powerProcess = [System.Diagnostics.Process]::Start($powerStart)
+            try {
+              $powerProcess.StandardInput.WriteLine('{"id":"power-read","method":"system/power/read","params":{}}')
+              $powerProcess.StandardInput.Flush()
+              $powerRead = $powerProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($powerRead.id -ne "power-read" -or -not $powerRead.result.activeGuid) { throw "Could not read the active Windows power scheme." }
+              $activePowerGuid = [string]$powerRead.result.activeGuid
+              $setRequest = @{ id = "power-set"; method = "system/power/set"; params = @{ guid = $activePowerGuid } } | ConvertTo-Json -Compress -Depth 5
+              $powerProcess.StandardInput.WriteLine($setRequest)
+              $powerProcess.StandardInput.Flush()
+              $powerSet = $powerProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($powerSet.id -ne "power-set" -or $powerSet.result.activeGuid -ne $activePowerGuid) { throw "Windows did not confirm re-applying the current power scheme." }
+            }
+            finally {
+              $powerProcess.StandardInput.Close()
+              if (-not $powerProcess.HasExited) { $powerProcess.Kill() }
+              $powerProcess.Dispose()
+            }
 
             $cpuStart = New-Object System.Diagnostics.ProcessStartInfo
             $cpuStart.FileName = $engine

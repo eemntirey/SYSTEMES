@@ -31,6 +31,12 @@ interface DevicesSnapshot {
   error?: string
 }
 
+interface PowerSchemesSnapshot {
+  schemes: Array<{ guid: string; name: string }>
+  activeGuid?: string | null
+  note?: string
+}
+
 type SettingsSection =
   | 'home'
   | 'system'
@@ -190,6 +196,11 @@ export const SettingsApp: React.FC = () => {
   const [devicesSnapshot, setDevicesSnapshot] = useState<DevicesSnapshot | null>(null)
   const [devicesLoading, setDevicesLoading] = useState(false)
   const [devicesError, setDevicesError] = useState<string | null>(null)
+  const [powerSnapshot, setPowerSnapshot] = useState<PowerSchemesSnapshot | null>(null)
+  const [selectedPowerGuid, setSelectedPowerGuid] = useState('')
+  const [powerLoading, setPowerLoading] = useState(false)
+  const [powerSaving, setPowerSaving] = useState(false)
+  const [powerError, setPowerError] = useState<string | null>(null)
 
   useEffect(() => {
     if (section !== 'bluetooth' && section !== 'network') return
@@ -249,6 +260,50 @@ export const SettingsApp: React.FC = () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       addNotification('Paramètres Windows', `Impossible d’ouvrir ${label} : ${message}`, 'Paramètres', 'info')
+    }
+  }
+
+
+  useEffect(() => {
+    if (section !== 'system') return
+    let cancelled = false
+    setPowerLoading(true)
+    setPowerError(null)
+    NativeBridge.readPowerSchemes()
+      .then((result) => {
+        if (cancelled) return
+        const snapshot = result as PowerSchemesSnapshot
+        if (!snapshot || !Array.isArray(snapshot.schemes)) throw new Error('Réponse powercfg invalide.')
+        setPowerSnapshot(snapshot)
+        setSelectedPowerGuid(snapshot.activeGuid ?? '')
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setPowerError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (!cancelled) setPowerLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [section])
+
+  const handleApplyPowerScheme = async () => {
+    if (!selectedPowerGuid || !powerSnapshot) return
+    const selected = powerSnapshot.schemes.find(item => item.guid === selectedPowerGuid)
+    if (!selected) return
+    if (!window.confirm(`Appliquer réellement le plan d’alimentation « ${selected.name} » dans Windows ?`)) return
+
+    setPowerSaving(true)
+    setPowerError(null)
+    try {
+      await NativeBridge.setPowerScheme(selectedPowerGuid)
+      const refreshed = await NativeBridge.readPowerSchemes() as PowerSchemesSnapshot
+      setPowerSnapshot(refreshed)
+      setSelectedPowerGuid(refreshed.activeGuid ?? '')
+      addNotification('Alimentation Windows', `Le plan « ${selected.name} » est maintenant actif.`, 'Paramètres', 'battery')
+    } catch (error) {
+      setPowerError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPowerSaving(false)
     }
   }
 
@@ -431,9 +486,28 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="bell" title="Notifications des applications" desc="Configurer les notifications dans Windows." onClick={() => void openWindowsSettings('notifications', 'Notifications')} />
             <SettingRow icon="moon" title="Ne pas déranger et assistance Focus" desc="Gérer les périodes silencieuses dans Windows." onClick={() => void openWindowsSettings('quiet-hours', 'Ne pas déranger')} />
 
-            <SectionTitle>Alimentation</SectionTitle>
-            <SettingRow icon="battery-charging" title="Batterie et économiseur d’énergie" desc="Consulter et modifier les paramètres d’alimentation Windows." onClick={() => void openWindowsSettings('battery', 'Batterie et énergie')} />
-            <SettingRow icon="power" title="Veille et alimentation" desc="Modifier les délais de veille et les boutons d’alimentation." onClick={() => void openWindowsSettings('power', 'Alimentation et veille')} />
+            <SectionTitle>Plan d’alimentation Windows réel</SectionTitle>
+            <div style={{ padding: '16px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '12px' }}>
+              {powerLoading ? (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Lecture des plans d’alimentation avec powercfg…</div>
+              ) : powerError ? (
+                <div role="alert" style={{ fontSize: '12.5px', color: '#f87171' }}>{powerError}</div>
+              ) : powerSnapshot?.schemes.length ? (
+                <>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: 8 }}>Plan actif : {powerSnapshot.schemes.find(item => item.guid === powerSnapshot.activeGuid)?.name ?? 'Non identifié'}</div>
+                  <select aria-label="Plan d’alimentation Windows" value={selectedPowerGuid} onChange={event => setSelectedPowerGuid(event.target.value)} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)' }}>
+                    {powerSnapshot.schemes.map(scheme => <option key={scheme.guid} value={scheme.guid}>{scheme.name}</option>)}
+                  </select>
+                  <button type="button" disabled={powerSaving || !selectedPowerGuid || selectedPowerGuid === powerSnapshot.activeGuid} onClick={() => void handleApplyPowerScheme()} style={{ marginTop: 10, padding: '9px 13px', borderRadius: 8, border: 0, background: 'var(--win-accent)', color: '#fff', cursor: powerSaving ? 'wait' : 'pointer', opacity: powerSaving || selectedPowerGuid === powerSnapshot.activeGuid ? .55 : 1 }}>
+                    {powerSaving ? 'Application…' : 'Appliquer le plan à Windows'}
+                  </button>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>{powerSnapshot.note}</div>
+                </>
+              ) : (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Aucun plan d’alimentation n’a été retourné par powercfg.</div>
+              )}
+            </div>
+            <SettingRow icon="power" title="Veille et alimentation" desc="Ouvrir les délais de veille et les boutons d’alimentation Windows." onClick={() => void openWindowsSettings('power', 'Alimentation et veille')} />
           </div>
         )}
 

@@ -103,6 +103,19 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readPowerSchemes() {
+    const response = await request('system/power/read');
+    return response.result;
+  },
+
+  async setPowerScheme(guid: string) {
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(guid)) {
+      throw new Error('Identifiant de plan d’alimentation invalide.');
+    }
+    const response = await request('system/power/set', { guid });
+    return response.result;
+  },
+
   async checkWindowsUpdate() {
     const response = await request('update/check');
     return response.result;

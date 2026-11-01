@@ -32,6 +32,12 @@ namespace Systemes.Native.Core
                         case "system/open-settings":
                             result = SettingsNative.OpenSettingsPage(args["page"]?.Value<string>() ?? "");
                             break;
+                        case "system/power/read":
+                            result = PowerNative.ReadPowerSchemes();
+                            break;
+                        case "system/power/set":
+                            result = PowerNative.SetPowerScheme(args["guid"]?.Value<string>() ?? "");
+                            break;
                         case "hardware/read":
                             result = HardwareManager.ReadRealHardware();
                             break;
