@@ -24,6 +24,13 @@ interface UpdateSnapshot {
   error?: string
 }
 
+interface DevicesSnapshot {
+  usb?: string[]
+  network?: string[]
+  note?: string
+  error?: string
+}
+
 type SettingsSection =
   | 'home'
   | 'system'
@@ -218,6 +225,27 @@ export const SettingsApp: React.FC = () => {
   const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
   const [updateLoading, setUpdateLoading] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  const [devicesSnapshot, setDevicesSnapshot] = useState<DevicesSnapshot | null>(null)
+  const [devicesLoading, setDevicesLoading] = useState(false)
+  const [devicesError, setDevicesError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (section !== 'bluetooth') return
+    let cancelled = false
+    setDevicesLoading(true)
+    setDevicesError(null)
+    NativeBridge.readDevices()
+      .then((result) => {
+        if (!cancelled) setDevicesSnapshot(result as DevicesSnapshot)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setDevicesError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (!cancelled) setDevicesLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [section])
 
   useEffect(() => {
     if (section !== 'about') return
@@ -470,35 +498,32 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="sliders" title="Bluetooth" desc={bluetoothEnabled ? 'Activé — visible par d\'autres appareils' : 'Désactivé'} toggle={bluetoothEnabled} onToggle={toggleBluetooth} />
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
-            {bluetoothEnabled && (
-              <>
-                <SectionTitle>Appareils couplés</SectionTitle>
-            <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-                {[
-                  { name: 'Surface Headphones 2+', type: 'Casque audio', status: 'Connecté', battery: '78%', icon: 'volume' },
-                  { name: 'Magic Mouse', type: 'Souris Bluetooth', status: 'Connecté', battery: '55%', icon: 'sliders' },
-                  { name: 'iPad Pro', type: 'Tablette', status: 'Couplé, non connecté', battery: null, icon: 'square' },
-                ].map(device => (
-                  <div key={device.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                      <FluentIcon name={device.icon} size={20} color="var(--win-accent)" />
-                      <div>
-                        <div style={{ fontSize: '13.5px', fontWeight: 500 }}>{device.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{device.type} · {device.status}{device.battery ? ` · Batterie ${device.battery}` : ''}</div>
-                      </div>
-                    </div>
-                    <button style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.08)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.18)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.2)'; }}>Déconnecter</button>
-                  </div>
-                ))}
-
-                <SectionTitle>Ajouter un appareil</SectionTitle>
-                <SettingRow icon="plus" title="Ajouter un appareil Bluetooth ou autre" desc="Casques, claviers, stylos, contrôleurs et autres appareils" onClick={() => addNotification('Bluetooth', 'Ajouter un appareil', 'Paramètres', 'plus')} />
-              </>
-            )}
+            <SectionTitle>Périphériques détectés par Windows</SectionTitle>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '12px' }}>
+              {devicesLoading ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Lecture des périphériques…</div>
+              ) : devicesError ? (
+                <div role="alert" style={{ fontSize: '13px', color: '#f87171' }}>Détection impossible : {devicesError}</div>
+              ) : devicesSnapshot ? (
+                <>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>USB ({devicesSnapshot.usb?.length ?? 0})</div>
+                  {(devicesSnapshot.usb ?? []).length > 0
+                    ? devicesSnapshot.usb?.map((device, index) => <div key={`usb-${index}-${device}`} style={{ fontSize: '12.5px', color: 'var(--text-secondary)', padding: '4px 0' }}>{device}</div>)
+                    : <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Aucun périphérique USB détecté.</div>}
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '14px', marginBottom: '8px' }}>Adaptateurs réseau actifs ({devicesSnapshot.network?.length ?? 0})</div>
+                  {(devicesSnapshot.network ?? []).length > 0
+                    ? devicesSnapshot.network?.map((device, index) => <div key={`network-${index}-${device}`} style={{ fontSize: '12.5px', color: 'var(--text-secondary)', padding: '4px 0' }}>{device}</div>)
+                    : <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Aucun adaptateur réseau actif détecté.</div>}
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-tertiary)', marginTop: '10px' }}>{devicesSnapshot.note}</div>
+                </>
+              ) : (
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Aucune lecture effectuée. Ouvrez cette section depuis l'hôte Windows SYSTEMES.</div>
+              )}
+            </div>
 
             <SectionTitle>Autres appareils</SectionTitle>
             <SettingRow icon="sliders" title="Imprimantes et scanners" desc="HP LaserJet Pro — Prête" onClick={() => addNotification('Appareils', 'Imprimantes et scanners', 'Paramètres', 'sliders')} />
-            <SettingRow icon="pc" title="Appareils USB" desc="2 appareils USB connectés" onClick={() => addNotification('Appareils', 'Appareils USB', 'Paramètres', 'pc')} />
+            
             <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Personnaliser le comportement du stylo" onClick={() => addNotification('Appareils', 'Stylo et saisie tactile', 'Paramètres', 'pc')} />
             <SettingRow icon="pc" title="Bluetooth mobile" desc="Partager des fichiers via Bluetooth avec des appareils à proximité" onClick={() => addNotification('Appareils', 'Bluetooth mobile', 'Paramètres', 'pc')} />
           </div>
