@@ -21,7 +21,7 @@ namespace Systemes.Native.Core
                             id = p.Id,
                             name = p.ProcessName,
                             memoryMB = Math.Round(p.WorkingSet64 / (1024.0 * 1024.0), 2),
-                            cpuUsagePercent = null // Nécessite PerformanceCounter (non implémenté ici)
+                            cpuUsagePercent = (double?)null // Nécessite PerformanceCounter (non implémenté ici)
                         });
                     }
                     catch { /* accès refusé pour certains processus */ }
