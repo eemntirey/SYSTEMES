@@ -80,6 +80,63 @@ jobs:
 
           Write-Host "Native engine process started and answered the JSON handshake."
 
+      - name: Exercise native read operations and temporary file lifecycle
+        shell: pwsh
+        run: |
+          $engine = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/native-engine/SystemesNative.exe"
+          $testRoot = Join-Path $env:RUNNER_TEMP ("systemes-phase2-" + [guid]::NewGuid().ToString("N"))
+          $testFile = Join-Path $testRoot "bridge-smoke.txt"
+          New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+
+          try {
+            $requests = @(
+              @{ id = "phase2-ping"; method = "system/ping"; params = @{} },
+              @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
+              @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
+              @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
+              @{ id = "phase2-update"; method = "update/check"; params = @{} },
+              @{ id = "phase2-file-create"; method = "files/create"; params = @{ path = $testFile; content = "SYSTEMES native integration test" } },
+              @{ id = "phase2-file-read"; method = "files/read"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-delete"; method = "files/delete"; params = @{ path = $testFile } },
+              @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} }
+            )
+            $requestLines = $requests | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }
+            $responseLines = $requestLines | & $engine
+            if ($LASTEXITCODE -ne 0) {
+              throw "Native engine exited with code $LASTEXITCODE during phase 2 integration tests."
+            }
+            if ($responseLines.Count -ne $requests.Count) {
+              throw "Expected $($requests.Count) native responses, received $($responseLines.Count)."
+            }
+
+            $responses = @{}
+            foreach ($line in $responseLines) {
+              $response = $line | ConvertFrom-Json
+              $responses[$response.id] = $response
+            }
+            foreach ($request in $requests) {
+              if (-not $responses.ContainsKey($request.id)) {
+                throw "Missing native response for request $($request.id)."
+              }
+            }
+
+            if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
+            if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
+            if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
+            if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
+            if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
+            if ($responses["phase2-file-create"].result.created -ne $true) { throw "files/create failed." }
+            if ($responses["phase2-file-read"].result.exists -ne $true) { throw "files/read did not find the created file." }
+            if ($responses["phase2-file-delete"].result.deleted -ne $true) { throw "files/delete failed." }
+            if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
+            if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
+
+            Write-Host "Phase 2 native integration checks passed: hardware, processes, devices, update status, file lifecycle, and protocol errors."
+          }
+          finally {
+            Remove-Item $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Launch WPF host and verify WebView2 React rendering
         shell: pwsh
         run: |
