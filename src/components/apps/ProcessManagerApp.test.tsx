@@ -89,6 +89,23 @@ describe('ProcessManagerApp', () => {
     expect(screen.getByLabelText('Trier les processus')).toHaveProperty('value', 'cpu')
   })
 
+  it('renders real GPU disk and network counters from Windows', async () => {
+    mocks.readProcesses.mockResolvedValue({
+      processes: [],
+      performance: {
+        gpus: [{ adapter: 'GPU 0', utilizationPercent: 55.2, dedicatedMemoryBytes: 2 * 1024 ** 3, sharedMemoryBytes: 0 }],
+        disks: [{ name: '0 C:', activePercent: 23.4, readBytesPerSecond: 1024 ** 2, writeBytesPerSecond: 0 }],
+        networks: [{ name: 'Wi-Fi', receiveBytesPerSecond: 1024 ** 2, sendBytesPerSecond: 512 * 1024 }],
+        source: 'Windows WMI performance counters',
+      },
+    })
+    render(<ProcessManagerApp />)
+    expect(await screen.findByText('55,2 %')).toBeDefined()
+    expect(screen.getByText('23,4 %')).toBeDefined()
+    expect(screen.getByText('1 Mio/s')).toBeDefined()
+    expect(screen.getByText('0,5 Mio/s envoyés')).toBeDefined()
+  })
+
   it('does not allow stopping protected Windows processes', async () => {
     mocks.readProcesses.mockResolvedValue({
       processes: [{ id: 4, name: 'System', memoryMB: 20 }],
