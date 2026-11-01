@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   createDirectory: vi.fn(),
   createFile: vi.fn(),
   deleteFile: vi.fn(),
+  renameFile: vi.fn(),
 }))
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -63,4 +64,25 @@ describe('FileExplorer native integration', () => {
     await waitFor(() => expect(mocks.createDirectory).toHaveBeenCalledWith('C:/Users/test/NativeFolder'))
     await waitFor(() => expect(mocks.listFiles).toHaveBeenCalledTimes(3))
   })
+  it('renames a selected native file and refreshes the directory', async () => {
+    mocks.listFiles.mockResolvedValue({
+      path: 'C:/Users/test',
+      count: 1,
+      items: [{ id: 'C:/Users/test/old.txt', name: 'old.txt', type: 'file', path: 'C:/Users/test/old.txt', sizeBytes: 5, modified: '2026-11-01 08:00:00', extension: 'txt' }],
+    })
+    mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readTextFile.mockResolvedValue({ content: 'Preview text' })
+    mocks.renameFile.mockResolvedValue({ renamed: true, path: 'C:/Users/test/new.txt' })
+
+    renderExplorer()
+    fireEvent.click(await screen.findByText('old.txt'))
+    fireEvent.click(screen.getByRole('button', { name: 'Inspecteur & Aperçu' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Renommer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Nouveau nom' }), { target: { value: 'new.txt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Valider' }))
+
+    await waitFor(() => expect(mocks.renameFile).toHaveBeenCalledWith('C:/Users/test/old.txt', 'new.txt'))
+    await waitFor(() => expect(mocks.listFiles).toHaveBeenCalledTimes(3))
+  })
+
 })

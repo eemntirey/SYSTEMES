@@ -223,6 +223,8 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ initialPath = 
   const [loading, setLoading] = useState(false)
   const [operationError, setOperationError] = useState<string | null>(null)
   const [previewContent, setPreviewContent] = useState<string | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
 
   const refreshDirectory = async (path = currentPath) => {
     const snapshot = await NativeBridge.listFiles(path) as NativeDirectorySnapshot
@@ -428,6 +430,22 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ initialPath = 
       } else createFile(currentPath, newFileName.trim(), '')
       setNewFileName('')
       setIsCreatingFile(false)
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+
+  const handleRenameSelected = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!nativeMode || !selectedItem || !renameValue.trim()) return
+    try {
+      const result = await NativeBridge.renameFile(selectedItem.path, renameValue.trim()) as { path?: string }
+      await refreshDirectory(currentPath)
+      setSelectedItemId(result.path || null)
+      setIsRenaming(false)
+      setRenameValue('')
+      setOperationError(null)
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : String(error))
     }
@@ -713,6 +731,19 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ initialPath = 
                       <div style={{ padding: '12px', borderRadius: 'var(--radius-sm)', background: '#05050a', border: 'none', maxHeight: '150px', overflowY: 'auto', fontSize: '11px', fontFamily: 'var(--font-mono)', lineHeight: '1.4', color: '#a78bfa', whiteSpace: 'pre-wrap' }}>
                         {selectedItem.content || '(Fichier vide)'}
                       </div>
+                    </div>
+                  )}
+                  {nativeMode && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {isRenaming ? (
+                        <form onSubmit={handleRenameSelected} style={{ display: 'flex', gap: 6 }}>
+                          <input autoFocus aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} style={{ minWidth: 0, flex: 1, padding: 8, borderRadius: 6, border: '1px solid var(--window-border)', background: 'var(--flyout-input-bg)', color: 'var(--text-primary)' }} />
+                          <button type="submit" disabled={!renameValue.trim()} style={{ padding: '7px 9px', border: 0, borderRadius: 6, background: 'var(--win-accent-cyan)', color: '#071018', cursor: 'pointer' }}>Valider</button>
+                          <button type="button" onClick={() => setIsRenaming(false)} style={{ padding: '7px 9px', border: '1px solid var(--window-border)', borderRadius: 6, background: 'transparent', color: 'var(--text-primary)' }}>Annuler</button>
+                        </form>
+                      ) : (
+                        <button type="button" onClick={() => { setRenameValue(selectedItem.name); setIsRenaming(true); setOperationError(null) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--window-border)', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Renommer</button>
+                      )}
                     </div>
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

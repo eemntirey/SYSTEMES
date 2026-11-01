@@ -22,7 +22,7 @@ describe('ProcessManagerApp', () => {
       count: 2,
       note: 'Liste réelle des processus Windows',
       processes: [
-        { id: 100, name: 'editor', memoryMB: 125.5, cpuUsagePercent: null },
+        { id: 100, name: 'editor', memoryMB: 125.5, cpuUsagePercent: 12.4, threadCount: 8, sessionId: 1, startTimeUtcTicks: '638975808000000000', executablePath: 'C:/Apps/editor.exe' },
         { id: 4, name: 'System', memoryMB: 20, cpuUsagePercent: null },
       ],
     })
@@ -31,12 +31,14 @@ describe('ProcessManagerApp', () => {
 
     expect(await screen.findByText('editor')).toBeDefined()
     expect(screen.getByText('125,5 Mo')).toBeDefined()
+    expect(screen.getAllByText('12,4 %').length).toBeGreaterThan(0)
+    expect(screen.getByText('8')).toBeDefined()
     expect(mocks.readProcesses).toHaveBeenCalledTimes(1)
   })
 
   it('requires confirmation before stopping a process and refreshes after success', async () => {
     mocks.readProcesses.mockResolvedValue({
-      processes: [{ id: 100, name: 'editor', memoryMB: 125 }],
+      processes: [{ id: 100, name: 'editor', memoryMB: 125, startTimeUtcTicks: '638975808000000000' }],
     })
     mocks.killProcess.mockResolvedValue({ killed: true, pid: 100 })
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -44,9 +46,27 @@ describe('ProcessManagerApp', () => {
     render(<ProcessManagerApp />)
     fireEvent.click(await screen.findByRole('button', { name: 'Fin de tâche' }))
 
-    await waitFor(() => expect(mocks.killProcess).toHaveBeenCalledWith(100))
+    await waitFor(() => expect(mocks.killProcess).toHaveBeenCalledWith(100, 'editor', '638975808000000000'))
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(mocks.readProcesses).toHaveBeenCalledTimes(2)
+  })
+
+  it('sorts the list by CPU and shows selected process details', async () => {
+    mocks.readProcesses.mockResolvedValue({
+      logicalProcessorCount: 8,
+      processes: [
+        { id: 100, name: 'editor', memoryMB: 125, cpuUsagePercent: 7.5, threadCount: 8, sessionId: 1, startTimeUtcTicks: 638975808000000000, executablePath: 'C:/Apps/editor.exe' },
+        { id: 101, name: 'worker', memoryMB: 90, cpuUsagePercent: 42, threadCount: 4, sessionId: 1 },
+      ],
+    })
+    render(<ProcessManagerApp />)
+    expect(await screen.findByText('worker')).toBeDefined()
+    const processRows = screen.getAllByRole('row')
+    expect(processRows[1].textContent).toContain('worker')
+    fireEvent.click(screen.getByText('editor'))
+    expect(screen.getByLabelText('Détails du processus sélectionné')).toBeDefined()
+    expect(screen.getByText(/C:\/Apps\/editor.exe/)).toBeDefined()
+    expect(screen.getByLabelText('Trier les processus')).toHaveProperty('value', 'cpu')
   })
 
   it('does not allow stopping protected Windows processes', async () => {

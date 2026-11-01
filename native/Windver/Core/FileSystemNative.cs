@@ -166,6 +166,51 @@ namespace Systemes.Native.Core
             return new { written = true, path = resolvedPath.Replace('\\', '/'), note = "Fichier texte enregistré sur le disque" };
         }
 
+
+        public static object RenameEntry(string path, string newName)
+        {
+            if (string.IsNullOrWhiteSpace(newName))
+                throw new ArgumentException("Le nouveau nom est obligatoire.", nameof(newName));
+            if (newName != newName.Trim() || newName.EndsWith(".", StringComparison.Ordinal) ||
+                newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                newName.Contains('/') || newName.Contains('\\'))
+                throw new ArgumentException("Le nom contient des caractères interdits ou des espaces/points finaux.", nameof(newName));
+
+            var reservedBaseName = newName.Split('.')[0].TrimEnd('.').ToUpperInvariant();
+            if (new[] { "CON", "PRN", "AUX", "NUL" }.Contains(reservedBaseName) ||
+                System.Text.RegularExpressions.Regex.IsMatch(reservedBaseName, @"^(COM|LPT)[1-9]$"))
+                throw new ArgumentException("Ce nom est réservé par Windows.", nameof(newName));
+
+            var sourcePath = ResolvePath(path);
+            var parent = Path.GetDirectoryName(sourcePath);
+            if (string.IsNullOrWhiteSpace(parent))
+                throw new InvalidOperationException("La racine d’un volume ne peut pas être renommée.");
+            if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+                throw new FileNotFoundException("L’élément à renommer n’existe plus.", sourcePath);
+
+            var destinationPath = Path.Combine(parent, newName);
+            if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le nouveau nom est identique au nom actuel.");
+            if (File.Exists(destinationPath) || Directory.Exists(destinationPath))
+                throw new IOException("Un fichier ou dossier portant déjà ce nom existe.");
+
+            var isDirectory = Directory.Exists(sourcePath);
+            if (isDirectory)
+                Directory.Move(sourcePath, destinationPath);
+            else
+                File.Move(sourcePath, destinationPath);
+
+            return new
+            {
+                renamed = true,
+                isDirectory,
+                oldPath = sourcePath.Replace('\\', '/'),
+                path = destinationPath.Replace('\\', '/'),
+                name = newName,
+                note = "Renommage effectué dans le même dossier sans écraser de destination existante"
+            };
+        }
+
         public static object DeleteFile(string path)
         {
             var resolvedPath = ResolvePath(path);

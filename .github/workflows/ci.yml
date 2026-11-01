@@ -103,7 +103,15 @@ jobs:
               @{ id = "phase2-file-read-content"; method = "files/read-content"; params = @{ path = $testFile } },
               @{ id = "phase2-file-write"; method = "files/write"; params = @{ path = $testFile; content = "SYSTEMES updated integration test" } },
               @{ id = "phase2-file-read-updated"; method = "files/read-content"; params = @{ path = $testFile } },
-              @{ id = "phase2-file-delete"; method = "files/delete"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-rename"; method = "files/rename"; params = @{ path = $testFile; newName = "renamed-smoke.txt" } },
+              @{ id = "phase2-collision-create"; method = "files/create"; params = @{ path = (Join-Path $testRoot "collision.txt"); content = "keep existing file" } },
+              @{ id = "phase2-rename-collision"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "collision.txt" } },
+              @{ id = "phase2-rename-reserved"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "CON.txt" } },
+              @{ id = "phase2-rename-traversal"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "../escaped.txt" } },
+              @{ id = "phase2-dir-rename"; method = "files/rename"; params = @{ path = $testDir; newName = "renamed-dir" } },
+              @{ id = "phase2-collision-read"; method = "files/read-content"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
+              @{ id = "phase2-file-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt") } },
+              @{ id = "phase2-collision-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
               @{ id = "phase2-locations"; method = "files/locations"; params = @{} },
               @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} }
             )
@@ -130,6 +138,10 @@ jobs:
             if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
             if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
             if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
+            if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }
+            foreach ($process in $responses["phase2-processes"].result.processes) {
+              if ($null -ne $process.cpuUsagePercent -and ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100)) { throw "Process CPU sample is outside the normalized 0-100 range." }
+            }
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
             if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
@@ -139,13 +151,52 @@ jobs:
             if ($responses["phase2-file-read-content"].result.content -ne "SYSTEMES native integration test") { throw "files/read-content returned unexpected content." }
             if ($responses["phase2-file-write"].result.written -ne $true) { throw "files/write failed." }
             if ($responses["phase2-file-read-updated"].result.content -ne "SYSTEMES updated integration test") { throw "files/write did not persist updated content." }
-            if ($responses["phase2-file-delete"].result.deleted -ne $true) { throw "files/delete failed." }
+            if ($responses["phase2-file-rename"].result.renamed -ne $true) { throw "files/rename failed." }
+            if ($responses["phase2-file-rename"].result.name -ne "renamed-smoke.txt") { throw "files/rename returned the wrong destination name." }
+            if (Test-Path $testFile) { throw "files/rename left the source file in place." }
+            if (-not $responses["phase2-rename-collision"].error) { throw "files/rename overwrote an existing destination." }
+            if (-not $responses["phase2-rename-reserved"].error) { throw "files/rename accepted a reserved Windows device name." }
+            if (-not $responses["phase2-rename-traversal"].error) { throw "files/rename accepted a path traversal name." }
+            if ($responses["phase2-dir-rename"].result.renamed -ne $true -or $responses["phase2-dir-rename"].result.isDirectory -ne $true) { throw "Directory rename failed." }
+            if ($responses["phase2-file-delete"].result.deleted -ne $true) { throw "files/delete failed after rename." }
+            if ($responses["phase2-collision-read"].result.content -ne "keep existing file") { throw "A failed rename modified the existing destination file." }
+            if ($responses["phase2-collision-delete"].result.deleted -ne $true) { throw "Collision test cleanup failed." }
             if ($responses["phase2-locations"].result.locations.Count -lt 1) { throw "files/locations returned no Windows locations." }
             if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
             if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
-            if (-not (Test-Path $testDir)) { throw "Native directory creation did not persist." }
+            if (-not (Test-Path (Join-Path $testRoot "renamed-dir"))) { throw "Native directory rename did not persist." }
 
-            Write-Host "Phase 2 native integration checks passed: process, hardware, devices, updates, directory listing, text read/write, safe file deletion, and locations."
+            $cpuStart = New-Object System.Diagnostics.ProcessStartInfo
+            $cpuStart.FileName = $engine
+            $cpuStart.UseShellExecute = $false
+            $cpuStart.CreateNoWindow = $true
+            $cpuStart.RedirectStandardInput = $true
+            $cpuStart.RedirectStandardOutput = $true
+            $cpuStart.RedirectStandardError = $true
+            $cpuProcess = [System.Diagnostics.Process]::Start($cpuStart)
+            try {
+              $cpuProcess.StandardInput.WriteLine('{"id":"cpu-first","method":"processes/read","params":{}}')
+              $cpuProcess.StandardInput.Flush()
+              $firstSample = $cpuProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($firstSample.id -ne "cpu-first" -or -not $firstSample.result.processes) { throw "Initial process CPU sample request failed." }
+              Start-Sleep -Milliseconds 1200
+              $cpuProcess.StandardInput.WriteLine('{"id":"cpu-second","method":"processes/read","params":{}}')
+              $cpuProcess.StandardInput.Flush()
+              $secondSample = $cpuProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($secondSample.id -ne "cpu-second") { throw "Second process CPU sample request failed." }
+              $measured = @($secondSample.result.processes | Where-Object { $_.cpuSampleAvailable -eq $true -and $null -ne $_.cpuUsagePercent })
+              if ($measured.Count -lt 1) { throw "No real CPU sample was produced after the sampling interval." }
+              foreach ($process in $measured) {
+                if ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100) { throw "Measured process CPU is outside 0-100 percent." }
+              }
+            }
+            finally {
+              $cpuProcess.StandardInput.Close()
+              if (-not $cpuProcess.HasExited) { $cpuProcess.Kill() }
+              $cpuProcess.Dispose()
+            }
+
+            Write-Host "Phase 2 native integration checks passed: process, hardware, devices, updates, directory listing, text read/write, collision-safe file/directory rename, reserved-name and traversal rejection, safe delete, measured process CPU sampling, and locations."
           }
           finally {
             Remove-Item $testRoot -Recurse -Force -ErrorAction SilentlyContinue

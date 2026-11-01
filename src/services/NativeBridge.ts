@@ -7,8 +7,11 @@ type NativeReply<T = unknown> = {
   error?: string;
 };
 
-const request = <T>(method: string, params: Record<string, unknown> = {}): Promise<NativeReply<T>> =>
-  webViewBridge.send(method, params) as Promise<NativeReply<T>>;
+const request = async <T>(method: string, params: Record<string, unknown> = {}): Promise<NativeReply<T>> => {
+  const response = await webViewBridge.send(method, params) as NativeReply<T>;
+  if (response.error) throw new Error(response.error);
+  return response;
+};
 
 export const NativeBridge = {
   async readHardware() {
@@ -26,9 +29,11 @@ export const NativeBridge = {
     return response.result;
   },
 
-  async killProcess(pid: number) {
+  async killProcess(pid: number, expectedName: string, expectedStartTimeUtcTicks: string) {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('PID invalide.');
-    const response = await request('processes/kill', { pid });
+    if (!expectedName.trim()) throw new Error('Le nom du processus est obligatoire pour vérifier le PID.');
+    if (!/^\d+$/.test(expectedStartTimeUtcTicks)) throw new Error('L’heure de démarrage du processus est requise pour vérifier le PID.');
+    const response = await request('processes/kill', { pid, name: expectedName, startTimeUtcTicks: expectedStartTimeUtcTicks });
     return response.result;
   },
 
@@ -72,6 +77,12 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async renameFile(path: string, newName: string) {
+    if (!path.trim() || !newName.trim()) throw new Error('Le chemin et le nouveau nom sont obligatoires.');
+    const response = await request('files/rename', { path, newName });
+    return response.result;
+  },
+
   async checkWindowsUpdate() {
     const response = await request('update/check');
     return response.result;
@@ -83,7 +94,7 @@ export const NativeBridge = {
       case 'write': return this.writeTextFile(path, content ?? '');
       case 'delete': return this.deleteFile(path);
       case 'rename':
-        throw new Error('Le renommage natif n’est pas encore exposé par NativeServer.');
+        return this.renameFile(path, content ?? '');
     }
   },
 };

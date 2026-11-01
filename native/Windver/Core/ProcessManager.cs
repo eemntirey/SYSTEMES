@@ -1,32 +1,97 @@
 using System;
-using System.Management;
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
 
 namespace Systemes.Native.Core
 {
     public class ProcessManager
     {
+        private sealed record CpuSample(TimeSpan CpuTime, long Timestamp);
+        private static readonly ConcurrentDictionary<int, CpuSample> PreviousSamples = new();
+        private static readonly string[] ProtectedNames =
+        {
+            "system", "system idle process", "registry", "memory compression",
+            "smss", "csrss", "wininit", "services", "lsass", "winlogon",
+            "winlogon.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe",
+            "secure system", "svchost", "fontdrvhost", "dwm"
+        };
+
         public static object ReadRealProcesses()
         {
             try
             {
+                var now = Stopwatch.GetTimestamp();
                 var processes = Process.GetProcesses();
+                var activeIds = new System.Collections.Generic.HashSet<int>();
                 var list = new System.Collections.Generic.List<object>();
-                foreach (var p in processes)
+
+                foreach (var process in processes)
                 {
                     try
                     {
+                        var id = process.Id;
+                        var name = process.ProcessName;
+                        activeIds.Add(id);
+                        TimeSpan? cpuTime = null;
+                        try { cpuTime = process.TotalProcessorTime; } catch { /* Certains processus ne publient pas ce compteur. */ }
+                        double? cpuUsagePercent = null;
+
+                        if (cpuTime.HasValue)
+                        {
+                            if (PreviousSamples.TryGetValue(id, out var previous))
+                            {
+                                var elapsedSeconds = (now - previous.Timestamp) / (double)Stopwatch.Frequency;
+                                var cpuSeconds = (cpuTime.Value - previous.CpuTime).TotalSeconds;
+                                if (elapsedSeconds > 0 && cpuSeconds >= 0)
+                                {
+                                    cpuUsagePercent = Math.Round(
+                                        Math.Clamp(cpuSeconds / (elapsedSeconds * Math.Max(1, Environment.ProcessorCount)) * 100.0, 0, 100),
+                                        1);
+                                }
+                            }
+                            PreviousSamples[id] = new CpuSample(cpuTime.Value, now);
+                        }
+                        double memoryMb = 0;
+                        int threadCount = 0;
+                        int sessionId = -1;
+                        string? startTimeUtcTicks = null;
+                        string? executablePath = null;
+                        try { memoryMb = Math.Round(process.WorkingSet64 / (1024.0 * 1024.0), 2); } catch { }
+                        try { threadCount = process.Threads.Count; } catch { }
+                        try { sessionId = process.SessionId; } catch { }
+                        try { startTimeUtcTicks = process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture); } catch { }
+                        try { executablePath = process.MainModule?.FileName; } catch { }
+
                         list.Add(new
                         {
-                            id = p.Id,
-                            name = p.ProcessName,
-                            memoryMB = Math.Round(p.WorkingSet64 / (1024.0 * 1024.0), 2),
-                            cpuUsagePercent = (double?)null // Nécessite PerformanceCounter (non implémenté ici)
+                            id,
+                            name,
+                            memoryMB = memoryMb,
+                            cpuUsagePercent,
+                            cpuSampleAvailable = cpuUsagePercent.HasValue,
+                            threadCount,
+                            sessionId,
+                            startTimeUtcTicks,
+                            executablePath
                         });
                     }
-                    catch { /* accès refusé pour certains processus */ }
+                    catch { /* Le processus peut se terminer ou refuser l’accès pendant l’échantillonnage. */ }
+                    finally { process.Dispose(); }
                 }
-                return new { processes = list, count = list.Count, note = "Liste réelle des processus Windows" };
+
+                foreach (var staleId in PreviousSamples.Keys)
+                    if (!activeIds.Contains(staleId)) PreviousSamples.TryRemove(staleId, out _);
+
+                return new
+                {
+                    processes = list,
+                    count = list.Count,
+                    logicalProcessorCount = Environment.ProcessorCount,
+                    sampleInterval = "Entre deux actualisations",
+                    note = "Processus Windows réels. Le CPU est calculé à partir du temps processeur cumulé et de l’intervalle entre deux lectures."
+                };
             }
             catch (Exception ex)
             {
@@ -34,17 +99,27 @@ namespace Systemes.Native.Core
             }
         }
 
-        public static object KillProcess(int pid)
+        public static object KillProcess(int pid, string? expectedName, string? expectedStartTimeUtcTicks)
         {
+            if (pid <= 4 || pid == Process.GetCurrentProcess().Id)
+                throw new InvalidOperationException("Ce processus système ou moteur est protégé contre l’arrêt.");
+
             try
             {
-                var p = Process.GetProcessById(pid);
-                p.Kill();
+                using var process = Process.GetProcessById(pid);
+                var name = process.ProcessName;
+                if (string.IsNullOrWhiteSpace(expectedName) || !string.Equals(name, expectedName, StringComparison.OrdinalIgnoreCase) ||
+                    !long.TryParse(expectedStartTimeUtcTicks, NumberStyles.None, CultureInfo.InvariantCulture, out var expectedStartTicks) ||
+                    process.StartTime.ToUniversalTime().Ticks != expectedStartTicks)
+                    throw new InvalidOperationException("Le processus a changé depuis sa sélection ou son démarrage n’est pas vérifiable. Actualisez la liste avant de réessayer.");
+                if (ProtectedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Le processus Windows essentiel « {name} » est protégé.");
+                process.Kill(entireProcessTree: false);
                 return new { killed = true, pid, note = "Processus arrêté sur demande réelle" };
             }
-            catch (Exception ex)
+            catch (ArgumentException)
             {
-                return new { killed = false, pid, error = ex.Message, note = "Arrêt non autorisé ou impossible" };
+                throw new InvalidOperationException("Le processus n’existe plus.");
             }
         }
     }

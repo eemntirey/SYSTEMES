@@ -36,7 +36,7 @@ namespace Systemes.Native.Core
                             result = ProcessManager.ReadRealProcesses();
                             break;
                         case "processes/kill":
-                            result = ProcessManager.KillProcess(args["pid"]?.Value<int>() ?? 0);
+                            result = ProcessManager.KillProcess(args["pid"]?.Value<int>() ?? 0, args["name"]?.Value<string>(), args["startTimeUtcTicks"]?.Value<string>());
                             break;
                         case "files/locations":
                             result = FileSystemNative.ReadKnownLocations();
@@ -61,6 +61,11 @@ namespace Systemes.Native.Core
                             break;
                         case "files/delete":
                             result = FileSystemNative.DeleteFile(args["path"]?.Value<string>() ?? "");
+                            break;
+                        case "files/rename":
+                            result = FileSystemNative.RenameEntry(
+                                args["path"]?.Value<string>() ?? "",
+                                args["newName"]?.Value<string>() ?? "");
                             break;
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();

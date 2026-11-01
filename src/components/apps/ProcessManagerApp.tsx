@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NativeBridge } from '../../services/NativeBridge'
 import { FluentIcon } from '../common/FluentIcon'
 
@@ -7,33 +7,45 @@ interface NativeProcess {
   name: string
   memoryMB: number
   cpuUsagePercent?: number | null
+  cpuSampleAvailable?: boolean
+  threadCount?: number
+  sessionId?: number
+  startTimeUtcTicks?: string | null
+  executablePath?: string | null
 }
-
 interface ProcessSnapshot {
   processes?: NativeProcess[]
   count?: number
+  logicalProcessorCount?: number
   note?: string
 }
+type SortMode = 'cpu' | 'memory' | 'name'
 
 const protectedProcessNames = new Set([
   'system', 'system idle process', 'registry', 'memory compression',
-  'smss', 'csrss', 'wininit', 'services', 'lsass', 'winlogon',
+  'smss', 'csrss', 'wininit', 'services', 'lsass', 'winlogon', 'secure system', 'svchost', 'fontdrvhost', 'dwm',
 ])
-
 const formatMemory = (value: number) =>
   Number.isFinite(value) ? `${value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo` : '—'
+const formatCpu = (value?: number | null) =>
+  value == null ? 'Échantillonnage…' : `${value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`
 
 export const ProcessManagerApp: React.FC = () => {
   const [processes, setProcesses] = useState<NativeProcess[]>([])
   const [query, setQuery] = useState('')
+  const [sortBy, setSortBy] = useState<SortMode>('cpu')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [busyPid, setBusyPid] = useState<number | null>(null)
+  const [logicalProcessors, setLogicalProcessors] = useState<number | null>(null)
+  const refreshing = useRef(false)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (silent = false) => {
+    if (refreshing.current) return
+    refreshing.current = true
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const snapshot = await NativeBridge.readProcesses() as ProcessSnapshot
@@ -41,22 +53,41 @@ export const ProcessManagerApp: React.FC = () => {
         throw new Error('Le moteur natif a retourné une liste de processus invalide.')
       }
       setProcesses(snapshot.processes)
+      setLogicalProcessors(snapshot.logicalProcessorCount ?? null)
       setNotice(snapshot.note || null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
+      refreshing.current = false
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh(true)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
 
   const visibleProcesses = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('fr')
     return [...processes]
-      .filter(process => !normalized || process.name.toLocaleLowerCase('fr').includes(normalized) || String(process.id).includes(normalized))
-      .sort((a, b) => b.memoryMB - a.memoryMB)
-  }, [processes, query])
+      .filter(process => !normalized ||
+        process.name.toLocaleLowerCase('fr').includes(normalized) ||
+        String(process.id).includes(normalized))
+      .sort((a, b) => {
+        if (sortBy === 'name') return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
+        if (sortBy === 'memory') return b.memoryMB - a.memoryMB
+        return (b.cpuUsagePercent ?? -1) - (a.cpuUsagePercent ?? -1)
+      })
+  }, [processes, query, sortBy])
+
+  const selectedProcess = processes.find(process => process.id === selectedPid) ?? null
+  const totalMemory = processes.reduce((sum, process) => sum + (process.memoryMB || 0), 0)
+  const totalCpu = Math.min(100, processes.reduce((sum, process) => sum + (process.cpuUsagePercent ?? 0), 0))
+  const sampledCount = processes.filter(process => process.cpuUsagePercent != null).length
 
   const stopProcess = async (process: NativeProcess) => {
     const normalizedName = process.name.toLocaleLowerCase('fr')
@@ -70,7 +101,8 @@ export const ProcessManagerApp: React.FC = () => {
     setBusyPid(process.id)
     setError(null)
     try {
-      await NativeBridge.killProcess(process.id)
+      const result = await NativeBridge.killProcess(process.id, process.name) as { killed?: boolean }
+      if (result?.killed !== true) throw new Error('Windows n’a pas confirmé l’arrêt du processus.')
       setSelectedPid(null)
       setNotice(`Le processus ${process.name} (PID ${process.id}) a été arrêté.`)
       await refresh()
@@ -86,7 +118,7 @@ export const ProcessManagerApp: React.FC = () => {
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700 }}>Gestionnaire des tâches</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Processus Windows réels · triés par mémoire utilisée</div>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Processus Windows réels · actualisation automatique toutes les 2 secondes</div>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--window-border)', borderRadius: 8, padding: '8px 12px', background: 'var(--flyout-card)', color: 'var(--text-primary)', cursor: loading ? 'wait' : 'pointer' }}>
           <FluentIcon name="refresh-cw" size={15} /> Actualiser
@@ -94,20 +126,33 @@ export const ProcessManagerApp: React.FC = () => {
       </header>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 150 }}>
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Processus détectés</div>
           <div style={{ fontSize: 23, fontWeight: 700 }}>{loading ? '…' : processes.length}</div>
         </div>
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 150 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Mémoire cumulée listée</div>
-          <div style={{ fontSize: 23, fontWeight: 700 }}>{formatMemory(processes.reduce((sum, process) => sum + (process.memoryMB || 0), 0))}</div>
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Mémoire cumulée</div>
+          <div style={{ fontSize: 23, fontWeight: 700 }}>{formatMemory(totalMemory)}</div>
+        </div>
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CPU des processus</div>
+          <div style={{ fontSize: 23, fontWeight: 700 }}>{sampledCount ? formatCpu(totalCpu) : '—'}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{sampledCount}/{processes.length} échantillonnés · {logicalProcessors ?? '—'} processeurs logiques</div>
         </div>
       </div>
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 8, background: 'var(--flyout-card)' }}>
-        <FluentIcon name="search" size={16} />
-        <input aria-label="Rechercher un processus" value={query} onChange={event => setQuery(event.target.value)} placeholder="Rechercher par nom ou PID…" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, color: 'var(--text-primary)', background: 'transparent' }} />
-      </label>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 8, background: 'var(--flyout-card)', flex: 1, minWidth: 220 }}>
+          <FluentIcon name="search" size={16} />
+          <input aria-label="Rechercher un processus" value={query} onChange={event => setQuery(event.target.value)} placeholder="Rechercher par nom ou PID…" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, color: 'var(--text-primary)', background: 'transparent' }} />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', borderRadius: 8, background: 'var(--flyout-card)', fontSize: 11, color: 'var(--text-secondary)' }}>
+          Trier
+          <select aria-label="Trier les processus" value={sortBy} onChange={event => setSortBy(event.target.value as SortMode)} style={{ padding: 8, border: 0, background: 'transparent', color: 'var(--text-primary)' }}>
+            <option value="cpu">CPU</option><option value="memory">Mémoire</option><option value="name">Nom</option>
+          </select>
+        </label>
+      </div>
 
       {error && <div role="alert" style={{ padding: 10, borderRadius: 8, color: '#fecaca', background: 'rgba(185,28,28,.18)', fontSize: 12 }}>{error}</div>}
       {notice && !error && <div role="status" style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{notice}</div>}
@@ -118,8 +163,9 @@ export const ProcessManagerApp: React.FC = () => {
             <tr style={{ textAlign: 'left', color: 'var(--text-secondary)' }}>
               <th style={{ padding: 11 }}>Nom du processus</th>
               <th style={{ padding: 11 }}>PID</th>
-              <th style={{ padding: 11, textAlign: 'right' }}>Mémoire</th>
               <th style={{ padding: 11, textAlign: 'right' }}>CPU</th>
+              <th style={{ padding: 11, textAlign: 'right' }}>Mémoire</th>
+              <th style={{ padding: 11, textAlign: 'right' }}>Threads</th>
               <th style={{ padding: 11 }}>Action</th>
             </tr>
           </thead>
@@ -127,13 +173,14 @@ export const ProcessManagerApp: React.FC = () => {
             {visibleProcesses.map(process => {
               const protectedProcess = process.id <= 4 || protectedProcessNames.has(process.name.toLocaleLowerCase('fr'))
               return (
-                <tr key={process.id} onClick={() => setSelectedPid(process.id)} style={{ background: selectedPid === process.id ? 'rgba(0,120,212,.14)' : 'transparent', borderTop: '1px solid var(--window-border)' }}>
+                <tr key={process.id} onClick={() => setSelectedPid(process.id)} aria-selected={selectedPid === process.id} style={{ cursor: 'pointer', background: selectedPid === process.id ? 'rgba(0,120,212,.14)' : 'transparent', borderTop: '1px solid var(--window-border)' }}>
                   <td style={{ padding: 10, fontWeight: 600 }}>{process.name}</td>
                   <td style={{ padding: 10, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{process.id}</td>
+                  <td style={{ padding: 10, textAlign: 'right', color: process.cpuUsagePercent == null ? 'var(--text-tertiary)' : 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{formatCpu(process.cpuUsagePercent)}</td>
                   <td style={{ padding: 10, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatMemory(process.memoryMB)}</td>
-                  <td style={{ padding: 10, textAlign: 'right', color: 'var(--text-tertiary)' }}>{process.cpuUsagePercent == null ? 'Non mesuré' : `${process.cpuUsagePercent.toFixed(1)} %`}</td>
+                  <td style={{ padding: 10, textAlign: 'right' }}>{process.threadCount ?? '—'}</td>
                   <td style={{ padding: 8 }}>
-                    <button type="button" disabled={protectedProcess || busyPid === process.id} title={protectedProcess ? 'Processus Windows protégé' : 'Arrêter ce processus'} onClick={event => { event.stopPropagation(); void stopProcess(process) }} style={{ padding: '6px 9px', border: 0, borderRadius: 6, background: protectedProcess ? 'var(--control-hover)' : 'rgba(185,28,28,.16)', color: protectedProcess ? 'var(--text-tertiary)' : '#fca5a5', cursor: protectedProcess ? 'not-allowed' : 'pointer', fontSize: 11 }}>
+                    <button type="button" disabled={protectedProcess || busyPid === process.id || !process.startTimeUtcTicks} title={protectedProcess ? 'Processus Windows protégé' : !process.startTimeUtcTicks ? 'Heure de démarrage inaccessible : arrêt désactivé' : 'Arrêter ce processus'} onClick={event => { event.stopPropagation(); void stopProcess(process) }} style={{ padding: '6px 9px', border: 0, borderRadius: 6, background: protectedProcess ? 'var(--control-hover)' : 'rgba(185,28,28,.16)', color: protectedProcess || !process.startTimeUtcTicks ? 'var(--text-tertiary)' : '#fca5a5', cursor: protectedProcess || !process.startTimeUtcTicks ? 'not-allowed' : 'pointer', fontSize: 11 }}>
                       {busyPid === process.id ? 'Arrêt…' : 'Fin de tâche'}
                     </button>
                   </td>
@@ -145,7 +192,16 @@ export const ProcessManagerApp: React.FC = () => {
         {!loading && visibleProcesses.length === 0 && <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-tertiary)' }}>Aucun processus correspondant.</div>}
         {loading && <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-tertiary)' }}>Lecture des processus Windows…</div>}
       </div>
-      <footer style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>La mesure CPU n’est pas encore fournie par le moteur natif. Les processus Windows essentiels sont protégés. Toute fin de tâche nécessite une confirmation.</footer>
+
+      {selectedProcess && (
+        <section aria-label="Détails du processus sélectionné" style={{ padding: 12, borderRadius: 10, background: 'var(--flyout-card)', border: '1px solid var(--window-border)', display: 'grid', gap: 5, fontSize: 11, minWidth: 0 }}>
+          <strong style={{ fontSize: 13 }}>{selectedProcess.name} · PID {selectedProcess.id}</strong>
+          <span>Session Windows : {selectedProcess.sessionId ?? 'Non disponible'} · Threads : {selectedProcess.threadCount ?? 'Non disponible'}</span>
+          <span>CPU : {formatCpu(selectedProcess.cpuUsagePercent)} · Mémoire : {formatMemory(selectedProcess.memoryMB)}</span>
+          <span style={{ overflowWrap: 'anywhere', color: 'var(--text-tertiary)' }}>Exécutable : {selectedProcess.executablePath || 'Chemin non accessible avec les droits actuels'}</span>
+        </section>
+      )}
+      <footer style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CPU calculé à partir de la variation du temps processeur entre deux échantillons, normalisé sur le nombre de processeurs logiques. Les premières valeurs apparaissent après une seconde lecture. L’arrêt est protégé côté interface et côté moteur natif.</footer>
     </div>
   )
 }
