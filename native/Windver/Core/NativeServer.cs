@@ -74,6 +74,9 @@ namespace Systemes.Native.Core
                         case "files/delete":
                             result = FileSystemNative.DeleteFile(args["path"]?.Value<string>() ?? "");
                             break;
+                        case "files/permissions/read":
+                            result = FileSystemNative.ReadPermissions(args["path"]?.Value<string>() ?? "");
+                            break;
                         case "files/rename":
                             result = FileSystemNative.RenameEntry(
                                 args["path"]?.Value<string>() ?? "",
