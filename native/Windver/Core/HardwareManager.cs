@@ -11,7 +11,7 @@ namespace Systemes.Native.Core
             try
             {
                 // CPU (WMI)
-                string cpuName = null;
+                string? cpuName = null;
                 int? cpuCores = null;
                 int? cpuThreads = null;
                 using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_Processor"))
@@ -36,7 +36,7 @@ namespace Systemes.Native.Core
                 double totalRamGB = totalRamBytes / (1024.0 * 1024.0 * 1024.0);
 
                 // GPU (WMI Win32_VideoController)
-                string gpuName = null;
+                string? gpuName = null;
                 long? gpuMemory = null;
                 using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController"))
                 {
