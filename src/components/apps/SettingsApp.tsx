@@ -8,6 +8,7 @@ type SettingsSection =
   | 'home'
   | 'system'
   | 'bluetooth'
+  | 'services'
   | 'network'
   | 'personalization'
   | 'apps'
@@ -174,7 +175,35 @@ export const SettingsApp: React.FC = () => {
   const [nearbyBluetooth, setNearbyBluetooth] = useState<{ id: string; name: string }[]>([])
   const [bluetoothMessage, setBluetoothMessage] = useState('')
   const [bluetoothBusy, setBluetoothBusy] = useState(false)
+  const [windowsServices, setWindowsServices] = useState<{ name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string }[]>([])
+  const [servicesMessage, setServicesMessage] = useState('')
+  const [serviceBusy, setServiceBusy] = useState<string | null>(null)
   const [audioInfo, setAudioInfo] = useState<{ volume: number; isMuted: boolean; deviceName?: string } | null>(null)
+
+  const refreshServices = async () => {
+    setServicesMessage('')
+    try {
+      const result = await NativeBridge.readServices()
+      setWindowsServices(Array.isArray(result.services) ? result.services : [])
+    } catch (error) {
+      setServicesMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const controlWindowsService = async (service: { name: string; displayName: string; state: string }) => {
+    const action = service.state.toLowerCase() === 'running' ? 'stop' : 'start'
+    if (action === 'stop' && !window.confirm(`Arrêter le service « ${service.displayName} » ? Certaines applications peuvent cesser de fonctionner.`)) return
+    setServiceBusy(service.name)
+    setServicesMessage('')
+    try {
+      await NativeBridge.controlService(service.name, action)
+      await refreshServices()
+    } catch (error) {
+      setServicesMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setServiceBusy(null)
+    }
+  }
 
   const refreshWifi = async () => {
     setWifiBusy(true)
@@ -224,6 +253,7 @@ export const SettingsApp: React.FC = () => {
 
   useEffect(() => {
     if (section === 'about') void NativeBridge.readHardware().then(setHardwareInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'services') void refreshServices()
     if (section === 'privacy') void NativeBridge.readSecurityContext().then(setSecurityInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth') void NativeBridge.readBluetoothStatus().then(setBluetoothStatus).catch((error: unknown) => setBluetoothMessage(error instanceof Error ? error.message : String(error)))
@@ -293,6 +323,7 @@ export const SettingsApp: React.FC = () => {
     { id: 'home', label: 'Accueil', icon: 'pc' },
     { id: 'system', label: 'Système', icon: 'sliders', desc: 'Écran, son, notifications, alimentation' },
     { id: 'bluetooth', label: 'Bluetooth et appareils', icon: 'battery', desc: 'Souris, clavier, casque, autres appareils' },
+    { id: 'services', label: 'Services Windows', icon: 'settings', desc: 'Inventaire et contrôle des services système' },
     { id: 'network', label: 'Réseau et Internet', icon: 'wifi', desc: 'Wi-Fi, réseau câblé, VPN' },
     { id: 'personalization', label: 'Personnalisation', icon: 'palette', desc: 'Arrière-plan, couleurs, écran de verrouillage' },
     { id: 'apps', label: 'Applications', icon: 'square', desc: 'Applications installées, fonctionnalités optionnelles' },
@@ -529,6 +560,36 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="pc" title="Appareils USB" desc="Gérer les périphériques matériels Windows" onClick={() => { void openWindowsPage('device-manager') }} />
             <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Ouvrir les paramètres de saisie Windows" onClick={() => { void openWindowsPage('pen-touch') }} />
             <SettingRow icon="pc" title="Bluetooth mobile" desc="Ouvrir les paramètres des appareils mobiles Windows" onClick={() => { void openWindowsPage('mobile-devices') }} />
+          </div>
+        )}
+
+        {/* WINDOWS SERVICES */}
+        {section === 'services' && (
+          <div>
+            <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: 4 }}>Services Windows</h1>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 18 }}>Inventaire WMI en temps réel. Le démarrage et l’arrêt sont des opérations réelles et peuvent nécessiter des droits administrateur.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <strong>{windowsServices.length} services détectés</strong>
+              <button type="button" onClick={() => void refreshServices()} disabled={serviceBusy !== null}>Actualiser</button>
+            </div>
+            {servicesMessage && <div role="alert" style={{ padding: 10, marginBottom: 12, borderRadius: 8, color: '#fecaca', background: 'rgba(185,28,28,.18)', fontSize: 12 }}>{servicesMessage}</div>}
+            <div style={{ maxHeight: '62vh', overflow: 'auto', border: '1px solid var(--window-border)', borderRadius: 10 }}>
+              {windowsServices.map(service => {
+                const running = service.state.toLowerCase() === 'running'
+                const protectedService = ['RpcSs', 'DcomLaunch', 'RpcEptMapper', 'EventLog', 'PlugPlay', 'Power', 'SamSs', 'LSM', 'Winmgmt', 'Schedule', 'CryptSvc', 'ProfSvc', 'UserManager', 'BFE', 'MpsSvc', 'LanmanServer'].includes(service.name)
+                return <div key={service.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 14px', borderBottom: '1px solid var(--window-border)' }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 650, fontSize: 12 }}>{service.displayName || service.name}</div>
+                    <div style={{ color: 'var(--text-tertiary)', fontSize: 10, overflowWrap: 'anywhere' }}>{service.name} · {service.startMode} · PID {service.processId || '—'}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: running ? '#4ade80' : 'var(--text-tertiary)' }}>{service.state}</span>
+                    <button type="button" disabled={protectedService || serviceBusy !== null || (!running && service.startMode === 'Disabled')} title={protectedService ? 'Service système protégé' : running ? 'Arrêter le service' : 'Démarrer le service'} onClick={() => void controlWindowsService(service)} style={{ padding: '6px 9px', fontSize: 10 }}>{serviceBusy === service.name ? '…' : protectedService ? 'Protégé' : running ? 'Arrêter' : 'Démarrer'}</button>
+                  </div>
+                </div>
+              })}
+              {!windowsServices.length && !servicesMessage && <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 12 }}>Chargement de l’inventaire des services Windows…</div>}
+            </div>
           </div>
         )}
 
