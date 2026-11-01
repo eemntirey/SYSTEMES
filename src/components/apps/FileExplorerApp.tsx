@@ -8,24 +8,6 @@ interface FileExplorerAppProps {
   initialPath?: string
 }
 
-const quickAccessItems = [
-  { name: 'Bureau', path: 'C:/Users/eemntirey/Desktop', icon: 'folder' },
-  { name: 'Documents', path: 'C:/Users/eemntirey/Documents', icon: 'folder' },
-  { name: 'Téléchargements', path: 'C:/Users/eemntirey/Downloads', icon: 'folder' },
-  { name: 'Images', path: 'C:/Users/eemntirey/Pictures', icon: 'folder' },
-  { name: 'Ce PC (Racine)', path: 'C:/Users/eemntirey', icon: 'pc' },
-]
-
-const storageItems = [
-  {
-    name: 'NVMe SSD (C:)',
-    icon: 'pc',
-    health: 'Santé: 99%',
-    usedPercent: 68,
-    free: '142 Go libres / 476 Go',
-  },
-]
-
 const NavButton: React.FC<{
   icon: string
   label: string
@@ -196,6 +178,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [currentPath, setCurrentPath] = useState<string>(initialPath)
   const [nativeFiles, setNativeFiles] = useState<FileItem[]>([])
   const [nativeLocations, setNativeLocations] = useState<{ name: string; path: string; icon?: string }[]>([])
+  const [nativeDisks, setNativeDisks] = useState<{ name: string; totalBytes: number; availableBytes: number; format: string }[]>([])
   const [nativeError, setNativeError] = useState<string | null>(null)
   const [isNativeLoading, setIsNativeLoading] = useState(true)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -251,6 +234,11 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   useEffect(() => {
     void NativeBridge.getFileLocations().then((result: any) => {
       if (Array.isArray(result?.locations)) setNativeLocations(result.locations)
+    }).catch((cause: unknown) => {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+    })
+    void NativeBridge.readHardware().then((result: any) => {
+      if (Array.isArray(result?.disks)) setNativeDisks(result.disks.filter((disk: any) => disk && typeof disk.name === 'string' && Number.isFinite(disk.totalBytes) && Number.isFinite(disk.availableBytes)))
     }).catch((cause: unknown) => {
       setNativeError(cause instanceof Error ? cause.message : String(cause))
     })
@@ -481,7 +469,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 <span>Favoris</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', padding: '2px 6px' }}>
-                {(nativeLocations.length ? nativeLocations : quickAccessItems).map((item) => (
+                {nativeLocations.map((item) => (
                   <div
                     key={item.path}
                     onClick={() => navigateTo(item.path)}
@@ -518,31 +506,24 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 <FluentIcon name="pc" size={14} />
                 <span>Stockage</span>
               </div>
-              <div
-                onClick={() => navigateTo('C:/Users/eemntirey')}
-                style={{
-                  padding: '10px',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--flyout-card)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'background 0.12s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <FluentIcon name="pc" size={20} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '12px' }}>{storageItems[0].name}</span>
-                      <span style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>{storageItems[0].health}</span>
+              {nativeDisks.map(disk => {
+                const usedBytes = Math.max(0, disk.totalBytes - disk.availableBytes)
+                const usedPercent = disk.totalBytes > 0 ? Math.min(100, Math.round(usedBytes / disk.totalBytes * 100)) : 0
+                const formatSize = (bytes: number) => (bytes / 1024 ** 3).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Gio'
+                return <div key={disk.name} role="button" tabIndex={0} onClick={() => navigateTo(disk.name)} onKeyDown={event => { if (event.key === 'Enter') navigateTo(disk.name) }} style={{ padding: 10, marginBottom: 6, borderRadius: 'var(--radius-sm)', background: 'var(--flyout-card)', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <FluentIcon name="pc" size={20} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12 }}>{disk.name}</div>
+                      <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginTop: 5 }}>
+                        <div style={{ height: '100%', width: usedPercent + '%', background: 'var(--win-accent-cyan)' }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>{formatSize(disk.availableBytes)} libres / {formatSize(disk.totalBytes)} · {disk.format}</div>
                     </div>
-                    <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginTop: 4 }}>
-                      <div style={{ height: '100%', width: `${storageItems[0].usedPercent}%`, background: 'var(--win-accent-cyan)', boxShadow: '0 0 6px var(--win-accent-cyan)' }} />
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 4 }}>{storageItems[0].free}</div>
                   </div>
                 </div>
-              </div>
+              })}
+              {!nativeDisks.length && <div style={{ padding: 8, fontSize: 10, color: 'var(--text-tertiary)' }}>Volumes Windows indisponibles.</div>}
             </div>
           </div>
 
