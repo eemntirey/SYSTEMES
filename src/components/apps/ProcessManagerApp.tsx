@@ -17,6 +17,7 @@ interface ProcessSnapshot {
   processes?: NativeProcess[]
   count?: number
   logicalProcessorCount?: number
+  systemCpuUsagePercent?: number | null
   note?: string
 }
 type NativeMemorySnapshot = Awaited<ReturnType<typeof NativeBridge.readMemory>>
@@ -42,6 +43,7 @@ export const ProcessManagerApp: React.FC = () => {
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [busyPid, setBusyPid] = useState<number | null>(null)
   const [logicalProcessors, setLogicalProcessors] = useState<number | null>(null)
+  const [systemCpuPercent, setSystemCpuPercent] = useState<number | null>(null)
   const [memory, setMemory] = useState<NativeMemorySnapshot | null>(null)
   const refreshing = useRef(false)
 
@@ -62,6 +64,7 @@ export const ProcessManagerApp: React.FC = () => {
       }
       setProcesses(snapshot.processes)
       setLogicalProcessors(snapshot.logicalProcessorCount ?? null)
+      setSystemCpuPercent(Number.isFinite(snapshot.systemCpuUsagePercent) ? snapshot.systemCpuUsagePercent! : null)
 
       if (memoryResult.status === 'fulfilled') {
         const memorySnapshot = memoryResult.value
@@ -112,7 +115,6 @@ export const ProcessManagerApp: React.FC = () => {
   }, [processes, query, sortBy])
 
   const selectedProcess = processes.find(process => process.id === selectedPid) ?? null
-  const totalCpu = Math.min(100, processes.reduce((sum, process) => sum + (process.cpuUsagePercent ?? 0), 0))
   const usedMemoryPercent = memory?.memoryLoadPercent ?? null
   const sampledCount = processes.filter(process => process.cpuUsagePercent != null).length
 
@@ -165,8 +167,8 @@ export const ProcessManagerApp: React.FC = () => {
         </div>
         <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CPU des processus</div>
-          <div style={{ fontSize: 23, fontWeight: 700 }}>{sampledCount ? formatCpu(totalCpu) : '—'}</div>
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{sampledCount}/{processes.length} échantillonnés · {logicalProcessors ?? '—'} processeurs logiques</div>
+          <div style={{ fontSize: 23, fontWeight: 700 }}>{systemCpuPercent == null ? 'Échantillonnage…' : formatCpu(systemCpuPercent)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{systemCpuPercent == null ? 'Première mesure en cours' : 'Charge totale du processeur'} · {logicalProcessors ?? '—'} processeurs logiques · {sampledCount}/{processes.length} processus échantillonnés</div>
         </div>
       </div>
 
