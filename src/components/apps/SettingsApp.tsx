@@ -479,23 +479,8 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Affichage</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
-            <SettingRow icon="sun" title="Luminosité" desc={`${brightness}% — Ajustez la luminosité intégrée`}>
-              <input type="range" min="20" max="100" value={brightness} onChange={e => setBrightness(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent-cyan)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />
-            </SettingRow>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-              <div style={{ padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(139,92,246,0.06), rgba(0,212,255,0.04))', border: '1px solid rgba(139,92,246,0.2)', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Résolution d'affichage</div>
-                <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', outline: 'none', padding: '8px 10px', appearance: 'none' }}>
-                  {['2560x1440', '1920x1080', '1680x1050', '1280x720'].map(r => <option key={r} value={r} style={{ background: '#1a1a2e', color: '#fff' }}>{r}</option>)}
-                </select>
-              </div>
-              <div style={{ padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(139,92,246,0.06), rgba(0,212,255,0.04))', border: '1px solid rgba(139,92,246,0.2)', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Fréquence de rafraîchissement</div>
-                <select value={refreshRate} onChange={e => setRefreshRate(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%', outline: 'none', padding: '8px 10px', appearance: 'none' }}>
-                  {['144Hz', '120Hz', '75Hz', '60Hz'].map(r => <option key={r} value={r} style={{ background: '#1a1a2e', color: '#fff' }}>{r}</option>)}
-                </select>
-              </div>
-            </div>
+            <SettingRow icon="sun" title="Luminosité et affichage" desc="Ouvrir les contrôles d’affichage natifs de Windows" onClick={() => { void openWindowsPage('display') }} />
+            <SettingRow icon="maximize" title="Résolution et fréquence" desc="Modifier la résolution et le taux de rafraîchissement dans Windows" onClick={() => { void openWindowsPage('display') }} />
             <SettingRow icon="moon" title="Éclairage nocturne" desc="Ouvrir le réglage natif de lumière nocturne Windows" onClick={() => { void openWindowsPage('night-light') }} />
             <SettingRow icon="maximize" title="Taille du texte" desc={`${fontSize}% — Mise à l'échelle de l'affichage`}>
               <input type="range" min="80" max="200" step="5" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={{ width: '220px', accentColor: 'var(--win-accent)', marginTop: '8px', cursor: 'pointer', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)' }} />
@@ -515,8 +500,8 @@ export const SettingsApp: React.FC = () => {
             <SectionTitle>Alimentation</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
             <SettingRow icon="battery-charging" title="Économiseur de batterie" desc="Gérer l’économiseur de batterie Windows" onClick={() => { void openWindowsPage('battery') }} />
-            <SettingRow icon="power" title="Mise en veille de l'écran" desc="Après 10 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="10 min" />
-            <SettingRow icon="power" title="Mode veille" desc="Après 30 minutes d'inactivité" onClick={() => addNotification('Alimentation', 'Ouvrir les options d\'alimentation avancées', 'Paramètres', 'power')} badge="30 min" />
+            <SettingRow icon="power" title="Mise en veille de l'écran" desc="Gérer les délais de veille dans Windows" onClick={() => { void openWindowsPage('power') }} />
+            <SettingRow icon="power" title="Mode veille" desc="Gérer les options de veille dans Windows" onClick={() => { void openWindowsPage('power') }} />
           </div>
         )}
 
