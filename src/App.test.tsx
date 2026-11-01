@@ -12,7 +12,7 @@ describe('Windows 11 Recreation Tests', () => {
   it('renders Desktop with essential shortcuts', () => {
     render(<App />)
     expect(screen.getAllByText('Ce PC').length).toBeGreaterThan(0)
-    expect(screen.getByText('Corbeille')).toBeDefined()
+    expect(screen.getAllByText('Corbeille').length).toBeGreaterThan(0)
     expect(screen.getByText('Photos')).toBeDefined()
     expect(screen.queryByText('Microsoft Edge')).toBeNull()
     expect(screen.getByText('Bloc-notes')).toBeDefined()
