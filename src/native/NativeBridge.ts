@@ -1,85 +1,86 @@
-import { spawn, ChildProcess } from 'child_process';
+// Browser-safe compatibility facade for the SYSTEMES native host.
+// Native processes are owned by the WPF host, never spawned from renderer code.
 
-export interface NativeResponse {
-  result?: any;
+export interface NativeResponse<T = unknown> {
+  result?: T;
   error?: string;
   id?: string;
 }
 
+type WebViewMessage = {
+  postMessage(message: unknown): void;
+  addEventListener(type: 'message', listener: (event: MessageEvent<NativeResponse>) => void): void;
+  removeEventListener(type: 'message', listener: (event: MessageEvent<NativeResponse>) => void): void;
+};
+
+declare global {
+  interface Window {
+    chrome?: { webview?: WebViewMessage };
+  }
+}
+
 export class NativeBridge {
-  private process: ChildProcess | null = null;
+  private connected = false;
+  private readonly pending = new Map<string, {
+    resolve: (value: NativeResponse) => void;
+    reject: (reason: Error) => void;
+  }>();
+
+  private readonly onMessage = (event: MessageEvent<NativeResponse>) => {
+    const response = event.data;
+    if (!response?.id) return;
+    const pending = this.pending.get(response.id);
+    if (!pending) return;
+    this.pending.delete(response.id);
+    if (response.error) pending.reject(new Error(response.error));
+    else pending.resolve(response);
+  };
 
   async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Lance le moteur natif .NET (compilé ou via dotnet run)
-      // Pour le développement, on utilise le chemin du projet natif
-      const nativePath = 'native/Windver/bin/Debug/net8.0-windows/SystemesNative.exe';
-      // En développement sans build, on peut utiliser dotnet run, mais pour l'instant on essaie l'exe
-      this.process = spawn('dotnet', ['run', '--project', 'native/Windver/SystemesNative.csproj'], {
-        cwd: process.cwd(),
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      if (!this.process || !this.process.stdin) {
-        reject(new Error('Impossible de lancer le moteur natif'));
-        return;
-      }
-
-      this.process.stdout?.on('data', (data) => {
-        const line = data.toString();
-        console.log('[NATIVE]', line);
-      });
-
-      this.process.stderr?.on('data', (data) => {
-        console.error('[NATIVE ERROR]', data.toString());
-      });
-
-      this.process.on('error', (err) => {
-        console.error('[NATIVE SPAWN ERROR]', err);
-      });
-
-      // Attend un court délai pour s'assurer que le processus démarre
-      setTimeout(() => resolve(), 500);
-    });
+    const transport = this.transport();
+    if (!transport) {
+      throw new Error('SYSTEMES Native Host indisponible : démarrez SYSTEMES depuis son application Windows.');
+    }
+    if (!this.connected) {
+      transport.addEventListener('message', this.onMessage);
+      this.connected = true;
+    }
   }
 
-  async send(method: string, params?: any): Promise<NativeResponse> {
-    if (!this.process || !this.process.stdin) {
-      throw new Error('Moteur natif non connecté');
-    }
+  async send(method: string, params: Record<string, unknown> = {}): Promise<NativeResponse> {
+    await this.connect();
+    const transport = this.transport();
+    if (!transport) throw new Error('Le canal natif WebView2 est indisponible.');
+
+    const id = globalThis.crypto?.randomUUID?.()
+      ?? `systemes-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
     return new Promise((resolve, reject) => {
-      const request = { method, params: params || {}, id: Math.random().toString(36) };
-      const line = JSON.stringify(request) + '\n';
-
-      let buffer = '';
-      const handler = (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split('\n');
-        for (let i = 0; i < lines.length - 1; i++) {
-          try {
-            const response: NativeResponse = JSON.parse(lines[i]);
-            this.process?.stdout?.off('data', handler as any);
-            resolve(response);
-            return;
-          } catch (e) {
-            // Ignorer les lignes non JSON
-          }
-        }
-        buffer = lines[lines.length - 1];
-      };
-
-      this.process.stdout?.on('data', handler as any);
-      this.process.stdin.write(line, (err) => {
-        if (err) reject(err);
-      });
+      this.pending.set(id, { resolve, reject });
+      try {
+        transport.postMessage({ id, method, params });
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   disconnect(): void {
-    if (this.process) {
-      this.process.kill();
-      this.process = null;
+    const transport = this.transport();
+    if (this.connected && transport) {
+      transport.removeEventListener('message', this.onMessage);
     }
+    this.connected = false;
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error('Connexion au moteur natif interrompue.'));
+    }
+    this.pending.clear();
+  }
+
+  private transport(): WebViewMessage | null {
+    if (typeof window === 'undefined') return null;
+    return window.chrome?.webview ?? null;
   }
 }
 
