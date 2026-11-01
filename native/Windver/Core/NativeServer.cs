@@ -26,6 +26,9 @@ namespace Systemes.Native.Core
 
                     switch (method)
                     {
+                        case "system/ping":
+                            result = new { status = "ready", engine = "SYSTEMES Native Core" };
+                            break;
                         case "hardware/read":
                             result = HardwareManager.ReadRealHardware();
                             break;
