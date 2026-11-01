@@ -810,7 +810,7 @@ export const SettingsApp: React.FC = () => {
               <button type="button" onClick={() => void verifyWindowsUpdateService()} style={{ padding: '9px 12px', borderRadius: 8 }}>Vérifier le service</button>
               <button type="button" onClick={() => void NativeBridge.openWindowsSettings('windows-update')} style={{ padding: '9px 12px', borderRadius: 8 }}>Ouvrir Windows Update</button>
             </div>
-            {updateMessage && <div role="status" style={{ padding: 8, marginBottom: 12, fontSize: 12 }}>{updateMessage}. La recherche du catalogue de mises à jour n’est pas effectuée par ce contrôle.</div>}
+            {updateMessage && <div role="status" style={{ padding: 8, marginBottom: 12, fontSize: 12 }}><span>{updateMessage}</span><span>La recherche du catalogue de mises à jour n’est pas effectuée par ce contrôle.</span></div>}
             {/* Status banner */}
             <div style={{ padding: '20px 24px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,212,255,0.08))', border: '1px solid rgba(16,185,129,0.4)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
               <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
