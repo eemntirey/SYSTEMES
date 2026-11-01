@@ -37,6 +37,7 @@ describe('ProcessManagerApp', () => {
     mocks.readProcesses.mockResolvedValue({
       count: 2,
       note: 'Liste réelle des processus Windows',
+      systemCpuUsagePercent: 18.6,
       processes: [
         { id: 100, name: 'editor', memoryMB: 125.5, cpuUsagePercent: 12.4, threadCount: 8, sessionId: 1, startTimeUtcTicks: '638975808000000000', executablePath: 'C:/Apps/editor.exe' },
         { id: 4, name: 'System', memoryMB: 20, cpuUsagePercent: null },
@@ -73,7 +74,6 @@ describe('ProcessManagerApp', () => {
   it('sorts the list by CPU and shows selected process details', async () => {
     mocks.readProcesses.mockResolvedValue({
       logicalProcessorCount: 8,
-      systemCpuUsagePercent: 18.6,
       processes: [
         { id: 100, name: 'editor', memoryMB: 125, cpuUsagePercent: 7.5, threadCount: 8, sessionId: 1, startTimeUtcTicks: 638975808000000000, executablePath: 'C:/Apps/editor.exe' },
         { id: 101, name: 'worker', memoryMB: 90, cpuUsagePercent: 42, threadCount: 4, sessionId: 1 },
