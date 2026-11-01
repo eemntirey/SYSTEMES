@@ -49,7 +49,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C code-model=small -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
