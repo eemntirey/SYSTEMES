@@ -101,7 +101,8 @@ export const ProcessManagerApp: React.FC = () => {
     setBusyPid(process.id)
     setError(null)
     try {
-      const result = await NativeBridge.killProcess(process.id, process.name) as { killed?: boolean }
+      if (!process.startTimeUtcTicks) throw new Error('Le démarrage du processus ne peut pas être vérifié. Actualisez la liste.')
+      const result = await NativeBridge.killProcess(process.id, process.name, process.startTimeUtcTicks) as { killed?: boolean }
       if (result?.killed !== true) throw new Error('Windows n’a pas confirmé l’arrêt du processus.')
       setSelectedPid(null)
       setNotice(`Le processus ${process.name} (PID ${process.id}) a été arrêté.`)
@@ -180,7 +181,7 @@ export const ProcessManagerApp: React.FC = () => {
                   <td style={{ padding: 10, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatMemory(process.memoryMB)}</td>
                   <td style={{ padding: 10, textAlign: 'right' }}>{process.threadCount ?? '—'}</td>
                   <td style={{ padding: 8 }}>
-                    <button type="button" disabled={protectedProcess || busyPid === process.id || !process.startTimeUtcTicks} title={protectedProcess ? 'Processus Windows protégé' : !process.startTimeUtcTicks ? 'Heure de démarrage inaccessible : arrêt désactivé' : 'Arrêter ce processus'} onClick={event => { event.stopPropagation(); void stopProcess(process) }} style={{ padding: '6px 9px', border: 0, borderRadius: 6, background: protectedProcess ? 'var(--control-hover)' : 'rgba(185,28,28,.16)', color: protectedProcess || !process.startTimeUtcTicks ? 'var(--text-tertiary)' : '#fca5a5', cursor: protectedProcess || !process.startTimeUtcTicks ? 'not-allowed' : 'pointer', fontSize: 11 }}>
+                    <button type="button" disabled={protectedProcess || busyPid === process.id || !process.startTimeUtcTicks} title={protectedProcess ? 'Processus Windows protégé' : !process.startTimeUtcTicks ? 'Heure de démarrage inaccessible : arrêt désactivé' : 'Arrêter ce processus'} onClick={event => { event.stopPropagation(); void stopProcess(process) }} style={{ padding: '6px 9px', border: 0, borderRadius: 6, background: protectedProcess || !process.startTimeUtcTicks ? 'var(--control-hover)' : 'rgba(185,28,28,.16)', color: protectedProcess || !process.startTimeUtcTicks ? 'var(--text-tertiary)' : '#fca5a5', cursor: protectedProcess || !process.startTimeUtcTicks ? 'not-allowed' : 'pointer', fontSize: 11 }}>
                       {busyPid === process.id ? 'Arrêt…' : 'Fin de tâche'}
                     </button>
                   </td>
