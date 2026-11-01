@@ -32,7 +32,7 @@ describe('Settings native integrations', () => {
     });
 
     renderSettings();
-    fireEvent.click(screen.getByText('À propos'));
+    fireEvent.click(screen.getAllByText('À propos')[0]);
 
     expect(await screen.findByText('Test CPU 8-Core')).toBeDefined();
     expect(screen.getByText('Test GPU')).toBeDefined();
@@ -48,7 +48,7 @@ describe('Settings native integrations', () => {
     });
 
     renderSettings();
-    fireEvent.click(screen.getByText('Bluetooth et appareils'));
+    fireEvent.click(screen.getAllByText('Bluetooth et appareils')[0]);
 
     expect(await screen.findByText('Test USB device')).toBeDefined();
     expect(screen.getByText('Test Ethernet adapter')).toBeDefined();
@@ -63,7 +63,7 @@ describe('Settings native integrations', () => {
     });
 
     renderSettings();
-    fireEvent.click(screen.getByText('Windows Update'));
+    fireEvent.click(screen.getAllByText('Windows Update')[0]);
     fireEvent.click(screen.getByText('Vérifier le service'));
 
     expect(await screen.findByText('Service Windows Update actif')).toBeDefined();
