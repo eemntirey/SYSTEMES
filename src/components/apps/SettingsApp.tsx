@@ -152,7 +152,7 @@ export const SettingsApp: React.FC = () => {
     brightness, setBrightness,
     volume, setVolume,
     isMuted, toggleMute,
-    wifiEnabled, toggleWifi,
+    wifiEnabled,
     bluetoothEnabled, toggleBluetooth,
     nightLight, toggleNightLight,
     batterySaver, toggleBatterySaver,
@@ -201,10 +201,40 @@ export const SettingsApp: React.FC = () => {
   const [serviceMessage, setServiceMessage] = useState('')
   const [busyService, setBusyService] = useState<string | null>(null)
   const [updateMessage, setUpdateMessage] = useState('')
+  const [wifiStatus, setWifiStatus] = useState<{ connected: boolean; ssid?: string | null; state?: string | null; signal?: string | null } | null>(null)
+  const [wifiNetworks, setWifiNetworks] = useState<{ ssid: string; signal?: string; authentication?: string; encryption?: string }[]>([])
+  const [wifiMessage, setWifiMessage] = useState('')
+  const [wifiBusy, setWifiBusy] = useState(false)
+
+  const refreshWifi = async () => {
+    setWifiBusy(true)
+    setWifiMessage('')
+    try {
+      const [status, scan] = await Promise.all([NativeBridge.readWifiStatus(), NativeBridge.scanWifi()])
+      setWifiStatus(status)
+      setWifiNetworks(Array.isArray(scan?.networks) ? scan.networks : [])
+      if (scan?.error) setWifiMessage(scan.error)
+    } catch (error) {
+      setWifiMessage(error instanceof Error ? error.message : String(error))
+    } finally { setWifiBusy(false) }
+  }
+
+  const connectToWifi = async (ssid: string, connected: boolean) => {
+    if (connected) {
+      if (!window.confirm('Déconnecter le Wi-Fi actuel ?')) return
+      try { await NativeBridge.disconnectWifi(); await refreshWifi() }
+      catch (error) { setWifiMessage(error instanceof Error ? error.message : String(error)) }
+      return
+    }
+    const password = window.prompt('Mot de passe Wi-Fi (laisser vide si le réseau est ouvert)') || ''
+    try { await NativeBridge.connectWifi(ssid, password); await refreshWifi() }
+    catch (error) { setWifiMessage(error instanceof Error ? error.message : String(error)) }
+  }
 
   useEffect(() => {
     if (section === 'about') void NativeBridge.readHardware().then(setHardwareInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
     if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'network') void refreshWifi()
     if (section === 'system') void NativeBridge.readPowerSchemes().then((value: any) => {
       const schemes = Array.isArray(value?.schemes) ? value.schemes : []
       setPowerSchemes(schemes)
@@ -528,43 +558,28 @@ export const SettingsApp: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos connexions réseau</p>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '16px' }}></div>
 
-            {/* Connection status banner */}
-            <div style={{ padding: '18px 22px', borderRadius: '12px', background: wifiEnabled ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(0,212,255,0.1))' : 'var(--flyout-card)', border: `1px solid ${wifiEnabled ? 'rgba(0,212,255,0.4)' : 'var(--window-border)'}`, marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <FluentIcon name={wifiEnabled ? 'wifi' : 'wifi-off'} size={28} color={wifiEnabled ? 'var(--win-accent-cyan)' : 'var(--text-tertiary)'} />
-              <div>
-                <div style={{ fontSize: '15px', fontWeight: 600 }}>{wifiEnabled ? 'Wi-Fi 6E – Connecté' : 'Aucune connexion active'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{wifiEnabled ? 'Réseau_Maison_5G · Sécurisé · 1.2 Gbps · IPv6 activé' : 'Activez le Wi-Fi ou connectez un câble Ethernet'}</div>
-              </div>
+            <div style={{ padding: '18px 22px', borderRadius: '12px', background: wifiStatus?.connected ? 'rgba(0,120,212,.14)' : 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '16px' }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{wifiStatus?.connected ? 'Connecté à ' + (wifiStatus.ssid || 'un réseau Wi-Fi') : 'Aucune connexion Wi-Fi confirmée'}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{wifiStatus?.state || 'État lu depuis netsh wlan show interfaces'}{wifiStatus?.signal ? ' · Signal ' + wifiStatus.signal : ''}</div>
             </div>
-
-            <SettingRow icon="wifi" title="Wi-Fi" desc={wifiEnabled ? 'Réseau_Maison_5G — Connecté' : 'Désactivé'} toggle={wifiEnabled} onToggle={toggleWifi} />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => void refreshWifi()} disabled={wifiBusy} aria-label="Actualiser les réseaux Wi-Fi">{wifiBusy ? 'Analyse…' : 'Actualiser les réseaux Wi-Fi'}</button>
+              <button type="button" onClick={() => void NativeBridge.openWindowsSettings('network-status')}>Paramètres réseau Windows</button>
+            </div>
+            {wifiMessage && <div role="alert" style={{ padding: 8, marginBottom: 10, color: '#fecaca', fontSize: 12 }}>{wifiMessage}</div>}
+            <SectionTitle>Réseaux Wi-Fi détectés par Windows</SectionTitle>
+            {wifiNetworks.map(net => {
+              const connected = wifiStatus?.connected === true && wifiStatus.ssid === net.ssid
+              return <div key={net.ssid} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderRadius: 10, background: connected ? 'var(--win-accent-light)' : 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: 6, gap: 10 }}>
+                <div><div style={{ fontSize: 13, fontWeight: 600 }}>{net.ssid}{connected ? ' ✓' : ''}</div><div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{net.authentication || 'Sécurité inconnue'} · {net.signal || 'Signal inconnu'}</div></div>
+                <button type="button" onClick={() => void connectToWifi(net.ssid, connected)}>{connected ? 'Déconnecter' : 'Se connecter'}</button>
+              </div>
+            })}
+            {!wifiBusy && wifiNetworks.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: 8 }}>Aucun réseau Wi-Fi détecté par Windows.</div>}
             <SectionTitle>Adaptateurs réseau détectés par Windows</SectionTitle>
             {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
 
-            {wifiEnabled && (
-              <>
-                <SectionTitle>Réseaux disponibles</SectionTitle>
-                {[
-                  { name: 'Réseau_Maison_5G', security: 'WPA3', strength: '▂▄▆█', connected: true },
-                  { name: 'BBOX-A1B2C3', security: 'WPA2', strength: '▂▄▆_', connected: false },
-                  { name: 'FiberBox_7E24', security: 'WPA2', strength: '▂▄__', connected: false },
-                  { name: 'iPhone de Kevin', security: 'Partage de connexion', strength: '▂___', connected: false },
-                ].map(net => (
-                  <div key={net.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderRadius: '10px', backgroundColor: net.connected ? 'var(--win-accent-light)' : 'var(--flyout-card)', border: `1px solid ${net.connected ? 'rgba(139,92,246,0.5)' : 'var(--window-border)'}`, marginBottom: '6px', cursor: 'pointer' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <FluentIcon name="wifi" size={18} color={net.connected ? 'var(--win-accent)' : 'var(--text-secondary)'} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: net.connected ? 600 : 400 }}>{net.name} {net.connected ? '✓' : ''}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{net.security} · {net.strength}</div>
-                      </div>
-                    </div>
-                    {!net.connected && <button style={{ padding: '5px 14px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.25)', background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(0,212,255,0.08))', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }} onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(0,212,255,0.15))'; }} onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(0,212,255,0.08))'; }}>Se connecter</button>}
-                  </div>
-                ))}
-              </>
-            )}
-
-            <SectionTitle>Paramètres avancés</SectionTitle>
+                        <SectionTitle>Paramètres avancés</SectionTitle>
             <SettingRow icon="sliders" title="Ethernet" desc="Non connecté" onClick={() => addNotification('Réseau', 'Ethernet', 'Paramètres', 'sliders')} />
             <SettingRow icon="lock" title="VPN" desc="Aucun VPN configuré" onClick={() => addNotification('Réseau', 'VPN', 'Paramètres', 'lock')} />
             <SettingRow icon="sliders" title="Mode avion" desc={airplaneMode ? 'Activé' : 'Désactivé'} toggle={airplaneMode} onToggle={toggleAirplaneMode} />
