@@ -156,7 +156,7 @@ export const SettingsApp: React.FC = () => {
   const [section, setSection] = useState<SettingsSection>('home')
   const [searchQuery, setSearchQuery] = useState('')
   const [hardwareInfo, setHardwareInfo] = useState<any>(null)
-  const [deviceInfo, setDeviceInfo] = useState<{ usb?: string[]; network?: string[] } | null>(null)
+  const [deviceInfo, setDeviceInfo] = useState<{ usb?: string[]; network?: string[]; devices?: { name: string; deviceClass: string; status: string; manufacturer: string; healthy: boolean; configManagerErrorCode: number }[]; count?: number; problemCount?: number; source?: string } | null>(null)
   const [powerSchemes, setPowerSchemes] = useState<{ guid: string; name: string }[]>([])
   const [activePowerGuid, setActivePowerGuid] = useState('')
   const [selectedPowerGuid, setSelectedPowerGuid] = useState('')
@@ -528,6 +528,18 @@ export const SettingsApp: React.FC = () => {
             <SectionTitle>Périphériques détectés par Windows</SectionTitle>
             {(deviceInfo?.usb || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
             {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
+            {deviceInfo && <div style={{ marginTop: 14 }}>
+              <SectionTitle>Inventaire matériel Windows · {deviceInfo.count ?? deviceInfo.devices?.length ?? 0}</SectionTitle>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>{deviceInfo.problemCount ?? 0} périphérique(s) signalé(s) en anomalie par Windows</div>
+              <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--window-border)', borderRadius: 8 }}>
+                {(deviceInfo.devices || []).map((device, index) => <div key={device.name + index} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--window-border)', fontSize: 11 }}>
+                  <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }}>{device.name}</div><div style={{ color: 'var(--text-tertiary)' }}>{device.deviceClass} · {device.manufacturer || 'Fabricant inconnu'} · {device.status}</div></div>
+                  <span style={{ flexShrink: 0, color: device.healthy ? '#4ade80' : '#f87171' }}>{device.healthy ? 'OK' : 'Erreur ' + device.configManagerErrorCode}</span>
+                </div>)}
+                {!deviceInfo.devices?.length && <div style={{ padding: 10, color: 'var(--text-tertiary)' }}>Inventaire détaillé non fourni par le moteur natif.</div>}
+              </div>
+              <div style={{ marginTop: 5, fontSize: 10, color: 'var(--text-tertiary)' }}>{deviceInfo.source || 'WMI'}</div>
+            </div>}
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
             <SectionTitle>Autres appareils</SectionTitle>
