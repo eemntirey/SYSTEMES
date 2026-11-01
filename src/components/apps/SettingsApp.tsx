@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { WALLPAPERS } from '../../data/constants'
+import { NativeBridge } from '../../services/NativeBridge'
 
 type SettingsSection =
   | 'home'
@@ -191,6 +192,41 @@ export const SettingsApp: React.FC = () => {
 
   const [section, setSection] = useState<SettingsSection>('home')
   const [searchQuery, setSearchQuery] = useState('')
+  const [hardwareInfo, setHardwareInfo] = useState<any>(null)
+  const [deviceInfo, setDeviceInfo] = useState<{ usb?: string[]; network?: string[] } | null>(null)
+  const [powerSchemes, setPowerSchemes] = useState<{ guid: string; name: string }[]>([])
+  const [activePowerGuid, setActivePowerGuid] = useState('')
+  const [selectedPowerGuid, setSelectedPowerGuid] = useState('')
+  const [powerMessage, setPowerMessage] = useState('')
+  const [updateMessage, setUpdateMessage] = useState('')
+
+  useEffect(() => {
+    if (section === 'about') void NativeBridge.readHardware().then(setHardwareInfo).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'bluetooth' || section === 'network') void NativeBridge.readDevices().then((value: any) => setDeviceInfo(value)).catch((error: unknown) => setUpdateMessage(error instanceof Error ? error.message : String(error)))
+    if (section === 'system') void NativeBridge.readPowerSchemes().then((value: any) => {
+      const schemes = Array.isArray(value?.schemes) ? value.schemes : []
+      setPowerSchemes(schemes)
+      setActivePowerGuid(value?.activeGuid || '')
+      setSelectedPowerGuid(value?.activeGuid || '')
+    }).catch((error: unknown) => setPowerMessage(error instanceof Error ? error.message : String(error)))
+  }, [section])
+
+  const applyPowerScheme = async () => {
+    if (!selectedPowerGuid || !window.confirm('Appliquer ce plan d’alimentation Windows ?')) return
+    try {
+      const result: any = await NativeBridge.setPowerScheme(selectedPowerGuid)
+      const snapshot: any = await NativeBridge.readPowerSchemes()
+      setActivePowerGuid(snapshot?.activeGuid || result?.activeGuid || '')
+      setPowerMessage('Plan actif : ' + (result?.activeName || 'confirmé par Windows'))
+    } catch (error) { setPowerMessage(error instanceof Error ? error.message : String(error)) }
+  }
+
+  const verifyWindowsUpdateService = async () => {
+    try {
+      const result: any = await NativeBridge.checkWindowsUpdate()
+      setUpdateMessage(result?.serviceRunning ? 'Service Windows Update actif' : 'Service Windows Update arrêté')
+    } catch (error) { setUpdateMessage(error instanceof Error ? error.message : String(error)) }
+  }
 
   const navItems: { id: SettingsSection; label: string; icon: string; desc?: string }[] = [
     { id: 'home', label: 'Accueil', icon: 'pc' },
