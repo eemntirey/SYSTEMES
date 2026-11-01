@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace Systemes.Native.Core
 {
@@ -18,11 +19,47 @@ namespace Systemes.Native.Core
             "secure system", "svchost", "fontdrvhost", "dwm"
         };
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileTime
+        {
+            public uint Low;
+            public uint High;
+            public ulong ToUInt64() => ((ulong)High << 32) | Low;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetSystemTimes(out FileTime idleTime, out FileTime kernelTime, out FileTime userTime);
+
+        private static readonly object SystemCpuLock = new();
+        private static (ulong Idle, ulong Kernel, ulong User)? PreviousSystemCpu;
+
+        private static double? ReadSystemCpuPercent()
+        {
+            if (!GetSystemTimes(out var idle, out var kernel, out var user))
+                return null;
+
+            var current = (Idle: idle.ToUInt64(), Kernel: kernel.ToUInt64(), User: user.ToUInt64());
+            lock (SystemCpuLock)
+            {
+                var previous = PreviousSystemCpu;
+                PreviousSystemCpu = current;
+                if (!previous.HasValue) return null;
+
+                var idleDelta = current.Idle - previous.Value.Idle;
+                var kernelDelta = current.Kernel - previous.Value.Kernel;
+                var userDelta = current.User - previous.Value.User;
+                var total = kernelDelta + userDelta;
+                if (total == 0 || idleDelta > total) return null;
+                return Math.Round(Math.Clamp((total - idleDelta) * 100.0 / total, 0, 100), 1);
+            }
+        }
+
         public static object ReadRealProcesses()
         {
             try
             {
                 var now = Stopwatch.GetTimestamp();
+                var systemCpuUsagePercent = ReadSystemCpuPercent();
                 var processes = Process.GetProcesses();
                 var activeIds = new System.Collections.Generic.HashSet<int>();
                 var list = new System.Collections.Generic.List<object>();
@@ -89,6 +126,7 @@ namespace Systemes.Native.Core
                     processes = list,
                     count = list.Count,
                     logicalProcessorCount = Environment.ProcessorCount,
+                    systemCpuUsagePercent,
                     sampleInterval = "Entre deux actualisations",
                     note = "Processus Windows réels. Le CPU est calculé à partir du temps processeur cumulé et de l’intervalle entre deux lectures."
                 };
