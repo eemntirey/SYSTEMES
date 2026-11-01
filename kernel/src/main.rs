@@ -29,25 +29,25 @@ fn halt() -> ! {
 #[unsafe(link_section = ".text._start")]
 pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     
-    unsafe { serial_write(b"SYSTEMES: kernel entry reached\r\n") };
+    unsafe { debug_write(b"SYSTEMES: kernel entry reached\r\n") };
 
     if info.is_null() {
-        unsafe { serial_write(b"SYSTEMES_KERNEL_FAIL: null BootInfo\r\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: null BootInfo\r\n") };
         halt();
     }
 
     // SAFETY: The UEFI loader owns this stable BootInfo allocation and passes its address.
     let boot = unsafe { &*info };
     if boot.magic != BOOT_INFO_MAGIC || boot.version != BOOT_INFO_VERSION {
-        unsafe { serial_write(b"SYSTEMES_KERNEL_FAIL: invalid BootInfo contract\r\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid BootInfo contract\r\n") };
         halt();
     }
     if boot.memory_map_address == 0 || boot.memory_map_size == 0 || boot.memory_map_descriptor_size == 0 {
-        unsafe { serial_write(b"SYSTEMES_KERNEL_FAIL: missing UEFI memory map\r\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: missing UEFI memory map\r\n") };
         halt();
     }
 
-    unsafe { serial_write(b"SYSTEMES: UEFI memory map accepted\r\n") };
+    unsafe { debug_write(b"SYSTEMES: UEFI memory map accepted\r\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
             0 => 0x00_20_C0_70u32, // GOP PixelRedGreenBlueReserved8BitPerColor
@@ -66,22 +66,22 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     unsafe { core::ptr::write_volatile(framebuffer.add(y * stride + x), pixel) };
                 }
             }
-            unsafe { serial_write(b"SYSTEMES: GOP framebuffer initialized\r\n") };
+            unsafe { debug_write(b"SYSTEMES: GOP framebuffer initialized\r\n") };
         }
     }
 
     if boot.acpi_rsdp_address != 0 {
-        unsafe { serial_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
     } else {
-        unsafe { serial_write(b"SYSTEMES: ACPI RSDP unavailable\r\n") };
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\r\n") };
     }
 
-    unsafe { serial_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
     halt();
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    unsafe { serial_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
+    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
     halt();
 }
