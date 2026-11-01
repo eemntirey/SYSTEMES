@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { OSProvider } from '../../context/OSContext';
 import { SettingsApp } from './SettingsApp';
@@ -10,6 +10,15 @@ const nativeMocks = vi.hoisted(() => ({
   openWindowsSettings: vi.fn(),
   readPowerSchemes: vi.fn(),
   setPowerScheme: vi.fn(),
+  readBluetoothStatus: vi.fn(),
+  scanBluetooth: vi.fn(),
+  pairBluetoothDevice: vi.fn(),
+  readWifiStatus: vi.fn(),
+  scanWifi: vi.fn(),
+  connectWifi: vi.fn(),
+  disconnectWifi: vi.fn(),
+  readServices: vi.fn(),
+  controlService: vi.fn(),
 }));
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -17,6 +26,13 @@ vi.mock('../../services/NativeBridge', () => ({
 }));
 
 const renderSettings = () => render(<OSProvider><SettingsApp /></OSProvider>);
+
+beforeEach(() => {
+  nativeMocks.readBluetoothStatus.mockResolvedValue({ adapterPresent: false, powered: false, devices: [] });
+  nativeMocks.readWifiStatus.mockResolvedValue({ connected: false });
+  nativeMocks.scanWifi.mockResolvedValue({ networks: [] });
+  nativeMocks.readServices.mockResolvedValue({ services: [], count: 0 });
+});
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 
