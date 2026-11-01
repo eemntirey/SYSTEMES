@@ -57,7 +57,11 @@ namespace Systemes.Native.Core
                             throw new NotSupportedException($"Unknown native method: {method}");
                     }
 
-                    Console.WriteLine(JsonConvert.SerializeObject(new { result, id }));
+                    var resultToken = JToken.FromObject(result);
+                    if (resultToken is JObject resultObject && resultObject["error"]?.Type == JTokenType.String)
+                        throw new InvalidOperationException(resultObject["error"]!.ToString());
+
+                    Console.WriteLine(JsonConvert.SerializeObject(new { result = resultToken, id }));
                     Console.Out.Flush();
                 }
                 catch (Exception ex)
