@@ -1,7 +1,8 @@
-﻿import React, { useMemo, useState } from 'react'
+﻿import React, { useEffect, useMemo, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { FileItem } from '../../types'
+import { NativeBridge } from '../../services/NativeBridge'
 
 interface FileExplorerAppProps {
   initialPath?: string
@@ -188,11 +189,17 @@ const FileCard: React.FC<{
 )
 
 export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
-  initialPath = 'C:/Users/eemntirey',
+  initialPath = '',
 }) => {
-  const { files, createFolder, createFile, deleteItem, openWindow } = useOS()
+  const { openWindow } = useOS()
 
   const [currentPath, setCurrentPath] = useState<string>(initialPath)
+  const [nativeFiles, setNativeFiles] = useState<FileItem[]>([])
+  const [nativeLocations, setNativeLocations] = useState<{ name: string; path: string; icon?: string }[]>([])
+  const [nativeError, setNativeError] = useState<string | null>(null)
+  const [isNativeLoading, setIsNativeLoading] = useState(true)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
   const [history, setHistory] = useState<string[]>([initialPath])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
@@ -204,6 +211,49 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
   const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
+
+  const refreshDirectory = async (path = currentPath) => {
+    setIsNativeLoading(true)
+    setNativeError(null)
+    try {
+      const result = await NativeBridge.listFiles(path) as {
+        path?: string
+        items?: { id: string; name: string; type: 'file' | 'folder'; path: string; sizeBytes?: number | null; modified?: string; extension?: string | null }[]
+      }
+      if (!result || !Array.isArray(result.items) || !result.path) throw new Error('Le moteur Windows a retourné un contenu de dossier invalide.')
+      setNativeFiles(result.items.map(item => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        path: item.path,
+        size: item.type === 'folder' ? 'Dossier' : (item.sizeBytes == null ? '—' : item.sizeBytes < 1024 ? item.sizeBytes + ' o' : (item.sizeBytes / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Ko'),
+        modified: item.modified || '—',
+        extension: item.extension || undefined,
+      })))
+      if (!path) {
+        setCurrentPath(initialPath || result.path)
+        setHistory([initialPath || result.path])
+        setHistoryIndex(0)
+      }
+    } catch (cause) {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+      setNativeFiles([])
+    } finally {
+      setIsNativeLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshDirectory(currentPath)
+  }, [currentPath])
+
+  useEffect(() => {
+    void NativeBridge.getFileLocations().then((result: any) => {
+      if (Array.isArray(result?.locations)) setNativeLocations(result.locations)
+    }).catch((cause: unknown) => {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+    })
+  }, [])
 
   const navigateTo = (path: string) => {
     const formatted = path.replace(/\/+/g, '/')
@@ -242,7 +292,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   }
 
   const currentItems = useMemo(() => {
-    const visible = files.filter((f) => {
+    const visible = nativeFiles.filter((f) => {
       const parts = f.path.split('/')
       parts.pop()
       const parent = parts.join('/')
@@ -264,18 +314,18 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
       if (sortBy === 'modified') return b.modified.localeCompare(a.modified) || a.name.localeCompare(b.name)
       return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
     })
-  }, [files, currentPath, searchQuery, sortBy])
+  }, [nativeFiles, currentPath, searchQuery, sortBy])
 
   const selectedItem = useMemo(
-    () => files.find((f) => f.id === selectedItemId) || null,
-    [files, selectedItemId],
+    () => nativeFiles.find((f) => f.id === selectedItemId) || null,
+    [nativeFiles, selectedItemId],
   )
 
   const handleItemDoubleClick = (item: FileItem) => {
     if (item.type === 'folder') {
       navigateTo(item.path)
     } else {
-      openWindow('notepad', { fileId: item.id, filePath: item.path, fileContent: item.content || '' }, `${item.name} - Bloc-notes`)
+      void NativeBridge.readTextFile(item.path).then((result: any) => openWindow('notepad', { fileId: item.id, filePath: item.path, fileContent: result?.content || '' }, `${item.name} - Bloc-notes`)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
     }
   }
 
@@ -286,21 +336,39 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
   const handleCreateFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (newFolderName.trim()) {
-      createFolder(currentPath, newFolderName.trim())
+    const name = newFolderName.trim()
+    if (!name) return
+    void NativeBridge.createDirectory(currentPath + '/' + name).then(() => {
       setNewFolderName('')
       setIsCreatingFolder(false)
-    }
+      return refreshDirectory()
+    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
   }
 
   const handleCreateFileSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (newFileName.trim()) {
-      createFile(currentPath, newFileName.trim(), '')
+    const name = newFileName.trim()
+    if (!name) return
+    void NativeBridge.createFile(currentPath + '/' + name, '').then(() => {
       setNewFileName('')
       setIsCreatingFile(false)
+      return refreshDirectory()
+    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
+  }
+
+  const handleRename = async () => {
+    if (!selectedItem || !renameValue.trim()) return
+    try {
+      await NativeBridge.renameFile(selectedItem.path, renameValue.trim())
+      setIsRenaming(false)
+      setRenameValue('')
+      setSelectedItemId(null)
+      await refreshDirectory()
+    } catch (cause) {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
     }
   }
+
 
   return (
     <div
@@ -412,7 +480,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                 <span>Favoris</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', padding: '2px 6px' }}>
-                {quickAccessItems.map((item) => (
+                {(nativeLocations.length ? nativeLocations : quickAccessItems).map((item) => (
                   <div
                     key={item.path}
                     onClick={() => navigateTo(item.path)}
@@ -478,6 +546,8 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column' }}>
+          {nativeError && <div role="alert" style={{ padding: 10, marginBottom: 12, borderRadius: 8, background: 'rgba(185,28,28,.18)', color: '#fecaca', fontSize: 12 }}>{nativeError}</div>}
+          {isNativeLoading && <div role="status" style={{ padding: 8, color: 'var(--text-tertiary)', fontSize: 11 }}>Lecture du dossier Windows…</div>}
           {isCreatingFolder && (
             <form onSubmit={handleCreateFolderSubmit} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: 'var(--radius-sm)', background: 'rgba(139, 92, 246, 0.2)', border: 'none' }}>
               <FluentIcon name="folder" size={26} />
@@ -508,7 +578,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             ))}
           </div>
 
-          {currentItems.length === 0 && !isCreatingFolder && !isCreatingFile && (
+          {currentItems.length === 0 && !isNativeLoading && !isCreatingFolder && !isCreatingFile && (
             <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '12.5px' }}>
               Aucun élément ne correspond à votre recherche.
             </div>
@@ -568,7 +638,9 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                     {selectedItem.type === 'file' && (
                       <button onClick={() => handleItemDoubleClick(selectedItem)} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--win-accent)', color: '#fff', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Ouvrir dans le Bloc-notes</button>
                     )}
-                    <button onClick={() => deleteItem(selectedItem.id)} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Supprimer cet élément</button>
+                    <button onClick={() => { setRenameValue(selectedItem.name); setIsRenaming(true) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Renommer</button>
+                    {isRenaming && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><input aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} /><button type="button" onClick={() => void handleRename()}>Valider</button></div>}
+                    <button onClick={() => { void NativeBridge.deleteFile(selectedItem.path).then(() => { setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Supprimer cet élément</button>
                   </div>
                 </>
               ) : (
