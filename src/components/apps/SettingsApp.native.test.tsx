@@ -93,7 +93,7 @@ describe('Settings native integrations', () => {
 
     expect(await screen.findByText('Service Windows Update actif')).toBeDefined();
     expect(nativeMocks.openWindowsSettings).toHaveBeenCalledWith('windows-update');
-    expect(screen.getByText(/La recherche du catalogue de mises à jour/)).toBeDefined();
+    expect(screen.getByText(/Le catalogue WUA n’est pas encore interrogé/)).toBeDefined();
     expect(nativeMocks.checkWindowsUpdate).toHaveBeenCalledTimes(1);
   });
   it('opens real Windows privacy controls instead of changing a local mock toggle', async () => {
