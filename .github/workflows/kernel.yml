@@ -55,10 +55,12 @@ jobs:
           test -s build/uefi/KERNEL.BIN
       - name: Build GNU-EFI loader
         run: |
-          gcc -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
+          gcc -g -O0 -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
           ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
           objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
           test -s build/uefi/BOOTX64.EFI
+          nm -n build/uefi/loader.so > build/uefi/loader-symbols.txt
+          addr2line -e build/uefi/loader.so 0x1158 > build/uefi/loader-fault-address.txt
       - name: Create UEFI bootable ISO
         run: |
           truncate -s 16M build/uefi/esp.img
@@ -82,7 +84,7 @@ jobs:
           cp "$variables" build/uefi/OVMF_VARS.fd
           file "$firmware" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 20s qemu-system-x86_64 -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -display none -no-reboot -no-shutdown
+          timeout 20s qemu-system-x86_64 -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
@@ -101,4 +103,8 @@ jobs:
           path: |
             build/uefi/systemes-k1.iso
             build/uefi/serial.log
+            build/uefi/qemu.log
+            build/uefi/loader.so
+            build/uefi/loader-symbols.txt
+            build/uefi/loader-fault-address.txt
           if-no-files-found: warn
