@@ -395,6 +395,15 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Système</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Écran, son, notifications, alimentation</p>
 
+            <SectionTitle>Plan d’alimentation Windows</SectionTitle>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+              <select aria-label="Plan d’alimentation Windows" value={selectedPowerGuid} onChange={event => setSelectedPowerGuid(event.target.value)} style={{ minWidth: 220, padding: 9, background: 'var(--flyout-card)', color: 'var(--text-primary)', border: '1px solid var(--window-border)', borderRadius: 8 }}>
+                {powerSchemes.map(item => <option key={item.guid} value={item.guid}>{item.name}</option>)}
+              </select>
+              <button type="button" aria-label="Appliquer le plan à Windows" onClick={() => void applyPowerScheme()} disabled={!selectedPowerGuid || selectedPowerGuid === activePowerGuid} style={{ padding: '9px 12px', borderRadius: 8, border: 0, background: 'var(--win-accent)', color: '#fff' }}>Appliquer le plan à Windows</button>
+            </div>
+            {powerMessage && <div role="status" style={{ fontSize: 12, marginBottom: 12 }}>{powerMessage}</div>}
+
             <SectionTitle>Affichage</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.3), transparent)', borderRadius: '2px', marginBottom: '14px' }}></div>
             <SettingRow icon="sun" title="Luminosité" desc={`${brightness}% — Ajustez la luminosité intégrée`}>
@@ -445,6 +454,9 @@ export const SettingsApp: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Gérez vos appareils connectés</p>
 
             <SettingRow icon="sliders" title="Bluetooth" desc={bluetoothEnabled ? 'Activé — visible par d\'autres appareils' : 'Désactivé'} toggle={bluetoothEnabled} onToggle={toggleBluetooth} />
+            <SectionTitle>Périphériques détectés par Windows</SectionTitle>
+            {(deviceInfo?.usb || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
+            {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
             {bluetoothEnabled && (
@@ -498,6 +510,8 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SettingRow icon="wifi" title="Wi-Fi" desc={wifiEnabled ? 'Réseau_Maison_5G — Connecté' : 'Désactivé'} toggle={wifiEnabled} onToggle={toggleWifi} />
+            <SectionTitle>Adaptateurs réseau détectés par Windows</SectionTitle>
+            {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
 
             {wifiEnabled && (
               <>
@@ -777,7 +791,7 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="sliders" title="Historique des activités" desc="Microsoft collecte les activités de cet appareil" toggle={activityHistory} onToggle={toggleActivityHistory} />
 
             <SectionTitle>Autorisations des applications</SectionTitle>
-            <SettingRow icon="sliders" title="Position" desc="Accès à la localisation activée pour les applications" toggle={locationEnabled} onToggle={() => setLocationEnabled(!locationEnabled)} />
+            <SettingRow icon="sliders" title="Position" desc="Ouvrir les paramètres de confidentialité de localisation de Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-location') }} />
             <SettingRow icon="sliders" title="Caméra" desc="Certaines applications peuvent accéder à la caméra" toggle={cameraEnabled} onToggle={() => setCameraEnabled(!cameraEnabled)} />
             <SettingRow icon="volume" title="Microphone" desc="Certaines applications peuvent accéder au microphone" toggle={micEnabled} onToggle={() => setMicEnabled(!micEnabled)} />
             <SettingRow icon="bell" title="Notifications" desc="Envoyer des notifications depuis les applications" toggle={notificationsEnabled} onToggle={toggleNotifications} />
@@ -793,6 +807,11 @@ export const SettingsApp: React.FC = () => {
             <h1 style={{ fontSize: '30px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #fff, var(--win-accent-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Windows Update</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Maintenir Windows à jour</p>
 
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => void verifyWindowsUpdateService()} style={{ padding: '9px 12px', borderRadius: 8 }}>Vérifier le service</button>
+              <button type="button" onClick={() => void NativeBridge.openWindowsSettings('windows-update')} style={{ padding: '9px 12px', borderRadius: 8 }}>Ouvrir Windows Update</button>
+            </div>
+            {updateMessage && <div role="status" style={{ padding: 8, marginBottom: 12, fontSize: 12 }}>{updateMessage}. La recherche du catalogue de mises à jour n’est pas effectuée par ce contrôle.</div>}
             {/* Status banner */}
             <div style={{ padding: '20px 24px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,212,255,0.08))', border: '1px solid rgba(16,185,129,0.4)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
               <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -839,6 +858,12 @@ export const SettingsApp: React.FC = () => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '26px', marginTop: '4px' }}>Spécifications de l'appareil et de Windows 11</p>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '16px' }}></div>
 
+            {hardwareInfo && <div role="status" style={{ padding: 14, borderRadius: 10, background: 'var(--flyout-card)', marginBottom: 16, fontSize: 13 }}>
+              <div><strong>{hardwareInfo.cpuName || 'Processeur non détecté'}</strong></div>
+              <div>{hardwareInfo.gpuName || 'GPU non détecté'}</div>
+              <div>{Number.isFinite(hardwareInfo.ramTotalGB) ? Math.round(hardwareInfo.ramTotalGB) + ' Go' : 'RAM non détectée'}</div>
+              {(hardwareInfo.disks || []).map((disk: any) => <div key={disk.name}>{disk.name} · {disk.format}</div>)}
+            </div>}
             {/* Device banner */}
             <div style={{ padding: '24px', borderRadius: '14px', background: 'linear-gradient(135deg, rgba(0,120,212,0.12), rgba(139,92,246,0.12))', border: '1px solid rgba(0,120,212,0.35)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
               <FluentIcon name="pc" size={52} />
