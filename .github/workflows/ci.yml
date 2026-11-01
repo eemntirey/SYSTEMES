@@ -165,6 +165,7 @@ jobs:
               if ($null -ne $process.cpuUsagePercent -and ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100)) { throw "Process CPU sample is outside the normalized 0-100 range." }
             }
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
+            if ($null -eq $responses["phase2-devices"].result.devices -or $null -eq $responses["phase2-devices"].result.count -or $null -eq $responses["phase2-devices"].result.problemCount -or -not $responses["phase2-devices"].result.source) { throw "devices/read returned no Plug and Play health inventory." }
             if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
             if (-not $responses["phase2-protected-service-stop"].error) { throw "services/control allowed stopping a protected Windows RPC service." }
             if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
