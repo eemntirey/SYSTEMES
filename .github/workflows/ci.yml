@@ -59,3 +59,23 @@ jobs:
         run: npm run build
       - name: Build WPF + WebView2 host and native engine
         run: dotnet build native/windows-host/SYSTEMES.WindowsHost.csproj --configuration Release
+      - name: Smoke test native engine JSON handshake
+        shell: pwsh
+        run: |
+          $engine = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/native-engine/SystemesNative.exe"
+          if (-not (Test-Path $engine)) {
+            throw "Native engine executable missing: $engine"
+          }
+
+          $request = '{"id":"ci-smoke","method":"system/ping","params":{}}'
+          $responseLines = $request | & $engine
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native engine exited with code $LASTEXITCODE"
+          }
+
+          $response = ($responseLines -join "`n") | ConvertFrom-Json
+          if ($response.id -ne "ci-smoke" -or $response.result.status -ne "ready") {
+            throw "Unexpected native engine handshake response: $($responseLines -join ' ')"
+          }
+
+          Write-Host "Native engine process started and answered the JSON handshake."
