@@ -149,10 +149,8 @@ export const SettingsApp: React.FC = () => {
     theme, setTheme,
     wallpaper, setWallpaper,
     accentColor, setAccentColor,
-    wifiEnabled,
     fontSize, setFontSize,
     taskbarAlignment, setTaskbarAlignment,
-    addNotification,
   } = useOS()
 
   const [section, setSection] = useState<SettingsSection>('home')
@@ -390,9 +388,9 @@ export const SettingsApp: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '28px' }}>
               {[
                 { icon: 'moon', title: 'Mode Sombre activé', desc: 'Personnalisation › Couleurs', action: () => setSection('personalization') },
-                { icon: 'wifi', title: wifiEnabled ? 'Wi-Fi connecté' : 'Wi-Fi désactivé', desc: 'Réseau et Internet', action: () => setSection('network') },
-                { icon: 'refresh', title: 'Windows à jour', desc: 'Dernière vérif : aujourd\'hui', action: () => setSection('update') },
-                { icon: 'battery-charging', title: 'Batterie 94%', desc: 'Alimentation et veille', action: () => setSection('system') },
+                { icon: 'wifi', title: 'Réseau et Internet', desc: 'État et connexions Windows', action: () => setSection('network') },
+                { icon: 'refresh', title: 'Windows Update', desc: 'Vérifier le service et les options', action: () => setSection('update') },
+                { icon: 'battery-charging', title: 'Alimentation', desc: 'Plans et paramètres système', action: () => setSection('system') },
               ].map(card => (
                 <div key={card.title} onClick={card.action} style={{
                   padding: '20px 22px', borderRadius: '18px',
@@ -527,10 +525,10 @@ export const SettingsApp: React.FC = () => {
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
 
             <SectionTitle>Autres appareils</SectionTitle>
-            <SettingRow icon="sliders" title="Imprimantes et scanners" desc="HP LaserJet Pro — Prête" onClick={() => addNotification('Appareils', 'Imprimantes et scanners', 'Paramètres', 'sliders')} />
-            <SettingRow icon="pc" title="Appareils USB" desc="2 appareils USB connectés" onClick={() => addNotification('Appareils', 'Appareils USB', 'Paramètres', 'pc')} />
-            <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Personnaliser le comportement du stylo" onClick={() => addNotification('Appareils', 'Stylo et saisie tactile', 'Paramètres', 'pc')} />
-            <SettingRow icon="pc" title="Bluetooth mobile" desc="Partager des fichiers via Bluetooth avec des appareils à proximité" onClick={() => addNotification('Appareils', 'Bluetooth mobile', 'Paramètres', 'pc')} />
+            <SettingRow icon="sliders" title="Imprimantes et scanners" desc="Ouvrir les périphériques installés dans Windows" onClick={() => { void openWindowsPage('printers') }} />
+            <SettingRow icon="pc" title="Appareils USB" desc="Gérer les périphériques matériels Windows" onClick={() => { void openWindowsPage('device-manager') }} />
+            <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Ouvrir les paramètres de saisie Windows" onClick={() => { void openWindowsPage('pen-touch') }} />
+            <SettingRow icon="pc" title="Bluetooth mobile" desc="Ouvrir les paramètres des appareils mobiles Windows" onClick={() => { void openWindowsPage('mobile-devices') }} />
           </div>
         )}
 
@@ -563,12 +561,12 @@ export const SettingsApp: React.FC = () => {
             {(deviceInfo?.network || []).map(name => <div key={name} style={{ padding: 8, marginBottom: 5, background: 'var(--flyout-card)', borderRadius: 7, fontSize: 12 }}>{name}</div>)}
 
                         <SectionTitle>Paramètres avancés</SectionTitle>
-            <SettingRow icon="sliders" title="Ethernet" desc="Non connecté" onClick={() => addNotification('Réseau', 'Ethernet', 'Paramètres', 'sliders')} />
-            <SettingRow icon="lock" title="VPN" desc="Aucun VPN configuré" onClick={() => addNotification('Réseau', 'VPN', 'Paramètres', 'lock')} />
+            <SettingRow icon="sliders" title="Ethernet" desc="Ouvrir la configuration Ethernet Windows" onClick={() => { void openWindowsPage('network-ethernet') }} />
+            <SettingRow icon="lock" title="VPN" desc="Gérer les connexions VPN Windows" onClick={() => { void openWindowsPage('network-vpn') }} />
             <SettingRow icon="sliders" title="Mode avion" desc="Gérer le mode avion dans Windows" onClick={() => { void openWindowsPage('airplane-mode') }} />
             <SettingRow icon="sliders" title="Point d'accès mobile" desc="Gérer le partage de connexion Windows" onClick={() => { void openWindowsPage('mobile-hotspot') }} />
-            <SettingRow icon="sliders" title="Utilisation des données" desc="6,3 Go utilisés ce mois-ci" onClick={() => addNotification('Réseau', 'Utilisation des données', 'Paramètres', 'sliders')} badge="6,3 Go" />
-            <SettingRow icon="sliders" title="Paramètres proxy" desc="Aucun proxy configuré" onClick={() => addNotification('Réseau', 'Proxy', 'Paramètres', 'sliders')} />
+            <SettingRow icon="sliders" title="Utilisation des données" desc="Consulter l’utilisation mesurée par Windows" onClick={() => { void openWindowsPage('data-usage') }} />
+            <SettingRow icon="sliders" title="Paramètres proxy" desc="Gérer le proxy système Windows" onClick={() => { void openWindowsPage('proxy') }} />
           </div>
         )}
 
@@ -632,8 +630,8 @@ export const SettingsApp: React.FC = () => {
                 ))}
               </div>
             </div>
-            <SettingRow icon="square" title="Éléments masqués du coin système" desc="Gérez les icônes dans l'angle de la barre des tâches" onClick={() => addNotification('Barre des tâches', 'La gestion individuelle des icônes du coin système n’est pas encore disponible.', 'Paramètres', 'info')} />
-            <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Afficher le badge, la sélection de fenêtres, le bouton afficher le bureau" onClick={() => addNotification('Barre des tâches', 'Les options avancées de comportement ne sont pas encore disponibles.', 'Paramètres', 'info')} />
+            <SettingRow icon="square" title="Éléments masqués du coin système" desc="Ouvrir les paramètres de la barre des tâches Windows" onClick={() => { void openWindowsPage('taskbar') }} />
+            <SettingRow icon="square" title="Comportement de la barre des tâches" desc="Gérer le comportement natif de la barre des tâches" onClick={() => { void openWindowsPage('taskbar') }} />
 
             <SectionTitle>Écran de verrouillage</SectionTitle>
             <SettingRow icon="lock" title="Arrière-plan de l'écran de verrouillage" desc="Gérer l’arrière-plan dans Windows" onClick={() => { void openWindowsPage('lock-screen') }} />
@@ -672,8 +670,8 @@ export const SettingsApp: React.FC = () => {
             ))}
 
             <SectionTitle>Fonctionnalités optionnelles</SectionTitle>
-            <SettingRow icon="plus" title="Ajouter une fonctionnalité optionnelle" desc="Internet Explorer, OpenSSH, Media Player hérité..." onClick={() => addNotification('Apps', 'Fonctionnalités optionnelles', 'Paramètres', 'plus')} />
-            <SettingRow icon="square" title="Applications par défaut" desc="Choisissez les applications par défaut pour le courrier, la musique, les photos..." onClick={() => addNotification('Apps', 'Applications par défaut', 'Paramètres', 'square')} />
+            <SettingRow icon="plus" title="Ajouter une fonctionnalité optionnelle" desc="Ouvrir les fonctionnalités facultatives Windows" onClick={() => { void openWindowsPage('optional-features') }} />
+            <SettingRow icon="square" title="Applications par défaut" desc="Gérer les associations d’applications Windows" onClick={() => { void openWindowsPage('default-apps') }} />
           </div>
         )}
 
@@ -694,12 +692,12 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SectionTitle>Paramètres du compte</SectionTitle>
-            <SettingRow icon="lock" title="Options de connexion" desc="Windows Hello, code PIN, clé de sécurité, mot de passe" onClick={() => addNotification('Comptes', 'Options de connexion', 'Paramètres', 'lock')} />
+            <SettingRow icon="lock" title="Options de connexion" desc="Gérer Windows Hello et les méthodes de connexion" onClick={() => { void openWindowsPage('sign-in-options') }} />
             <SettingRow icon="sliders" title="Synchronisation de vos paramètres" desc="Gérer la synchronisation du compte Windows" onClick={() => { void openWindowsPage('accounts-sync') }} />
-            <SettingRow icon="pc" title="Accès professionnel ou scolaire" desc="Se connecter à l'organisation, MDM ou Azure AD" onClick={() => addNotification('Comptes', 'Accès professionnel ou scolaire', 'Paramètres', 'pc')} />
+            <SettingRow icon="pc" title="Accès professionnel ou scolaire" desc="Gérer les comptes professionnels ou scolaires Windows" onClick={() => { void openWindowsPage('work-access') }} />
 
             <SectionTitle>Autres utilisateurs</SectionTitle>
-            <SettingRow icon="plus" title="Ajouter un autre utilisateur" desc="Créer un compte local ou ajouter un compte Microsoft" onClick={() => addNotification('Comptes', 'Ajouter un utilisateur', 'Paramètres', 'plus')} />
+            <SettingRow icon="plus" title="Ajouter un autre utilisateur" desc="Ouvrir la gestion des autres comptes Windows" onClick={() => { void openWindowsPage('other-users') }} />
           </div>
         )}
 
@@ -722,7 +720,7 @@ export const SettingsApp: React.FC = () => {
             <SectionTitle>Date et heure</SectionTitle>
             <SettingRow icon="clock" title="Définir l'heure automatiquement" desc="Gérer l’heure système dans Windows" onClick={() => { void openWindowsPage('date-time') }} />
             <SettingRow icon="clock" title="Définir le fuseau horaire automatiquement" desc="Gérer le fuseau horaire système dans Windows" onClick={() => { void openWindowsPage('date-time') }} />
-            <SettingRow icon="clock" title="Afficher les heures supplémentaires dans la barre des tâches" desc="Ajouter des horloges pour d'autres fuseaux horaires" onClick={() => addNotification('Heure', 'Horloges supplémentaires', 'Paramètres', 'clock')} />
+            <SettingRow icon="clock" title="Afficher les heures supplémentaires dans la barre des tâches" desc="Gérer la date et l’heure dans Windows" onClick={() => { void openWindowsPage('date-time') }} />
 
             <SectionTitle>Région</SectionTitle>
             <div style={{ padding: '14px 18px', borderRadius: '10px', backgroundColor: 'var(--flyout-card)', border: '1px solid var(--window-border)', marginBottom: '8px' }}>
@@ -743,7 +741,7 @@ export const SettingsApp: React.FC = () => {
               </div>
               <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--win-accent-light)', color: 'var(--win-accent)' }}>Défaut</span>
             </div>
-            <SettingRow icon="plus" title="Ajouter une langue" desc="Installer des packs de langue supplémentaires" onClick={() => addNotification('Heure', 'Ajouter une langue', 'Paramètres', 'plus')} />
+            <SettingRow icon="plus" title="Ajouter une langue" desc="Installer des langues dans les paramètres Windows" onClick={() => { void openWindowsPage('language') }} />
           </div>
         )}
 
@@ -756,13 +754,13 @@ export const SettingsApp: React.FC = () => {
             <SectionTitle>Xbox Game Bar</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
             <SettingRow icon="terminal" title="Xbox Game Bar" desc="Gérer Xbox Game Bar dans Windows" onClick={() => { void openWindowsPage('gaming') }} />
-            <SettingRow icon="terminal" title="Raccourci clavier Game Bar" desc="Win + G pour ouvrir la Game Bar" onClick={() => addNotification('Jeux', 'Raccourci Game Bar (Win + G)', 'Paramètres', 'terminal')} badge="Win+G" />
+            <SettingRow icon="terminal" title="Raccourci clavier Game Bar" desc="Gérer les options Xbox Game Bar Windows" onClick={() => { void openWindowsPage('gaming') }} />
 
             <SectionTitle>Captures</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
             <SettingRow icon="square" title="Enregistrement audio lors des captures" desc="Gérer les options de capture dans Windows" onClick={() => { void openWindowsPage('gaming') }} />
-            <SettingRow icon="sliders" title="Qualité vidéo" desc="30 fps, qualité standard" onClick={() => addNotification('Jeux', 'Qualité vidéo', 'Paramètres', 'sliders')} badge="30 fps" />
-            <SettingRow icon="sliders" title="Dossier des captures" desc="C:/Utilisateurs/eemntirey/Vidéos/Captures" onClick={() => addNotification('Jeux', 'Dossier des captures', 'Paramètres', 'sliders')} />
+            <SettingRow icon="sliders" title="Qualité vidéo" desc="Consulter les options graphiques Windows" onClick={() => { void openWindowsPage('graphics') }} />
+            <SettingRow icon="sliders" title="Dossier des captures" desc="Ouvrir les paramètres de capture Windows" onClick={() => { void openWindowsPage('gaming') }} />
 
             <SectionTitle>Mode jeu</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
@@ -780,9 +778,9 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Vision</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="maximize" title="Taille du texte" desc="Agrandir le texte sans modifier d'autres éléments" onClick={() => addNotification('Accessibilité', 'Taille du texte', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Effets visuels" desc="Animations, transparences, fond d'écran animé" onClick={() => addNotification('Accessibilité', 'Effets visuels', 'Paramètres', 'maximize')} />
-            <SettingRow icon="maximize" title="Pointeur de la souris et interaction tactile" desc="Modifier l'apparence du curseur" onClick={() => addNotification('Accessibilité', 'Pointeur et tactile', 'Paramètres', 'maximize')} />
+            <SettingRow icon="maximize" title="Taille du texte" desc="Gérer la taille du texte et l’affichage Windows" onClick={() => { void openWindowsPage('accessibility-display') }} />
+            <SettingRow icon="maximize" title="Effets visuels" desc="Consulter les paramètres d’accessibilité et d’affichage Windows" onClick={() => { void openWindowsPage('accessibility-display') }} />
+            <SettingRow icon="maximize" title="Pointeur de la souris et interaction tactile" desc="Gérer le pointeur et les interactions dans Windows" onClick={() => { void openWindowsPage('accessibility-mouse') }} />
             <SettingRow icon="maximize" title="Loupe" desc="Gérer la loupe dans Windows" onClick={() => { void openWindowsPage('accessibility-magnifier') }} />
             <SettingRow icon="maximize" title="Filtre de couleur" desc="Gérer les filtres de couleur dans Windows" onClick={() => { void openWindowsPage('accessibility-color-filters') }} />
             <SettingRow icon="maximize" title="Contraste élevé" desc="Gérer le contraste dans Windows" onClick={() => { void openWindowsPage('accessibility-display') }} />
@@ -794,8 +792,8 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Interaction</SectionTitle>
             <div style={{ height: '2px', background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)', borderRadius: '2px', marginBottom: '14px', marginTop: '4px' }}></div>
-            <SettingRow icon="square" title="Clavier" desc="Clavier visuel, touches rémanentes, filtres de touches" onClick={() => addNotification('Accessibilité', 'Clavier', 'Paramètres', 'square')} />
-            <SettingRow icon="sliders" title="Souris" desc="Touches souris, vitesse du pointeur" onClick={() => addNotification('Accessibilité', 'Souris', 'Paramètres', 'sliders')} />
+            <SettingRow icon="square" title="Clavier" desc="Gérer le clavier et les options d’accessibilité Windows" onClick={() => { void openWindowsPage('accessibility-keyboard') }} />
+            <SettingRow icon="sliders" title="Souris" desc="Gérer la souris dans les paramètres Windows" onClick={() => { void openWindowsPage('accessibility-mouse') }} />
             <SettingRow icon="sliders" title="Commande vocale" desc="Gérer la commande vocale dans Windows" onClick={() => { void openWindowsPage('accessibility-speech') }} />
           </div>
         )}
@@ -831,9 +829,9 @@ export const SettingsApp: React.FC = () => {
             <SettingRow icon="sliders" title="Caméra" desc="Gérer l’accès à la caméra dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-camera') }} />
             <SettingRow icon="volume" title="Microphone" desc="Gérer l’accès au microphone dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-microphone') }} />
             <SettingRow icon="bell" title="Notifications" desc="Gérer les autorisations dans Windows" onClick={() => { void NativeBridge.openWindowsSettings('privacy-notifications') }} />
-            <SettingRow icon="sliders" title="Informations du compte" desc="Nom, image et autres informations du compte" onClick={() => addNotification('Confidentialité', 'Informations du compte', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Contacts" desc="Accès aux contacts depuis les applications" onClick={() => addNotification('Confidentialité', 'Contacts', 'Paramètres', 'sliders')} />
-            <SettingRow icon="clock" title="Historique des appels" desc="Accès à l'historique des appels depuis les applications" onClick={() => addNotification('Confidentialité', 'Historique des appels', 'Paramètres', 'clock')} />
+            <SettingRow icon="sliders" title="Informations du compte" desc="Gérer les autorisations du compte dans Windows" onClick={() => { void openWindowsPage('privacy') }} />
+            <SettingRow icon="sliders" title="Contacts" desc="Consulter les autorisations de confidentialité Windows" onClick={() => { void openWindowsPage('privacy') }} />
+            <SettingRow icon="clock" title="Historique des appels" desc="Consulter les autorisations de confidentialité Windows" onClick={() => { void openWindowsPage('privacy') }} />
           </div>
         )}
 
@@ -857,9 +855,9 @@ export const SettingsApp: React.FC = () => {
 
             <SectionTitle>Options avancées</SectionTitle>
             <SettingRow icon="clock" title="Mises à jour actives" desc="Gérer les mises à jour directement dans Windows" onClick={() => { void openWindowsPage('windows-update') }} />
-            <SettingRow icon="sliders" title="Heures actives" desc="Prévenir les redémarrages entre 08:00 et 23:00" onClick={() => addNotification('Mise à jour', 'Heures actives', 'Paramètres', 'sliders')} badge="08:00 – 23:00" />
-            <SettingRow icon="sliders" title="Mises à jour optionnelles" desc="Pilotes et mises à jour non critiques" onClick={() => addNotification('Mise à jour', 'Mises à jour optionnelles', 'Paramètres', 'sliders')} />
-            <SettingRow icon="sliders" title="Windows Insider Program" desc="Accéder aux versions préliminaires de Windows" onClick={() => addNotification('Mise à jour', 'Windows Insider Program', 'Paramètres', 'sliders')} />
+            <SettingRow icon="sliders" title="Heures actives" desc="Gérer les heures actives Windows" onClick={() => { void openWindowsPage('windows-update-hours') }} />
+            <SettingRow icon="sliders" title="Mises à jour optionnelles" desc="Consulter les mises à jour facultatives Windows" onClick={() => { void openWindowsPage('windows-update-optional') }} />
+            <SettingRow icon="sliders" title="Windows Insider Program" desc="Ouvrir les paramètres Windows Insider" onClick={() => { void openWindowsPage('windows-insider') }} />
           </div>
         )}
 
