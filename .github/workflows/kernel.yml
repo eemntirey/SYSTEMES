@@ -49,7 +49,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C code-model=kernel -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C code-model=small -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -57,7 +57,7 @@ jobs:
         run: |
           gcc -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
           ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
-          objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc --target=efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
+          objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
           test -s build/uefi/BOOTX64.EFI
       - name: Create UEFI bootable ISO
         run: |
