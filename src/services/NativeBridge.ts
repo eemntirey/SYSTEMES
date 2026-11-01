@@ -1,5 +1,5 @@
-// SYSTEMES Native Bridge — WebView2 host transport.
-// No browser fallback is allowed to fabricate operating-system results.
+// Typed native operations built on the single WebView2 transport.
+import { nativeBridge as webViewBridge } from '../native/NativeBridge';
 
 type NativeReply<T = unknown> = {
   id?: string;
@@ -7,56 +7,8 @@ type NativeReply<T = unknown> = {
   error?: string;
 };
 
-type WebViewBridge = {
-  postMessage: (message: unknown) => void;
-  addEventListener: (type: 'message', listener: (event: MessageEvent<NativeReply>) => void) => void;
-  removeEventListener: (type: 'message', listener: (event: MessageEvent<NativeReply>) => void) => void;
-};
-
-declare global {
-  interface Window {
-    chrome?: { webview?: WebViewBridge };
-  }
-}
-
-const getTransport = (): WebViewBridge | null => {
-  if (typeof window === 'undefined') return null;
-  return window.chrome?.webview ?? null;
-};
-
-const request = <T>(method: string, params: Record<string, unknown> = {}): Promise<NativeReply<T>> => {
-  const transport = getTransport();
-  if (!transport) {
-    return Promise.reject(new Error('SYSTEMES Native Host indisponible : ouvrez l’application Windows SYSTEMES.'));
-  }
-
-  const id = globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
-      reject(new Error(`Délai dépassé pour la requête native « ${method} » (15 s).`));
-    }, 15_000);
-
-    const onMessage = (event: MessageEvent<NativeReply<T>>) => {
-      const response = event.data;
-      if (!response || response.id !== id) return;
-      clearTimeout(timeout);
-      transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
-      if (response.error) reject(new Error(response.error));
-      else resolve(response);
-    };
-
-    transport.addEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
-    try {
-      transport.postMessage({ id, method, params });
-    } catch (error) {
-      clearTimeout(timeout);
-      transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
-};
+const request = <T>(method: string, params: Record<string, unknown> = {}): Promise<NativeReply<T>> =>
+  webViewBridge.send(method, params) as Promise<NativeReply<T>>;
 
 export const NativeBridge = {
   async readHardware() {
