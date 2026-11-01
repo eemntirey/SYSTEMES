@@ -25,8 +25,25 @@ typedef struct {
     UINT32 framebuffer_pixel_format;
 } SYSTEMES_BOOT_INFO;
 
+static EFI_GUID LoadedImageGuid = {0x5b1b31a1, 0x9562, 0x11d2, {0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static EFI_GUID SimpleFileSystemGuid = {0x964e5b22, 0x6459, 0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+static EFI_GUID GraphicsOutputGuid = {0x9042a9de, 0x23dc, 0x4a38, {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
 static EFI_GUID Acpi20Guid = {0x8868e871, 0xe4f1, 0x11d3, {0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
 static EFI_GUID Acpi10Guid = {0xeb9d2d30, 0x2d88, 0x11d3, {0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
+
+static BOOLEAN guid_equal(const EFI_GUID *left, const EFI_GUID *right) {
+    UINTN index;
+    if (left->Data1 != right->Data1 || left->Data2 != right->Data2 || left->Data3 != right->Data3) return FALSE;
+    for (index = 0; index < 8; ++index) if (left->Data4[index] != right->Data4[index]) return FALSE;
+    return TRUE;
+}
+
+static VOID copy_bytes(VOID *destination, const VOID *source, UINTN length) {
+    UINT8 *out = (UINT8 *)destination;
+    const UINT8 *in = (const UINT8 *)source;
+    UINTN index;
+    for (index = 0; index < length; ++index) out[index] = in[index];
+}
 
 static VOID debug_out(UINT8 value) {
     __asm__ __volatile__("outb %0, $0xE9" : : "a"(value));
@@ -54,11 +71,11 @@ static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_SYSTEM_TABLE *st, VOID **buf
     EFI_FILE_HANDLE root = NULL;
     EFI_FILE_HANDLE file = NULL;
 
-    status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, image, &LoadedImageProtocol, (VOID **)&loaded);
+    status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, image, &LoadedImageGuid, (VOID **)&loaded);
     if (EFI_ERROR(status)) { debug_text("SYSTEMES_UEFI_FAIL_LOADED_IMAGE\r\n"); return status; }
     debug_text("SYSTEMES_UEFI_LOADED_IMAGE_OK\r\n");
 
-    status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, loaded->DeviceHandle, &FileSystemProtocol, (VOID **)&filesystem);
+    status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, loaded->DeviceHandle, &SimpleFileSystemGuid, (VOID **)&filesystem);
     if (EFI_ERROR(status)) { debug_text("SYSTEMES_UEFI_FAIL_FILESYSTEM\r\n"); return status; }
     debug_text("SYSTEMES_UEFI_FILESYSTEM_OK\r\n");
 
@@ -93,7 +110,7 @@ static UINT64 find_acpi_rsdp(EFI_SYSTEM_TABLE *st) {
     UINTN index;
     for (index = 0; index < st->NumberOfTableEntries; ++index) {
         EFI_CONFIGURATION_TABLE *entry = &st->ConfigurationTable[index];
-        if (CompareGuid(&entry->VendorGuid, &Acpi20Guid) || CompareGuid(&entry->VendorGuid, &Acpi10Guid))
+        if (guid_equal(&entry->VendorGuid, &Acpi20Guid) || guid_equal(&entry->VendorGuid, &Acpi10Guid))
             return (UINT64)(UINTN)entry->VendorTable;
     }
     return 0;
@@ -119,7 +136,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     UINT32 width = 0, height = 0, stride = 0, pixel_format = 0;
 
     debug_text("SYSTEMES_UEFI_ENTRY_REACHED\r\n");
-    InitializeLib(image, st);
     debug_text("SYSTEMES_UEFI_START\r\n");
     console_text(st, L"SYSTEMES UEFI loader: start\r\n");
 
@@ -131,7 +147,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     kernel_pages = EFI_SIZE_TO_PAGES(kernel_bytes);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
-    CopyMem((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
+    copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
     debug_text("SYSTEMES_UEFI_KERNEL_LOADED\r\n");
     uefi_call_wrapper(st->BootServices->FreePool, 1, kernel_buffer);
     kernel_buffer = NULL;
@@ -140,7 +156,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot allocate boot information");
     debug_text("SYSTEMES_UEFI_BOOT_INFO_ALLOCATED\\r\\n");
 
-    status = uefi_call_wrapper(st->BootServices->LocateProtocol, 3, &GraphicsOutputProtocol, NULL, (VOID **)&gop);
+    status = uefi_call_wrapper(st->BootServices->LocateProtocol, 3, &GraphicsOutputGuid, NULL, (VOID **)&gop);
     if (!EFI_ERROR(status) && gop && gop->Mode && gop->Mode->Info) {
         framebuffer = gop->Mode->FrameBufferBase;
         width = gop->Mode->Info->HorizontalResolution;
