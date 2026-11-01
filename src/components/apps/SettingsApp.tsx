@@ -521,7 +521,7 @@ export const SettingsApp: React.FC = () => {
             </div>
 
             <SectionTitle>Autres appareils</SectionTitle>
-            <SettingRow icon="sliders" title="Imprimantes et scanners" desc="HP LaserJet Pro — Prête" onClick={() => addNotification('Appareils', 'Imprimantes et scanners', 'Paramètres', 'sliders')} />
+            <SettingRow icon="sliders" title="Imprimantes et scanners" desc="État réel des imprimantes non encore exposé par le moteur natif." />
             
             <SettingRow icon="pc" title="Paramètres du stylo et de la saisie tactile" desc="Personnaliser le comportement du stylo" onClick={() => addNotification('Appareils', 'Stylo et saisie tactile', 'Paramètres', 'pc')} />
             <SettingRow icon="pc" title="Bluetooth mobile" desc="Partager des fichiers via Bluetooth avec des appareils à proximité" onClick={() => addNotification('Appareils', 'Bluetooth mobile', 'Paramètres', 'pc')} />
