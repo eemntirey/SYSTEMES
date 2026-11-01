@@ -33,9 +33,15 @@ const request = <T>(method: string, params: Record<string, unknown> = {}): Promi
   const id = globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
+      reject(new Error(`Délai dépassé pour la requête native « ${method} » (15 s).`));
+    }, 15_000);
+
     const onMessage = (event: MessageEvent<NativeReply<T>>) => {
       const response = event.data;
       if (!response || response.id !== id) return;
+      clearTimeout(timeout);
       transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
       if (response.error) reject(new Error(response.error));
       else resolve(response);
@@ -45,6 +51,7 @@ const request = <T>(method: string, params: Record<string, unknown> = {}): Promi
     try {
       transport.postMessage({ id, method, params });
     } catch (error) {
+      clearTimeout(timeout);
       transport.removeEventListener('message', onMessage as (event: MessageEvent<NativeReply>) => void);
       reject(error instanceof Error ? error : new Error(String(error)));
     }
