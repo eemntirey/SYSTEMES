@@ -74,6 +74,9 @@ namespace Systemes.Native.Core
                         case "files/create":
                             result = FileSystemNative.CreateFile(args["path"]?.Value<string>() ?? "", args["content"]?.Value<string>() ?? "");
                             break;
+                        case "files/recycle-bin/open":
+                            result = FileSystemNative.OpenRecycleBin();
+                            break;
                         case "files/delete":
                             result = FileSystemNative.DeleteFile(args["path"]?.Value<string>() ?? "");
                             break;
