@@ -45,15 +45,19 @@ public partial class MainWindow : Window
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        string? requestId = null;
         try
         {
             using var message = JsonDocument.Parse(e.WebMessageAsJson);
+            if (message.RootElement.TryGetProperty("id", out var idElement))
+                requestId = idElement.GetString();
+
             var response = await _native.SendAsync(message.RootElement.GetRawText());
             DesktopView.CoreWebView2.PostWebMessageAsJson(response);
         }
         catch (Exception ex)
         {
-            var error = JsonSerializer.Serialize(new { error = ex.Message });
+            var error = JsonSerializer.Serialize(new { id = requestId, error = ex.Message });
             DesktopView.CoreWebView2.PostWebMessageAsJson(error);
         }
     }
