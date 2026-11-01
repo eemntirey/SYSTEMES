@@ -32,6 +32,7 @@ describe('NativeBridge WebView2 transport', () => {
   it('sends a request and resolves only its matching response', async () => {
     const bridge = new NativeBridge();
     const pending = bridge.send('hardware/read');
+    await Promise.resolve();
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const request = postMessage.mock.calls[0][0] as { id: string; method: string };
@@ -47,6 +48,7 @@ describe('NativeBridge WebView2 transport', () => {
   it('rejects a native protocol error', async () => {
     const bridge = new NativeBridge();
     const pending = bridge.send('files/read', { path: 'Z:/missing.txt' });
+    await Promise.resolve();
     const request = postMessage.mock.calls[0][0] as { id: string };
 
     listeners[0]({ data: { id: request.id, error: 'Access denied' } } as MessageEvent);
@@ -59,6 +61,7 @@ describe('NativeBridge WebView2 transport', () => {
     vi.useFakeTimers();
     const bridge = new NativeBridge();
     const pending = bridge.send('hardware/read');
+    await Promise.resolve();
     const assertion = expect(pending).rejects.toThrow('Délai dépassé');
 
     await vi.advanceTimersByTimeAsync(15_000);
@@ -69,6 +72,7 @@ describe('NativeBridge WebView2 transport', () => {
   it('rejects all pending requests when disconnected', async () => {
     const bridge = new NativeBridge();
     const pending = bridge.send('devices/read');
+    await Promise.resolve();
     const assertion = expect(pending).rejects.toThrow('Connexion au moteur natif interrompue.');
 
     bridge.disconnect();
