@@ -132,8 +132,9 @@ export const ProcessManagerApp: React.FC = () => {
           <div style={{ fontSize: 23, fontWeight: 700 }}>{loading ? '…' : processes.length}</div>
         </div>
         <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Mémoire cumulée</div>
-          <div style={{ fontSize: 23, fontWeight: 700 }}>{formatMemory(totalMemory)}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>RAM physique utilisée</div>
+          <div style={{ fontSize: 23, fontWeight: 700 }}>{memory ? `${formatGiB(memory.usedPhysicalBytes)} / ${formatGiB(memory.totalPhysicalBytes)} Gio` : '—'}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{usedMemoryPercent == null ? 'Mesure indisponible' : `${usedMemoryPercent} % utilisés · ${formatGiB(memory!.availablePhysicalBytes)} Gio disponibles`}</div>
         </div>
         <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--flyout-card)', minWidth: 145 }}>
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CPU des processus</div>
