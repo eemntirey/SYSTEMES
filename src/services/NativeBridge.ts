@@ -230,6 +230,12 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async readWifiAdapterStatus() {
+    const response = await request<{ enabled: boolean; adapterName: string; status: string; source: string }>('network/wifi/adapter-status');
+    if (!response.result) throw new Error('Windows n’a retourné aucun état de l’adaptateur Wi-Fi.');
+    return response.result;
+  },
+
   async setWifiEnabled(enabled: boolean) {
     const response = await request<{ enabled: boolean; adapterName: string; status: string; source: string }>('network/wifi/set-enabled', { enabled });
     if (!response.result) throw new Error('Windows n’a retourné aucun état Wi-Fi.');
