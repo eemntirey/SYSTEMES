@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { WALLPAPERS } from '../../data/constants'
+import { NativeBridge } from '../../services/NativeBridge'
 
 type SectionId = 'home' | 'system' | 'bluetooth' | 'network' | 'personalization' | 'apps' | 'accounts' | 'time' | 'gaming' | 'accessibility' | 'privacy' | 'update' | 'about'
 type NavItem = { id: SectionId; label: string; description: string; icon: string }
@@ -53,7 +54,9 @@ export const SettingsApp: React.FC = () => {
   const [query, setQuery] = useState('')
   const [region, setRegion] = useState('MG')
   const [language, setLanguage] = useState('fr')
-  const [updateInfo, setUpdateInfo] = useState('SYSTEMES est un environnement simulé. Aucune mise à jour Windows réelle n’est recherchée ou installée.')
+  const [updateInfo, setUpdateInfo] = useState('Aucune recherche Windows Update n’a encore été lancée.')
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateResults, setUpdateResults] = useState<Awaited<ReturnType<typeof NativeBridge.checkWindowsUpdates>> | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('fr')
@@ -195,10 +198,38 @@ export const SettingsApp: React.FC = () => {
         </>
       case 'update':
         return <>
-          <div style={{ ...panel, padding: 20 }}><div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><FluentIcon name="info" size={24} color="var(--win-accent)" /><div><div style={{ fontWeight: 650, fontSize: 15 }}>Mise à jour de SYSTEMES</div><div style={muted}>Cette simulation ne télécharge ni n’installe de mises à jour Windows réelles.</div></div></div><p style={{ ...muted, margin: '14px 0 0' }}>{updateInfo}</p></div>
-          <Group title="Préférences"><Row title="Mises à jour automatiques" description="Enregistrer la préférence dans l’environnement." control={toggle(s.autoUpdate, () => s.setAutoUpdate(!s.autoUpdate), 'Mises à jour automatiques')} last /></Group>
-          <button type="button" style={button} onClick={() => setUpdateInfo('Vérification locale terminée. Aucune mise à jour système réelle ne peut être recherchée depuis cette simulation.')}>Vérifier les préférences</button>
-        </>
+          <div style={{ ...panel, padding: 20 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <FluentIcon name="refresh-cw" size={24} color="var(--win-accent)" />
+              <div><div style={{ fontWeight: 650, fontSize: 15 }}>Windows Update</div><div style={muted}>Recherche réelle via Windows Update Agent. Aucun téléchargement ni installation n’est lancé.</div></div>
+            </div>
+            <p style={{ ...muted, margin: '14px 0 0' }}>{updateInfo}</p>
+            <button type="button" style={{ ...button, marginTop: 12, opacity: updateBusy ? 0.6 : 1 }} disabled={updateBusy} onClick={async () => {
+              setUpdateBusy(true)
+              setUpdateInfo('Recherche des mises à jour disponibles auprès de Windows Update…')
+              setUpdateResults(null)
+              try {
+                const result = await NativeBridge.checkWindowsUpdates()
+                setUpdateResults(result)
+                setUpdateInfo(String(result.updatesAvailable ?? 0) + ' mise(s) à jour disponible(s). Recherche terminée via ' + result.service + '.')
+              } catch (cause) {
+                setUpdateInfo(cause instanceof Error ? cause.message : String(cause))
+              } finally {
+                setUpdateBusy(false)
+              }
+            }}>{updateBusy ? 'Recherche en cours…' : 'Rechercher des mises à jour'}</button>
+          </div>
+          {updateResults && <Group title={'Mises à jour disponibles · ' + (updateResults.updatesAvailable ?? 0)}>
+            {updateResults.updates?.length ? updateResults.updates.map((item, index) => (
+              <div key={item.kbArticles.join('-') || (item.title + '-' + index)} style={{ padding: '12px 0', borderBottom: '1px solid var(--window-border)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{item.title}</div>
+                <div style={muted}>{item.kbArticles.length ? item.kbArticles.map(kb => 'KB' + kb).join(', ') : 'Référence KB non fournie'}{item.severity ? ' · ' + item.severity : ''}</div>
+                <div style={muted}>{item.downloaded ? 'Déjà téléchargée' : 'Non téléchargée'}{item.mandatory ? ' · Obligatoire' : ''}{item.rebootBehavior === 1 ? ' · Redémarrage systématiquement requis après installation' : item.rebootBehavior === 2 ? ' · Redémarrage potentiellement requis après installation' : ''}</div>
+              </div>
+            )) : <p style={muted}>Aucune mise à jour applicable n’a été signalée par Windows Update.</p>}
+          </Group>}
+          <Group title="Préférences"><Row title="Mises à jour automatiques" description="Préférence locale de SYSTEMES ; ne modifie pas la stratégie Windows Update." control={toggle(s.autoUpdate, () => s.setAutoUpdate(!s.autoUpdate), 'Mises à jour automatiques')} last /></Group>
+        </>;
       case 'about':
         return <>
           <div style={{ ...panel, padding: 22, display: 'flex', alignItems: 'center', gap: 16 }}><FluentIcon name="monitor" size={42} color="var(--win-accent)" /><div><div style={{ fontSize: 20, fontWeight: 650 }}>SYSTEMES</div><div style={muted}>Environnement de bureau inspiré de Windows 11</div></div></div>

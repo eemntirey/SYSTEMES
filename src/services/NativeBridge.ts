@@ -109,8 +109,24 @@ export const NativeBridge = {
   },
 
   async readServices() {
-    const response = await request<{ services: { name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string }[]; count: number; source: string }>('services/read');
+    const response = await request<{ services: { name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string; isProtected: boolean }[]; count: number; source: string }>('services/read');
     if (!response.result) throw new Error('Windows n’a retourné aucun inventaire de services.');
+    return response.result;
+  },
+
+  async checkWindowsUpdates() {
+    const response = await request<{
+      success?: boolean;
+      resultCode?: number;
+      updatesAvailable: number | null;
+      updates?: { title: string; kbArticles: string[]; severity: string; downloaded: boolean; mandatory: boolean; rebootBehavior: number }[];
+      service: string;
+      searchedAtUtc?: string;
+      error?: string;
+      note: string;
+    }>('update/check');
+    if (!response.result) throw new Error('Windows Update n’a retourné aucun résultat.');
+    if (response.result.error) throw new Error(response.result.error);
     return response.result;
   },
 

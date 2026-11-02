@@ -87,7 +87,7 @@ const METHOD_TIMEOUT_MS: Record<string, number> = {
   'bluetooth/scan': 30_000,
   'bluetooth/pair': 45_000,
   'terminal/execute': 60_000,
-  'update/check': 45_000,
+  'update/check': 180_000,
   'processes/read': 20_000,
   'storage/volumes': 20_000,
   'apps/installed': 25_000,
