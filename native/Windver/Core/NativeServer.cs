@@ -154,6 +154,12 @@ namespace Systemes.Native.Core
                         case "display/read":
                             result = DisplayManager.ReadRealDisplay();
                             break;
+                        case "storage/volumes":
+                            result = StorageManager.ReadVolumes();
+                            break;
+                        case "apps/installed":
+                            result = AppsManager.ReadInstalledApps(args["maxItems"]?.Value<int>() ?? 400);
+                            break;
                         case "power/read":
                             result = BrightnessAndBattery.ReadRealPower();
                             break;
