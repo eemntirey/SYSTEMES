@@ -118,6 +118,8 @@ describe('Photos and Terminal', () => {
       source: 'Windows PowerShell 5.1',
     })
     render(<OSProvider><TerminalApp /></OSProvider>)
+    await waitFor(() => expect(NativeBridge.getFileLocations).toHaveBeenCalled())
+    await screen.findByText(/PS C:\/Users\/test>/)
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'pwd' } })
     fireEvent.keyDown(input, { key: 'Enter' })
