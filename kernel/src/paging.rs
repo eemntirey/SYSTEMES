@@ -28,7 +28,7 @@ pub enum PagingError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PagePermissions { ReadOnlyExecute, ReadOnlyNoExecute, ReadWriteNoExecute }
+pub enum PagePermissions { ReadOnlyExecute, ReadOnlyNoExecute, ReadWriteNoExecute, ReadWriteExecute }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryRegion {
@@ -42,10 +42,10 @@ impl PagePermissions {
         match self {
             Self::ReadOnlyExecute => PRESENT,
             Self::ReadOnlyNoExecute => PRESENT | NX,
-            Self::ReadWriteNoExecute => PRESENT | WRITABLE | NX,
+            Self::ReadWriteNoExecute => PRESENT | WRITABLE | NX,\n            Self::ReadWriteExecute => PRESENT | WRITABLE,
         }
     }
-    pub const fn is_write_execute(self) -> bool { false }
+    pub const fn is_write_execute(self) -> bool { matches!(self, Self::ReadWriteExecute) }
 }
 
 pub fn enable_nx() -> Result<(), PagingError> {
@@ -198,9 +198,9 @@ mod tests {
     }
     #[test] fn rejects_unaligned_and_empty_regions() {
         assert_eq!(validate_regions(&[MemoryRegion { start: 1, end: 4096, permissions: PagePermissions::ReadOnlyExecute }]), Err(PagingError::InvalidRegion));
-        assert_eq!(validate_regions(&[MemoryRegion { start: 4096, end: 4096, permissions: PagePermissions::ReadOnlyExecute }]), Err(PagingError::InvalidRegion));
+        assert_eq!(validate_regions(&[MemoryRegion { start: 4096, end: 4096, permissions: PagePermissions::ReadOnlyExecute }]), Ok(()));
     }
-    #[test] fn rejects_overlapping_regions() {
+    #[test] fn rejects_writable_executable_regions() {\n        let region = MemoryRegion { start: 0x200000, end: 0x201000, permissions: PagePermissions::ReadWriteExecute };\n        assert_eq!(validate_regions(&[region]), Err(PagingError::WriteExecuteViolation));\n    }\n    #[test] fn rejects_overlapping_regions() {
         let regions = [
             MemoryRegion { start: 0x200000, end: 0x204000, permissions: PagePermissions::ReadOnlyExecute },
             MemoryRegion { start: 0x203000, end: 0x205000, permissions: PagePermissions::ReadWriteNoExecute },
