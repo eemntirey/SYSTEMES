@@ -5,6 +5,9 @@
 #define SYSTEMES_BOOT_VERSION 2U
 #define KERNEL_LOAD_ADDRESS 0x00200000ULL
 #define KERNEL_MAX_BYTES (8U * 1024U * 1024U)
+#ifndef KERNEL_IMAGE_BYTES
+#error KERNEL_IMAGE_BYTES must be provided from the linked kernel image
+#endif
 #define MEMORY_MAP_CAPACITY (128U * 1024U)
 
 typedef struct {
@@ -141,10 +144,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
 
     status = read_kernel(image, st, &kernel_buffer, &kernel_bytes);
     if (EFI_ERROR(status) || kernel_bytes == 0) fail(st, L"SYSTEMES: cannot read EFI\\BOOT\\KERNEL.BIN");
-    if (kernel_bytes > KERNEL_MAX_BYTES) fail(st, L"SYSTEMES: kernel image exceeds loader limit");
+    if (kernel_bytes > KERNEL_MAX_BYTES || kernel_bytes > (UINTN)KERNEL_IMAGE_BYTES) fail(st, L"SYSTEMES: kernel image exceeds linked image bounds");
     debug_text("SYSTEMES_UEFI_KERNEL_FILE_OK\r\n");
 
-    kernel_pages = EFI_SIZE_TO_PAGES(kernel_bytes);
+    /* Reserve the exact linked image extent, including zero-filled .bss. */
+    kernel_pages = EFI_SIZE_TO_PAGES((UINTN)KERNEL_IMAGE_BYTES);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
     copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
