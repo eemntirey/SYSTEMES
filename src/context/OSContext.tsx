@@ -775,13 +775,46 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     void tryNativeAudio(() => NativeBridge.setAudioMuted(next))
   }, [tryNativeAudio])
 
-  const toggleWifi = useCallback(() => {
-    setWifiEnabled(prev => !prev)
+  useEffect(() => {
+    let cancelled = false
+    void NativeBridge.readWifiAdapterStatus()
+      .then(status => { if (!cancelled) setWifiEnabled(status.enabled) })
+      .catch(() => { /* Le bureau conserve son état local hors moteur Windows. */ })
+    void NativeBridge.readBluetoothStatus()
+      .then(status => { if (!cancelled && !status.error) setBluetoothEnabled(!!status.powered) })
+      .catch(() => { /* Le bureau conserve son état local hors moteur Windows. */ })
+    return () => { cancelled = true }
   }, [])
 
+  const toggleWifi = useCallback(() => {
+    const next = !wifiEnabled
+    void NativeBridge.setWifiEnabled(next)
+      .then(status => {
+        setWifiEnabled(status.enabled)
+        addNotification('Wi-Fi', status.enabled
+          ? `Adaptateur « ${status.adapterName} » activé.`
+          : `Adaptateur « ${status.adapterName} » désactivé.`, 'Réseau')
+      })
+      .catch(error => {
+        addNotification('Wi-Fi — opération refusée',
+          error instanceof Error ? error.message : String(error), 'Réseau')
+      })
+  }, [wifiEnabled, addNotification])
+
   const toggleBluetooth = useCallback(() => {
-    setBluetoothEnabled(prev => !prev)
-  }, [])
+    const next = !bluetoothEnabled
+    void NativeBridge.setBluetoothEnabled(next)
+      .then(status => {
+        setBluetoothEnabled(status.enabled)
+        addNotification('Bluetooth', status.enabled
+          ? `Adaptateur « ${status.adapterName} » activé.`
+          : `Adaptateur « ${status.adapterName} » désactivé.`, 'Bluetooth')
+      })
+      .catch(error => {
+        addNotification('Bluetooth — opération refusée',
+          error instanceof Error ? error.message : String(error), 'Bluetooth')
+      })
+  }, [bluetoothEnabled, addNotification])
 
   const toggleNightLight = useCallback(() => {
     setNightLight(prev => !prev)
