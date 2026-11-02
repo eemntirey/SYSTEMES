@@ -164,6 +164,9 @@ namespace Systemes.Native.Core
                         case "network/wifi/disconnect":
                             result = NetworkManager.DisconnectWifi();
                             break;
+                        case "network/wifi/adapter-status":
+                            result = RadioControlNative.ReadWifiEnabled();
+                            break;
                         case "network/wifi/set-enabled":
                             result = RadioControlNative.SetWifiEnabled(args["enabled"]?.Value<bool>() ?? false);
                             break;
