@@ -6,6 +6,8 @@ import { NotepadApp } from './NotepadApp'
 const mocks = vi.hoisted(() => ({
   writeTextFile: vi.fn(),
   createFile: vi.fn(),
+  readWifiAdapterStatus: vi.fn().mockResolvedValue({ enabled: true }),
+  readBluetoothStatus: vi.fn().mockResolvedValue({ powered: true }),
 }))
 
 vi.mock('../../services/NativeBridge', () => ({

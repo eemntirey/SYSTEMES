@@ -13,15 +13,27 @@ const mocks = vi.hoisted(() => ({
   deleteFile: vi.fn(),
   openRecycleBin: vi.fn(),
   renameFile: vi.fn(),
+  copyFile: vi.fn(),
+  moveFile: vi.fn(),
+  readWifiAdapterStatus: vi.fn(),
+  readBluetoothStatus: vi.fn(),
 }))
 
 vi.mock('../../services/NativeBridge', () => ({
   NativeBridge: mocks,
 }))
 
-const renderExplorer = () => render(<OSProvider><FileExplorerApp /></OSProvider>)
+const renderExplorer = () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  mocks.readWifiAdapterStatus.mockResolvedValue({ enabled: true })
+  mocks.readBluetoothStatus.mockResolvedValue({ powered: true })
+  return render(<OSProvider><FileExplorerApp /></OSProvider>)
+}
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  vi.restoreAllMocks()
+})
 
 describe('FileExplorer native integration', () => {
   it('opens the native Windows Recycle Bin', async () => {
@@ -82,7 +94,35 @@ describe('FileExplorer native integration', () => {
     await waitFor(() => expect(mocks.createDirectory).toHaveBeenCalledWith('C:/Users/test/NativeFolder'))
     await waitFor(() => expect(mocks.listFiles).toHaveBeenCalledTimes(3))
   })
+  it('copies a selected native file into another real directory', async () => {
+    const rootItems = [
+      { id: 'C:/Users/test/source.txt', name: 'source.txt', type: 'file' as const, path: 'C:/Users/test/source.txt', sizeBytes: 12, modified: '2026-11-02 08:00:00', extension: 'txt' },
+      { id: 'C:/Users/test/Target', name: 'Target', type: 'folder' as const, path: 'C:/Users/test/Target', sizeBytes: null, modified: '2026-11-02 08:00:00', extension: null },
+    ]
+    mocks.listFiles.mockImplementation(async (path = '') => ({
+      path: path || 'C:/Users/test',
+      count: path.endsWith('/Target') ? 0 : rootItems.length,
+      items: path.endsWith('/Target') ? [] : rootItems,
+    }))
+    mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readHardware.mockResolvedValue({ disks: [] })
+    mocks.copyFile.mockResolvedValue({ copied: true })
+
+    renderExplorer()
+    fireEvent.click(await screen.findByText('source.txt'))
+    fireEvent.click(screen.getByRole('button', { name: 'Copier' }))
+    fireEvent.doubleClick(screen.getByText('Target'))
+    fireEvent.click(await screen.findByRole('button', { name: /Coller/ }))
+
+    await waitFor(() => expect(mocks.copyFile).toHaveBeenCalledWith(
+      'C:/Users/test/source.txt',
+      'C:/Users/test/Target/source.txt',
+    ))
+  })
+
   it('renames a selected native file and refreshes the directory', async () => {
+    mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readHardware.mockResolvedValue({ disks: [] })
     mocks.listFiles.mockResolvedValue({
       path: 'C:/Users/test',
       count: 1,

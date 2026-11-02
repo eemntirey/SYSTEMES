@@ -6,6 +6,10 @@ namespace Systemes.Native.Core
 {
     public class NativeServer
     {
+        private const int MaxRequestCharacters = 1024 * 1024;
+        private const int MaxRequestIdCharacters = 128;
+        private const int MaxMethodCharacters = 128;
+
         public static void Start()
         {
             Console.Error.WriteLine("SYSTEMES Native Server ready.");
@@ -15,19 +19,47 @@ namespace Systemes.Native.Core
                 if (line == null) break;
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
+                if (line.Length > MaxRequestCharacters)
+                {
+                    Console.WriteLine(JsonConvert.SerializeObject(new { error = "La requête IPC dépasse la limite de 1 Mio.", id = (string?)null }));
+                    Console.Out.Flush();
+                    continue;
+                }
+
                 JToken? id = null;
                 try
                 {
                     var request = JObject.Parse(line);
-                    id = request["id"]?.DeepClone();
-                    var args = request["params"] as JObject ?? request;
-                    var method = request["method"]?.Value<string>() ?? "";
+                    var idToken = request["id"];
+                    if (idToken?.Type != JTokenType.String)
+                        throw new ArgumentException("L’identifiant IPC doit être une chaîne de caractères.");
+                    var requestId = idToken.Value<string>();
+                    if (string.IsNullOrWhiteSpace(requestId) || requestId.Length > MaxRequestIdCharacters)
+                        throw new ArgumentException("L’identifiant IPC est vide ou dépasse 128 caractères.");
+                    id = idToken.DeepClone();
+
+                    var methodToken = request["method"];
+                    if (methodToken?.Type != JTokenType.String)
+                        throw new ArgumentException("La méthode IPC doit être une chaîne de caractères.");
+                    var method = methodToken.Value<string>() ?? "";
+                    if (string.IsNullOrWhiteSpace(method) || method.Length > MaxMethodCharacters)
+                        throw new ArgumentException("La méthode IPC est vide ou dépasse 128 caractères.");
+
+                    var paramsToken = request["params"];
+                    if (paramsToken != null && paramsToken.Type != JTokenType.Object)
+                        throw new ArgumentException("Les paramètres IPC doivent être un objet JSON.");
+                    var args = paramsToken as JObject ?? new JObject();
                     object result;
 
                     switch (method)
                     {
                         case "system/ping":
                             result = new { status = "ready", engine = "SYSTEMES Native Core" };
+                            break;
+                        case "terminal/execute":
+                            result = TerminalNative.Execute(
+                                args["command"]?.Value<string>() ?? "",
+                                args["workingDirectory"]?.Value<string>() ?? "");
                             break;
                         case "security/read":
                             result = SecurityManager.ReadSecurityContext();
@@ -88,6 +120,16 @@ namespace Systemes.Native.Core
                                 args["path"]?.Value<string>() ?? "",
                                 args["newName"]?.Value<string>() ?? "");
                             break;
+                        case "files/copy":
+                            result = FileSystemNative.CopyEntry(
+                                args["source"]?.Value<string>() ?? "",
+                                args["destination"]?.Value<string>() ?? "");
+                            break;
+                        case "files/move":
+                            result = FileSystemNative.MoveEntry(
+                                args["source"]?.Value<string>() ?? "",
+                                args["destination"]?.Value<string>() ?? "");
+                            break;
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();
                             break;
@@ -112,6 +154,12 @@ namespace Systemes.Native.Core
                         case "display/read":
                             result = DisplayManager.ReadRealDisplay();
                             break;
+                        case "storage/volumes":
+                            result = StorageManager.ReadVolumes();
+                            break;
+                        case "apps/installed":
+                            result = AppsManager.ReadInstalledApps(args["maxItems"]?.Value<int>() ?? 400);
+                            break;
                         case "power/read":
                             result = BrightnessAndBattery.ReadRealPower();
                             break;
@@ -131,6 +179,15 @@ namespace Systemes.Native.Core
                             break;
                         case "network/wifi/disconnect":
                             result = NetworkManager.DisconnectWifi();
+                            break;
+                        case "network/wifi/adapter-status":
+                            result = RadioControlNative.ReadWifiEnabled();
+                            break;
+                        case "network/wifi/set-enabled":
+                            result = RadioControlNative.SetWifiEnabled(args["enabled"]?.Value<bool>() ?? false);
+                            break;
+                        case "bluetooth/set-enabled":
+                            result = RadioControlNative.SetBluetoothEnabled(args["enabled"]?.Value<bool>() ?? false);
                             break;
                         case "bluetooth/status":
                             result = BluetoothManager.ReadStatus();

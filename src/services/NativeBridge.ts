@@ -125,6 +125,24 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async executePowerShell(command: string, workingDirectory = '') {
+    if (!command.trim()) throw new Error('La commande PowerShell est obligatoire.');
+    if (command.length > 16384) throw new Error('La commande dépasse la limite de 16 Kio.');
+    const response = await request<{
+      output: string;
+      error: string | null;
+      commandError: string;
+      exitCode: number;
+      workingDirectory: string;
+      truncated: boolean;
+      executedBy: string;
+      elevated: boolean;
+      source: string;
+    }>('terminal/execute', { command, workingDirectory });
+    if (!response.result) throw new Error('PowerShell n’a retourné aucun résultat.');
+    return response.result;
+  },
+
   async killProcess(pid: number, expectedName: string, expectedStartTimeUtcTicks: string) {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('PID invalide.');
     if (!expectedName.trim()) throw new Error('Le nom du processus est obligatoire pour vérifier le PID.');
@@ -165,6 +183,18 @@ export const NativeBridge = {
 
   async createFile(path: string, content = '') {
     const response = await request('files/create', { path, content });
+    return response.result;
+  },
+
+  async copyFile(source: string, destination: string) {
+    if (!source.trim() || !destination.trim()) throw new Error('Source et destination sont obligatoires.');
+    const response = await request('files/copy', { source, destination });
+    return response.result;
+  },
+
+  async moveFile(source: string, destination: string) {
+    if (!source.trim() || !destination.trim()) throw new Error('Source et destination sont obligatoires.');
+    const response = await request('files/move', { source, destination });
     return response.result;
   },
 
@@ -210,6 +240,24 @@ export const NativeBridge = {
 
   async checkWindowsUpdate() {
     const response = await request('update/check');
+    return response.result;
+  },
+
+  async readWifiAdapterStatus() {
+    const response = await request<{ enabled: boolean; adapterName: string; status: string; source: string }>('network/wifi/adapter-status');
+    if (!response.result) throw new Error('Windows n’a retourné aucun état de l’adaptateur Wi-Fi.');
+    return response.result;
+  },
+
+  async setWifiEnabled(enabled: boolean) {
+    const response = await request<{ enabled: boolean; adapterName: string; status: string; source: string }>('network/wifi/set-enabled', { enabled });
+    if (!response.result) throw new Error('Windows n’a retourné aucun état Wi-Fi.');
+    return response.result;
+  },
+
+  async setBluetoothEnabled(enabled: boolean) {
+    const response = await request<{ enabled: boolean; adapterName: string; instanceId: string; status: string; source: string }>('bluetooth/set-enabled', { enabled });
+    if (!response.result) throw new Error('Windows n’a retourné aucun état Bluetooth.');
     return response.result;
   },
 

@@ -105,9 +105,18 @@ public partial class MainWindow : Window
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // Only the packaged SYSTEMES origin may invoke privileged native operations.
+        if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source)
+            || !string.Equals(source.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(source.Host, "systemes.local", StringComparison.OrdinalIgnoreCase))
+            return;
+
         string? requestId = null;
         try
         {
+            if (e.WebMessageAsJson.Length > 1024 * 1024)
+                throw new InvalidOperationException("La requête WebView2 dépasse la limite de 1 Mio.");
+
             using var message = JsonDocument.Parse(e.WebMessageAsJson);
             if (message.RootElement.TryGetProperty("id", out var idElement))
                 requestId = idElement.GetString();

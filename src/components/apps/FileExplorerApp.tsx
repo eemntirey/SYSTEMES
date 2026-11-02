@@ -3,6 +3,7 @@ import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { FileItem } from '../../types'
 import { NativeBridge } from '../../services/NativeBridge'
+import { useSafeFileOps } from '../../utils/useSafeFileOps'
 
 interface FileExplorerAppProps {
   initialPath?: string
@@ -194,6 +195,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [newFileName, setNewFileName] = useState('')
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
+  const [clipboard, setClipboard] = useState<{ path: string; name: string; mode: 'copy' | 'move' } | null>(null)
   const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
 
   const refreshDirectory = async (path = currentPath) => {
@@ -310,6 +312,23 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
     [nativeFiles, selectedItemId],
   )
 
+  const safeFileOps = useSafeFileOps({
+    currentPath,
+    currentItems,
+    selectedItem,
+    renameValue,
+    setNativeError,
+    setNewFolderName,
+    setIsCreatingFolder,
+    setNewFileName,
+    setIsCreatingFile,
+    setIsRenaming,
+    setRenameValue,
+    setSelectedItemId,
+    setPermissionText,
+    refreshDirectory,
+  })
+
   const handleItemDoubleClick = (item: FileItem) => {
     if (item.type === 'folder') {
       navigateTo(item.path)
@@ -325,32 +344,30 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
   const handleCreateFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const name = newFolderName.trim()
-    if (!name) return
-    void NativeBridge.createDirectory(currentPath + '/' + name).then(() => {
-      setNewFolderName('')
-      setIsCreatingFolder(false)
-      return refreshDirectory()
-    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
+    void safeFileOps.createFolder(newFolderName)
   }
 
   const handleCreateFileSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const name = newFileName.trim()
-    if (!name) return
-    void NativeBridge.createFile(currentPath + '/' + name, '').then(() => {
-      setNewFileName('')
-      setIsCreatingFile(false)
-      return refreshDirectory()
-    }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause)))
+    void safeFileOps.createFile(newFileName)
   }
 
   const handleRename = async () => {
-    if (!selectedItem || !renameValue.trim()) return
+    await safeFileOps.rename()
+  }
+
+  const pasteClipboard = async () => {
+    if (!clipboard) return
+    const parent = currentPath.replace(/\/+$/, '')
+    const destination = `${parent}/${clipboard.name}`
+    setNativeError(null)
     try {
-      await NativeBridge.renameFile(selectedItem.path, renameValue.trim())
-      setIsRenaming(false)
-      setRenameValue('')
+      if (clipboard.mode === 'copy') {
+        await NativeBridge.copyFile(clipboard.path, destination)
+      } else {
+        await NativeBridge.moveFile(clipboard.path, destination)
+        setClipboard(null)
+      }
       setSelectedItemId(null)
       await refreshDirectory()
     } catch (cause) {
@@ -447,6 +464,11 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </select>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {selectedItem && <>
+            <ActionButton icon="copy" label="Copier" onClick={() => setClipboard({ path: selectedItem.path, name: selectedItem.name, mode: 'copy' })} />
+            <ActionButton icon="scissors" label="Couper" onClick={() => setClipboard({ path: selectedItem.path, name: selectedItem.name, mode: 'move' })} />
+          </>}
+          {clipboard && <ActionButton icon="clipboard" label={`Coller · ${clipboard.name}`} onClick={() => void pasteClipboard()} />}
           <ActionButton icon="trash" label="Corbeille" onClick={() => { void NativeBridge.openRecycleBin().catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} />
           <ActionButton icon="folder" label="Nouveau dossier" onClick={() => setIsCreatingFolder(true)} />
           <ActionButton icon="file-text" label="Nouveau fichier" onClick={() => setIsCreatingFile(true)} />
@@ -625,7 +647,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
                     <button type="button" onClick={() => { void NativeBridge.readPermissions(selectedItem.path).then(result => setPermissionText(result.acl)).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--flyout-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Permissions Windows</button>
                     {permissionText && <pre aria-label="Permissions Windows" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 10, color: 'var(--text-secondary)' }}>{permissionText}</pre>}
                     {isRenaming && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><input aria-label="Nouveau nom" value={renameValue} onChange={event => setRenameValue(event.target.value)} /><button type="button" onClick={() => void handleRename()}>Valider</button></div>}
-                    <button onClick={() => { if (!window.confirm('Envoyer « ' + selectedItem.name + ' » vers la Corbeille Windows ?')) return; void NativeBridge.deleteFile(selectedItem.path).then((result: any) => { setPermissionText(result?.note || 'Élément envoyé vers la Corbeille Windows.'); setSelectedItemId(null); return refreshDirectory() }).catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Envoyer vers la Corbeille</button>
+                    <button onClick={() => { void safeFileOps.deleteToRecycleBin() }} style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'transparent', color: '#f87171', fontWeight: 600, fontSize: '12.5px', cursor: 'pointer', textAlign: 'left' }}>Envoyer vers la Corbeille</button>
                   </div>
                 </>
               ) : (

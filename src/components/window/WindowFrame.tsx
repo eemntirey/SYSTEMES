@@ -9,6 +9,11 @@ interface WindowFrameProps {
   children: ReactNode
 }
 
+const MIN_WIDTH = 340
+const MIN_HEIGHT = 260
+const SNAP_MARGIN = 28
+const TASKBAR_RESERVE = 56
+
 export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children }) => {
   const {
     activeWindowId,
@@ -25,38 +30,29 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
   const [showSnapMenu, setShowSnapMenu] = useState(false)
   const snapTimeoutRef = useRef<number | null>(null)
 
-  // Dragging state
   const isDraggingRef = useRef(false)
-  const dragStartRef = useRef<{ x: number; y: number; winX: number; winY: number }>({
-    x: 0,
-    y: 0,
-    winX: win.position.x,
-    winY: win.position.y,
-  })
-
-  // Resizing state
   const isResizingRef = useRef(false)
   const resizeDirectionRef = useRef<string | null>(null)
-  const resizeStartRef = useRef<{
-    x: number
-    y: number
-    winX: number
-    winY: number
-    winW: number
-    winH: number
-  }>({
-    x: 0,
-    y: 0,
-    winX: win.position.x,
-    winY: win.position.y,
-    winW: win.size.width,
-    winH: win.size.height,
+
+  const livePosRef = useRef({ x: win.position.x, y: win.position.y })
+  const liveSizeRef = useRef({ width: win.size.width, height: win.size.height })
+
+  const dragStartRef = useRef({ x: 0, y: 0, winX: 0, winY: 0 })
+  const resizeStartRef = useRef({
+    x: 0, y: 0, winX: 0, winY: 0, winW: 0, winH: 0,
   })
 
-  // Drag handlers
+  useEffect(() => {
+    if (!isDraggingRef.current && !isResizingRef.current) {
+      livePosRef.current = { x: win.position.x, y: win.position.y }
+      liveSizeRef.current = { width: win.size.width, height: win.size.height }
+    }
+  }, [win.position.x, win.position.y, win.size.width, win.size.height])
+
   const handleTitleBarMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return
     if (win.isMaximized) return
+    if ((e.target as HTMLElement).closest('button')) return
 
     bringToFront(win.id)
     isDraggingRef.current = true
@@ -66,11 +62,12 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
       winX: win.position.x,
       winY: win.position.y,
     }
+    livePosRef.current = { x: win.position.x, y: win.position.y }
   }
 
-  // Resize handler
   const handleResizeMouseDown = (e: React.MouseEvent, direction: string) => {
     e.stopPropagation()
+    e.preventDefault()
     if (win.isMaximized) return
 
     bringToFront(win.id)
@@ -84,16 +81,22 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
       winW: win.size.width,
       winH: win.size.height,
     }
+    livePosRef.current = { x: win.position.x, y: win.position.y }
+    liveSizeRef.current = { width: win.size.width, height: win.size.height }
   }
 
-  // Global mouse listeners for drag & resize
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (isDraggingRef.current) {
       const dx = e.clientX - dragStartRef.current.x
       const dy = e.clientY - dragStartRef.current.y
-      const newX = Math.max(0, Math.min(window.innerWidth - 100, dragStartRef.current.winX + dx))
-      const newY = Math.max(MENU_BAR_HEIGHT, Math.min(window.innerHeight - 80, dragStartRef.current.winY + dy))
-      updateWindowPosition(win.id, newX, newY)
+      const rawX = dragStartRef.current.winX + dx
+      const rawY = dragStartRef.current.winY + dy
+      const maxX = Math.max(0, window.innerWidth - Math.min(liveSizeRef.current.width, 120))
+      const maxY = Math.max(MENU_BAR_HEIGHT, window.innerHeight - TASKBAR_RESERVE - 40)
+      const x = Math.max(0, Math.min(maxX, rawX))
+      const y = Math.max(MENU_BAR_HEIGHT, Math.min(maxY, rawY))
+      livePosRef.current = { x, y }
+      updateWindowPosition(win.id, x, y)
     } else if (isResizingRef.current && resizeDirectionRef.current) {
       const dx = e.clientX - resizeStartRef.current.x
       const dy = e.clientY - resizeStartRef.current.y
@@ -104,49 +107,58 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
       let newX = resizeStartRef.current.winX
       let newY = resizeStartRef.current.winY
 
-      if (dir.includes('e')) newW = Math.max(340, resizeStartRef.current.winW + dx)
-      if (dir.includes('s')) newH = Math.max(260, resizeStartRef.current.winH + dy)
+      if (dir.includes('e')) newW = Math.max(MIN_WIDTH, resizeStartRef.current.winW + dx)
+      if (dir.includes('s')) newH = Math.max(MIN_HEIGHT, resizeStartRef.current.winH + dy)
       if (dir.includes('w')) {
         const potentialW = resizeStartRef.current.winW - dx
-        if (potentialW >= 340) {
+        if (potentialW >= MIN_WIDTH) {
           newW = potentialW
           newX = resizeStartRef.current.winX + dx
         }
       }
       if (dir.includes('n')) {
         const potentialH = resizeStartRef.current.winH - dy
-        if (potentialH >= 260) {
+        if (potentialH >= MIN_HEIGHT) {
           newH = potentialH
-          newY = resizeStartRef.current.winY + dy
+          newY = Math.max(MENU_BAR_HEIGHT, resizeStartRef.current.winY + dy)
         }
       }
 
+      if (newX + newW > window.innerWidth) newW = Math.max(MIN_WIDTH, window.innerWidth - newX)
+      if (newY + newH > window.innerHeight - TASKBAR_RESERVE) {
+        newH = Math.max(MIN_HEIGHT, window.innerHeight - TASKBAR_RESERVE - newY)
+      }
+
+      livePosRef.current = { x: newX, y: newY }
+      liveSizeRef.current = { width: newW, height: newH }
       updateWindowPosition(win.id, newX, newY)
       updateWindowSize(win.id, newW, newH)
     }
   }, [win.id, updateWindowPosition, updateWindowSize])
 
   const handleMouseUp = useCallback(() => {
+    const wasDragging = isDraggingRef.current
+    const wasResizing = isResizingRef.current
+
     isDraggingRef.current = false
     isResizingRef.current = false
     resizeDirectionRef.current = null
 
-    // Snap par glissement : détecter si la fenêtre est proche des bords
-    if (!win.isMaximized && !isDraggingRef.current) {
-      const snapMargin = 30
-      const x = win.position.x
-      const y = win.position.y
-      const w = win.size.width
-      const screenW = window.innerWidth
-      const screenH = window.innerHeight
+    if (!wasDragging || wasResizing || win.isMaximized) return
 
-      if (x < snapMargin) snapWindow(win.id, 'left-half')
-      else if (x + w > screenW - snapMargin) snapWindow(win.id, 'right-half')
-      else if (y < snapMargin + MENU_BAR_HEIGHT) snapWindow(win.id, 'top-left')
-      else if (x < snapMargin && y > screenH / 2) snapWindow(win.id, 'bottom-left')
-      else if (x + w > screenW - snapMargin && y > screenH / 2) snapWindow(win.id, 'bottom-right')
+    const x = livePosRef.current.x
+    const y = livePosRef.current.y
+    const w = liveSizeRef.current.width
+    const screenW = window.innerWidth
+
+    if (x <= SNAP_MARGIN) {
+      snapWindow(win.id, 'left-half')
+    } else if (x + w >= screenW - SNAP_MARGIN) {
+      snapWindow(win.id, 'right-half')
+    } else if (y <= SNAP_MARGIN + MENU_BAR_HEIGHT) {
+      maximizeWindow(win.id)
     }
-  }, [win.id, snapWindow, win.isMaximized, win.position.x, win.position.y, win.size.width, win.size.height, MENU_BAR_HEIGHT])
+  }, [win.id, snapWindow, maximizeWindow, win.isMaximized])
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove)
@@ -157,19 +169,41 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     }
   }, [handleMouseMove, handleMouseUp])
 
+  useEffect(() => {
+    return () => {
+      if (snapTimeoutRef.current) clearTimeout(snapTimeoutRef.current)
+    }
+  }, [])
+
   if (win.isMinimized) return null
 
-  return (
-    <div
-      onMouseDown={() => bringToFront(win.id)}
-      style={{
+  const frameStyle: React.CSSProperties = win.isMaximized
+    ? {
+        position: 'absolute',
+        left: 0,
+        top: MENU_BAR_HEIGHT,
+        width: '100%',
+        height: `calc(100% - ${MENU_BAR_HEIGHT + TASKBAR_RESERVE}px)`,
+        zIndex: win.zIndex,
+        borderRadius: 0,
+        boxShadow: 'none',
+        border: 'none',
+        backgroundColor: 'var(--window-bg)',
+        backdropFilter: 'var(--backdrop-blur)',
+        WebkitBackdropFilter: 'var(--backdrop-blur)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        transition: 'all 0.18s ease-out',
+      }
+    : {
         position: 'absolute',
         left: `${win.position.x}px`,
         top: `${win.position.y}px`,
         width: `${win.size.width}px`,
         height: `${win.size.height}px`,
         zIndex: win.zIndex,
-        borderRadius: win.isMaximized ? '0px' : 'var(--radius-xl)',
+        borderRadius: 'var(--radius-xl)',
         boxShadow: isActive
           ? 'var(--window-shadow), 0 0 0 1px var(--window-border)'
           : '0 16px 36px rgba(0,0,0,0.35), 0 0 0 1px rgba(139,92,246,0.15)',
@@ -182,11 +216,12 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        transition: win.isMaximized ? 'all 0.18s ease-out' : 'box-shadow 0.15s ease, border-color 0.15s ease',
+        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
         animation: 'windowOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-      }}
-    >
-      {/* Title Bar */}
+      }
+
+  return (
+    <div onMouseDown={() => bringToFront(win.id)} style={frameStyle}>
       <div
         onMouseDown={handleTitleBarMouseDown}
         onDoubleClick={() => maximizeWindow(win.id)}
@@ -200,10 +235,11 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
           borderBottom: '1px solid rgba(139,92,246,0.15)',
           cursor: win.isMaximized ? 'default' : 'move',
           position: 'relative',
+          flexShrink: 0,
+          userSelect: 'none',
         }}
       >
-        {/* App Title & Icon */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden', minWidth: 0 }}>
           <FluentIcon name={win.icon} size={17} color="var(--win-accent-cyan)" />
           <span
             style={{
@@ -219,22 +255,14 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
           </span>
         </div>
 
-        {/* Window Controls — boutons plats Windows 11 */}
-        <div style={{ display: 'flex', height: '100%', alignItems: 'stretch' }}>
-          {/* Minimize */}
+        <div style={{ display: 'flex', height: '100%', alignItems: 'stretch', flexShrink: 0 }}>
           <button
-            onClick={() => minimizeWindow(win.id)}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id) }}
             title="Réduire"
             style={{
-              width: '46px',
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              cursor: 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'background 0.1s',
+              width: '46px', border: 'none', background: 'transparent', color: 'var(--text-primary)',
+              cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s',
             }}
             onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.09)' }}
             onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
@@ -242,11 +270,10 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1" /></svg>
           </button>
 
-          {/* Maximize / Restore with Snap Menu Trigger */}
           <div
             style={{ position: 'relative', display: 'flex' }}
             onMouseEnter={() => {
-              snapTimeoutRef.current = window.setTimeout(() => setShowSnapMenu(true), 300)
+              snapTimeoutRef.current = window.setTimeout(() => setShowSnapMenu(true), 320)
             }}
             onMouseLeave={() => {
               if (snapTimeoutRef.current) clearTimeout(snapTimeoutRef.current)
@@ -254,18 +281,12 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
             }}
           >
             <button
-              onClick={() => maximizeWindow(win.id)}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); maximizeWindow(win.id) }}
               title={win.isMaximized ? 'Niveau inférieur' : 'Agrandir'}
               style={{
-                width: '46px',
-                border: 'none',
-                background: 'transparent',
-                color: 'var(--text-primary)',
-                cursor: 'default',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'background 0.1s',
+                width: '46px', border: 'none', background: 'transparent', color: 'var(--text-primary)',
+                cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s',
               }}
               onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.09)' }}
               onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
@@ -277,117 +298,42 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
               )}
             </button>
 
-            {/* Windows 11 Snap Layouts flyout */}
             {showSnapMenu && (
               <div
                 style={{
-                  position: 'absolute',
-                  top: '38px',
-                  right: '0px',
-                  width: '240px',
-                  backgroundColor: 'var(--flyout-bg)',
-                  backdropFilter: 'var(--backdrop-blur)',
-                  border: '1px solid var(--flyout-border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '12px',
-                  boxShadow: '0 12px 30px rgba(0,0,0,0.6), 0 0 20px rgba(139, 92, 246, 0.3)',
-                  zIndex: 9999,
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gap: '8px',
+                  position: 'absolute', top: '38px', right: '0px', width: '240px',
+                  backgroundColor: 'var(--flyout-bg)', backdropFilter: 'var(--backdrop-blur)',
+                  border: '1px solid var(--flyout-border)', borderRadius: 'var(--radius-md)',
+                  padding: '12px', boxShadow: '0 12px 30px rgba(0,0,0,0.6), 0 0 20px rgba(139, 92, 246, 0.3)',
+                  zIndex: 9999, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px',
                 }}
               >
-                {/* 50 / 50 Layout */}
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '4px',
-                    height: '56px',
-                    padding: '4px',
-                    borderRadius: '8px',
-                    backgroundColor: 'rgba(139, 92, 246, 0.08)',
-                    cursor: 'pointer',
-                  }}
-                >
+                <div style={{ display: 'flex', gap: '4px', height: '56px', padding: '4px', borderRadius: '8px', backgroundColor: 'rgba(139, 92, 246, 0.08)' }}>
                   <div
-                    onClick={() => {
-                      snapWindow(win.id, 'left-half')
-                      setShowSnapMenu(false)
-                    }}
+                    onClick={() => { snapWindow(win.id, 'left-half'); setShowSnapMenu(false) }}
                     title="Ancrer à gauche"
-                    style={{
-                      flex: 1,
-                      backgroundColor: 'rgba(255,255,255,0.1)',
-                      borderRadius: '4px',
-                      transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)'
-                      e.currentTarget.style.boxShadow = '0 0 8px var(--win-accent-cyan)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'
-                      e.currentTarget.style.boxShadow = 'none'
-                    }}
+                    style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)' }}
                   />
                   <div
-                    onClick={() => {
-                      snapWindow(win.id, 'right-half')
-                      setShowSnapMenu(false)
-                    }}
+                    onClick={() => { snapWindow(win.id, 'right-half'); setShowSnapMenu(false) }}
                     title="Ancrer à droite"
-                    style={{
-                      flex: 1,
-                      backgroundColor: 'rgba(255,255,255,0.1)',
-                      borderRadius: '4px',
-                      transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)'
-                      e.currentTarget.style.boxShadow = '0 0 8px var(--win-accent-cyan)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'
-                      e.currentTarget.style.boxShadow = 'none'
-                    }}
+                    style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)' }}
                   />
                 </div>
 
-                {/* 4 Quadrants Layout */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gridTemplateRows: '1fr 1fr',
-                    gap: '4px',
-                    height: '56px',
-                    padding: '4px',
-                    borderRadius: '8px',
-                    backgroundColor: 'rgba(139, 92, 246, 0.08)',
-                    cursor: 'pointer',
-                  }}
-                >
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: '4px', height: '56px', padding: '4px', borderRadius: '8px', backgroundColor: 'rgba(139, 92, 246, 0.08)' }}>
                   {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as SnapPosition[]).map(pos => (
                     <div
                       key={pos}
-                      onClick={() => {
-                        snapWindow(win.id, pos)
-                        setShowSnapMenu(false)
-                      }}
+                      onClick={() => { snapWindow(win.id, pos); setShowSnapMenu(false) }}
                       title={`Ancrer ${pos}`}
-                      style={{
-                        backgroundColor: 'rgba(255,255,255,0.1)',
-                        borderRadius: '3px',
-                        transition: 'all 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)'
-                        e.currentTarget.style.boxShadow = '0 0 8px var(--win-accent-cyan)'
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'
-                        e.currentTarget.style.boxShadow = 'none'
-                      }}
+                      style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '3px', cursor: 'pointer', transition: 'all 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
+                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)' }}
                     />
                   ))}
                 </div>
@@ -395,20 +341,13 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
             )}
           </div>
 
-          {/* Close */}
           <button
-            onClick={() => closeWindow(win.id)}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); closeWindow(win.id) }}
             title="Fermer"
             style={{
-              width: '46px',
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              cursor: 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'background 0.1s',
+              width: '46px', border: 'none', background: 'transparent', color: 'var(--text-primary)',
+              cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s',
             }}
             onMouseEnter={e => {
               e.currentTarget.style.backgroundColor = '#c42b1c'
@@ -424,44 +363,18 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
         </div>
       </div>
 
-      {/* Window Body */}
-      <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>{children}</div>
+      <div style={{ flex: 1, overflow: 'auto', position: 'relative', minHeight: 0 }}>{children}</div>
 
-      {/* Resize handles (disabled if maximized) */}
       {!win.isMaximized && (
         <>
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'n')}
-            style={{ position: 'absolute', top: 0, left: 10, right: 10, height: 6, cursor: 'n-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 's')}
-            style={{ position: 'absolute', bottom: 0, left: 10, right: 10, height: 6, cursor: 's-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'w')}
-            style={{ position: 'absolute', left: 0, top: 10, bottom: 10, width: 6, cursor: 'w-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'e')}
-            style={{ position: 'absolute', right: 0, top: 10, bottom: 10, width: 6, cursor: 'e-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'nw')}
-            style={{ position: 'absolute', top: 0, left: 0, width: 12, height: 12, cursor: 'nw-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'ne')}
-            style={{ position: 'absolute', top: 0, right: 0, width: 12, height: 12, cursor: 'ne-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'sw')}
-            style={{ position: 'absolute', bottom: 0, left: 0, width: 12, height: 12, cursor: 'sw-resize' }}
-          />
-          <div
-            onMouseDown={e => handleResizeMouseDown(e, 'se')}
-            style={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, cursor: 'se-resize' }}
-          />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'n')} style={{ position: 'absolute', top: 0, left: 10, right: 10, height: 6, cursor: 'n-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 's')} style={{ position: 'absolute', bottom: 0, left: 10, right: 10, height: 6, cursor: 's-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'w')} style={{ position: 'absolute', left: 0, top: 10, bottom: 10, width: 6, cursor: 'w-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'e')} style={{ position: 'absolute', right: 0, top: 10, bottom: 10, width: 6, cursor: 'e-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'nw')} style={{ position: 'absolute', top: 0, left: 0, width: 12, height: 12, cursor: 'nw-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'ne')} style={{ position: 'absolute', top: 0, right: 0, width: 12, height: 12, cursor: 'ne-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'sw')} style={{ position: 'absolute', bottom: 0, left: 0, width: 12, height: 12, cursor: 'sw-resize' }} />
+          <div onMouseDown={e => handleResizeMouseDown(e, 'se')} style={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, cursor: 'se-resize' }} />
         </>
       )}
     </div>
