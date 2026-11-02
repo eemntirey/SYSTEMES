@@ -162,7 +162,7 @@ export const TerminalApp: React.FC = () => {
       const result = await NativeBridge.executePowerShell(trimmed, workingDirectory)
       const output = [
         result.output,
-        result.error,
+        result.commandError,
         result.truncated ? '[Sortie tronquée : limite de 64 Kio atteinte.]' : '',
       ].filter(Boolean).join('\n')
       setTabs(prev => prev.map(tab => tab.id === targetTabId
@@ -172,8 +172,8 @@ export const TerminalApp: React.FC = () => {
             outputs: [...tab.outputs, {
               id: `result-${Date.now()}`,
               output: output || `PowerShell terminé (code ${result.exitCode}).`,
-              isError: result.exitCode !== 0 || !!result.error,
-              isInfo: result.exitCode === 0 && !result.error,
+              isError: result.exitCode !== 0 || !!result.commandError,
+              isInfo: result.exitCode === 0 && !result.commandError,
             }],
           }
         : tab))
