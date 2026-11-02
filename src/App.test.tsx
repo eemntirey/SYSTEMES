@@ -103,6 +103,9 @@ describe('Photos and Terminal', () => {
   })
 
   it('executes pwd through the native PowerShell engine', async () => {
+    vi.spyOn(NativeBridge, 'getFileLocations').mockResolvedValue({
+      locations: [{ name: 'Documents', path: 'C:/Users/test' }],
+    })
     const execute = vi.spyOn(NativeBridge, 'executePowerShell').mockResolvedValue({
       output: 'C:\\Users\\test',
       error: null,
@@ -118,7 +121,7 @@ describe('Photos and Terminal', () => {
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'pwd' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(execute).toHaveBeenCalledWith('pwd', ''))
+    await waitFor(() => expect(execute).toHaveBeenCalledWith('pwd', 'C:/Users/test'))
     expect(await screen.findByText('C:\\Users\\test')).toBeDefined()
   })
 })
