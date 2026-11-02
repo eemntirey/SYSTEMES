@@ -19,9 +19,15 @@ vi.mock('../../services/NativeBridge', () => ({
   NativeBridge: mocks,
 }))
 
-const renderExplorer = () => render(<OSProvider><FileExplorerApp /></OSProvider>)
+const renderExplorer = () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  return render(<OSProvider><FileExplorerApp /></OSProvider>)
+}
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  vi.restoreAllMocks()
+})
 
 describe('FileExplorer native integration', () => {
   it('opens the native Windows Recycle Bin', async () => {
