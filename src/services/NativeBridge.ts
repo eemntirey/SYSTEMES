@@ -119,7 +119,7 @@ export const NativeBridge = {
       success?: boolean;
       resultCode?: number;
       updatesAvailable: number | null;
-      updates?: { title: string; kbArticles: string[]; severity: string; downloaded: boolean; mandatory: boolean; rebootRequired: boolean }[];
+      updates?: { title: string; kbArticles: string[]; severity: string; downloaded: boolean; mandatory: boolean; rebootBehavior: number }[];
       service: string;
       searchedAtUtc?: string;
       error?: string;
