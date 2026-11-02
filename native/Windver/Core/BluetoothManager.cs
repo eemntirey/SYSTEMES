@@ -56,14 +56,15 @@ namespace Systemes.Native.Core
         private const string StatusScript = """
             $ErrorActionPreference = 'Stop'
             $all = @(Get-PnpDevice -Class Bluetooth -ErrorAction Stop)
-            $adapter = $all | Where-Object { $_.InstanceName -match 'LOCAL\\ADAPTER' } | Select-Object -First 1
-            $paired = @($all | Where-Object { $_.InstanceName -notmatch 'LOCAL\\ADAPTER' } | ForEach-Object {
-                @{ name = $_.FriendlyName; status = "$($_.Status)"; id = $_.InstanceName }
+            $adapter = $all | Where-Object { $_.InstanceId -notmatch '^(BTH|BTHLE)\\' -and $_.FriendlyName -match 'Bluetooth' } | Select-Object -First 1
+            $paired = @($all | Where-Object { -not $adapter -or $_.InstanceId -ne $adapter.InstanceId } | ForEach-Object {
+                @{ name = $_.FriendlyName; status = "$($_.Status)"; id = $_.InstanceId }
             })
             @{
                 adapterPresent = [bool]$adapter
                 powered = [bool]($adapter -and "$($adapter.Status)" -eq 'OK')
                 adapterName = if ($adapter) { $adapter.FriendlyName } else { $null }
+                adapterInstanceId = if ($adapter) { $adapter.InstanceId } else { $null }
                 devices = $paired
             } | ConvertTo-Json -Compress -Depth 6
             """;
@@ -80,6 +81,7 @@ namespace Systemes.Native.Core
                     adapterPresent = json.Value<bool?>("adapterPresent") ?? false,
                     powered = json.Value<bool?>("powered") ?? false,
                     adapterName = json.Value<string?>("adapterName"),
+                    adapterInstanceId = json.Value<string?>("adapterInstanceId"),
                     devices = json["devices"] is JArray arr ? arr.ToObject<object[]>() : Array.Empty<object>(),
                     note = "Bluetooth réel via Get-PnpDevice — aucun état simulé.",
                 };
