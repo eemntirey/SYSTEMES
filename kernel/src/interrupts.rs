@@ -97,7 +97,6 @@ unsafe extern "C" {
 }
 
 global_asm!(r#"
-.intel_syntax noprefix
 .global systemes_load_gdt
 .type systemes_load_gdt, @function
 systemes_load_gdt:
@@ -105,7 +104,7 @@ systemes_load_gdt:
     push 0x08
     lea rax, [rip + .Lsystemes_reload_cs]
     push rax
-    lretq
+    retfq
 .Lsystemes_reload_cs:
     mov ax, 0x10
     mov ds, ax
@@ -370,38 +369,38 @@ pub unsafe fn initialize() {
     unsafe { systemes_load_gdt(&gdt_pointer) };
 
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
-        systemes_isr0 as usize,
-        systemes_isr1 as usize,
-        systemes_isr2 as usize,
-        systemes_isr3 as usize,
-        systemes_isr4 as usize,
-        systemes_isr5 as usize,
-        systemes_isr6 as usize,
-        systemes_isr7 as usize,
-        systemes_isr8 as usize,
-        systemes_isr9 as usize,
-        systemes_isr10 as usize,
-        systemes_isr11 as usize,
-        systemes_isr12 as usize,
-        systemes_isr13 as usize,
-        systemes_isr14 as usize,
-        systemes_isr15 as usize,
-        systemes_isr16 as usize,
-        systemes_isr17 as usize,
-        systemes_isr18 as usize,
-        systemes_isr19 as usize,
-        systemes_isr20 as usize,
-        systemes_isr21 as usize,
-        systemes_isr22 as usize,
-        systemes_isr23 as usize,
-        systemes_isr24 as usize,
-        systemes_isr25 as usize,
-        systemes_isr26 as usize,
-        systemes_isr27 as usize,
-        systemes_isr28 as usize,
-        systemes_isr29 as usize,
-        systemes_isr30 as usize,
-        systemes_isr31 as usize
+        systemes_isr0 as *const () as usize,
+        systemes_isr1 as *const () as usize,
+        systemes_isr2 as *const () as usize,
+        systemes_isr3 as *const () as usize,
+        systemes_isr4 as *const () as usize,
+        systemes_isr5 as *const () as usize,
+        systemes_isr6 as *const () as usize,
+        systemes_isr7 as *const () as usize,
+        systemes_isr8 as *const () as usize,
+        systemes_isr9 as *const () as usize,
+        systemes_isr10 as *const () as usize,
+        systemes_isr11 as *const () as usize,
+        systemes_isr12 as *const () as usize,
+        systemes_isr13 as *const () as usize,
+        systemes_isr14 as *const () as usize,
+        systemes_isr15 as *const () as usize,
+        systemes_isr16 as *const () as usize,
+        systemes_isr17 as *const () as usize,
+        systemes_isr18 as *const () as usize,
+        systemes_isr19 as *const () as usize,
+        systemes_isr20 as *const () as usize,
+        systemes_isr21 as *const () as usize,
+        systemes_isr22 as *const () as usize,
+        systemes_isr23 as *const () as usize,
+        systemes_isr24 as *const () as usize,
+        systemes_isr25 as *const () as usize,
+        systemes_isr26 as *const () as usize,
+        systemes_isr27 as *const () as usize,
+        systemes_isr28 as *const () as usize,
+        systemes_isr29 as *const () as usize,
+        systemes_isr30 as *const () as usize,
+        systemes_isr31 as *const () as usize
     ];
     let idt = addr_of_mut!(IDT) as *mut IdtEntry;
     for (vector, handler) in handlers.iter().enumerate() {
@@ -469,10 +468,12 @@ mod tests {
         assert_eq!(low, 0xDEF0);
         assert_eq!(middle, 0x9ABC);
         assert_eq!(high, 0x1234_5678);
-        assert_eq!(entry.selector, KERNEL_CODE_SELECTOR);
+        let selector = unsafe { addr_of!(entry.selector).read_unaligned() };
+        let reserved = unsafe { addr_of!(entry.reserved).read_unaligned() };
+        assert_eq!(selector, KERNEL_CODE_SELECTOR);
         assert_eq!(entry.ist, 0);
         assert_eq!(entry.attributes, EXCEPTION_GATE_ATTRIBUTES);
-        assert_eq!(entry.reserved, 0);
+        assert_eq!(reserved, 0);
     }
 
     #[test]
@@ -486,6 +487,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 const fn has_cpu_error_code(vector: u8) -> bool {
     matches!(vector, 8 | 10 | 11 | 12 | 13 | 14 | 17 | 21 | 29 | 30)
 }
