@@ -106,6 +106,9 @@ jobs:
               @{ id = "phase2-protected-service-stop"; method = "services/control"; params = @{ name = "RpcSs"; action = "stop" } },
               @{ id = "phase2-security"; method = "security/read"; params = @{} },
               @{ id = "phase2-update"; method = "update/check"; params = @{} },
+              @{ id = "phase3-display"; method = "display/read"; params = @{} },
+              @{ id = "phase3-storage"; method = "storage/volumes"; params = @{} },
+              @{ id = "phase3-apps"; method = "apps/installed"; params = @{ maxItems = 50 } },
               @{ id = "phase2-file-dir-create"; method = "files/create-directory"; params = @{ path = $testDir } },
               @{ id = "phase2-file-create"; method = "files/create"; params = @{ path = $testFile; content = "SYSTEMES native integration test" } },
               @{ id = "phase2-file-list"; method = "files/list"; params = @{ path = $testRoot } },
@@ -181,6 +184,12 @@ jobs:
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
             if ($null -eq $responses["phase2-update"].result.success) { throw "update/check did not report whether the Windows Update Agent search succeeded." }
             if (-not $responses["phase2-update"].result.source) { throw "update/check did not identify its real Windows Update Agent source." }
+            if (-not $responses["phase3-display"].result.source) { throw "display/read did not report the User32 source." }
+            if ($null -eq $responses["phase3-display"].result.monitors) { throw "display/read returned no monitor inventory." }
+            if (-not $responses["phase3-storage"].result.source) { throw "storage/volumes did not report its DriveInfo/WMI source." }
+            if ($null -eq $responses["phase3-storage"].result.volumes) { throw "storage/volumes returned no volume collection." }
+            if (-not $responses["phase3-apps"].result.source) { throw "apps/installed did not report its registry source." }
+            if ($null -eq $responses["phase3-apps"].result.apps) { throw "apps/installed returned no installed-app collection." }
             if ($null -eq $responses["phase2-update"].result.updatesAvailable) { if ($responses["phase2-update"].result.success -eq $true) { throw "A successful Windows Update search must report updatesAvailable." } }
             if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
             if ($responses["phase2-file-copy"].result.copied -ne $true) { throw "files/copy did not create a native copy." }
