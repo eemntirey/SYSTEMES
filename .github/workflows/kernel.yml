@@ -53,9 +53,14 @@ jobs:
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
+          kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
+          test -n "$kernel_end"
+          kernel_image_bytes=$((kernel_end - 0x00200000))
+          test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
+          echo "Kernel image reservation: ${kernel_image_bytes} bytes (including .bss)"
       - name: Build GNU-EFI loader
         run: |
-          gcc -g -O0 -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
+          gcc -g -O0 -DKERNEL_IMAGE_BYTES=$kernel_image_bytes -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
           ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
           objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
           test -s build/uefi/BOOTX64.EFI
