@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - AttaqueComplet
       - feat/systemes-modernisation-apps
       - Osreell
   pull_request:
