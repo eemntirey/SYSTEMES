@@ -130,7 +130,8 @@ export const NativeBridge = {
     if (command.length > 16384) throw new Error('La commande dépasse la limite de 16 Kio.');
     const response = await request<{
       output: string;
-      error: string;
+      error: string | null;
+      commandError: string;
       exitCode: number;
       workingDirectory: string;
       truncated: boolean;
