@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import { OSProvider } from './context/OSContext'
 import { CalculatorApp } from './components/apps/CalculatorApp'
@@ -7,6 +7,9 @@ import { PhotosApp } from './components/apps/PhotosApp'
 import { TerminalApp } from './components/apps/TerminalApp'
 import { RecycleBinApp } from './components/apps/RecycleBinApp'
 import { useOS } from './context/OSContext'
+import { NativeBridge } from './services/NativeBridge'
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('Windows 11 Recreation Tests', () => {
   it('renders Desktop with essential shortcuts', () => {
@@ -99,11 +102,23 @@ describe('Photos and Terminal', () => {
     expect(imagesAfter[0].getAttribute('src')).not.toBe(firstSource)
   })
 
-  it('executes pwd inside the simulated terminal', () => {
+  it('executes pwd through the native PowerShell engine', async () => {
+    const execute = vi.spyOn(NativeBridge, 'executePowerShell').mockResolvedValue({
+      output: 'C:\\Users\\test',
+      error: null,
+      commandError: '',
+      exitCode: 0,
+      workingDirectory: 'C:\\Users\\test',
+      truncated: false,
+      executedBy: 'test-user',
+      elevated: false,
+      source: 'Windows PowerShell 5.1',
+    })
     render(<OSProvider><TerminalApp /></OSProvider>)
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'pwd' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(screen.getByText('C:\\Users\\eemntirey')).toBeDefined()
+    await waitFor(() => expect(execute).toHaveBeenCalledWith('pwd', ''))
+    expect(await screen.findByText('C:\\Users\\test')).toBeDefined()
   })
 })
