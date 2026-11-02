@@ -124,7 +124,8 @@ jobs:
               @{ id = "phase2-dir-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-dir") } },
               @{ id = "phase2-collision-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
               @{ id = "phase2-locations"; method = "files/locations"; params = @{} },
-              @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} }
+              @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} },
+              @{ id = "phase2-invalid-params"; method = "system/ping"; params = @("not", "an-object") }
             )
             $requestLines = $requests | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }
             $responseLines = $requestLines | & $engine
@@ -194,6 +195,7 @@ jobs:
             if ($responses["phase2-collision-delete"].result.deleted -ne $true) { throw "Collision test cleanup failed." }
             if ($responses["phase2-locations"].result.locations.Count -lt 1) { throw "files/locations returned no Windows locations." }
             if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
+            if (-not $responses["phase2-invalid-params"].error) { throw "Native IPC must reject non-object params." }
             if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
             if (Test-Path (Join-Path $testRoot "renamed-dir")) { throw "Native directory deletion did not remove the source from its original location." }
 
