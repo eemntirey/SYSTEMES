@@ -3,7 +3,18 @@
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use systemes_kernel::{memory::PhysicalFrameAllocator, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+
+unsafe extern "C" {
+    static __text_start: u8;
+    static __text_end: u8;
+    static __rodata_start: u8;
+    static __rodata_end: u8;
+    static __data_start: u8;
+    static __data_end: u8;
+    static __bss_start: u8;
+    static __bss_end: u8;
+}
 
 const DEBUG_PORT: u16 = 0xE9;
 
@@ -103,12 +114,23 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     } {
         Ok(root) => root,
         Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: page-table allocation failed\\r\\n") };
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: page-table allocation failed\\r\\n"); }
             halt();
         }
     };
-    // SAFETY: The new PML4 identity-maps the kernel, stack, descriptors, handoff data
-    // and framebuffer in the lower 512 GiB before CR3 is switched.
+    let kernel_regions = [
+        MemoryRegion { start: core::ptr::addr_of!(__text_start) as u64, end: core::ptr::addr_of!(__text_end) as u64, permissions: PagePermissions::ReadOnlyExecute },
+        MemoryRegion { start: core::ptr::addr_of!(__rodata_start) as u64, end: core::ptr::addr_of!(__rodata_end) as u64, permissions: PagePermissions::ReadOnlyNoExecute },
+        MemoryRegion { start: core::ptr::addr_of!(__data_start) as u64, end: core::ptr::addr_of!(__data_end) as u64, permissions: PagePermissions::ReadWriteNoExecute },
+        MemoryRegion { start: core::ptr::addr_of!(__bss_start) as u64, end: core::ptr::addr_of!(__bss_end) as u64, permissions: PagePermissions::ReadWriteNoExecute },
+    ];
+    // SAFETY: The inherited UEFI identity map is active and linker bounds are page aligned.
+    if unsafe { systemes_kernel::paging::protect_regions(&mut frame_allocator, page_table_root, &kernel_regions) }.is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X section mapping failed\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX\\r\\n"); }
+    // SAFETY: The new PML4 identity-maps boot data, stack, descriptors and framebuffer.
     unsafe { asm!("mov cr3, {}", in(reg) page_table_root, options(nostack, preserves_flags)) };
     let active_cr3: u64;
     // SAFETY: Reading CR3 is valid in ring 0 on x86_64.
