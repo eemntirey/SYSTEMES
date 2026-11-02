@@ -29,7 +29,6 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     maximizeWindow,
     updateWindowPosition,
     updateWindowSize,
-    snapWindow,
   } = useOS()
 
   const layout = useDisplayLayout()
@@ -171,13 +170,17 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     const wa = mon.workArea
 
     if (x <= wa.x + SNAP_MARGIN) {
-      snapWindow(win.id, 'left-half')
+      const r = snapRect('left-half', mon)
+      updateWindowPosition(win.id, r.x, r.y)
+      updateWindowSize(win.id, r.width, r.height)
     } else if (x + w >= wa.x + wa.width - SNAP_MARGIN) {
-      snapWindow(win.id, 'right-half')
+      const r = snapRect('right-half', mon)
+      updateWindowPosition(win.id, r.x, r.y)
+      updateWindowSize(win.id, r.width, r.height)
     } else if (y <= wa.y + SNAP_MARGIN) {
       maximizeWindow(win.id)
     }
-  }, [win.id, snapWindow, maximizeWindow, win.isMaximized, layout])
+  }, [win.id, updateWindowPosition, updateWindowSize, maximizeWindow, win.isMaximized, layout])
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove)
@@ -244,7 +247,6 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     const r = snapRect(pos, mon)
     updateWindowPosition(win.id, r.x, r.y)
     updateWindowSize(win.id, r.width, r.height)
-    snapWindow(win.id, pos)
     setShowSnapMenu(false)
   }
 
