@@ -16,12 +16,42 @@ namespace Systemes.Native.Core
         private const int MaxOutputCharacters = 65536;
         private const int TimeoutMilliseconds = 30000;
 
+        private static readonly string[] BlockedCommandPatterns =
+        {
+            "format-volume", "format ", "clear-disk", "initialize-disk",
+            "remove-partition", "remove-volume",
+            "stop-computer", "restart-computer", "checkpoint-computer",
+            "disable-computerrestore", "enable-windowsoptionalfeature",
+            "uninstall-windowsfeature", "remove-windowsfeature",
+            "set-executionpolicy unrestricted", "set-executionpolicy bypass",
+            "invoke-expression", "iex ", "downloadstring", "downloadfile",
+            "start-bitstransfer", "bitsadmin",
+            "reg delete", "remove-itemproperty",
+            "net user ", "net localgroup administrators",
+            "schtasks /create", "schtasks /delete",
+            "shutdown ", "shutdown.exe",
+        };
+
+        private static void AssertCommandAllowed(string command)
+        {
+            var lower = command.ToLowerInvariant();
+            foreach (var pattern in BlockedCommandPatterns)
+            {
+                if (lower.Contains(pattern))
+                    throw new UnauthorizedAccessException(
+                        $"Commande refusée par la politique SYSTEMES : motif « {pattern.Trim()} ». " +
+                        "Le terminal n’autorise pas les opérations destructives ou d’élévation implicite.");
+            }
+        }
+
         public static object Execute(string command, string workingDirectory)
         {
             if (string.IsNullOrWhiteSpace(command))
                 throw new ArgumentException("La commande PowerShell est obligatoire.", nameof(command));
             if (command.Length > MaxCommandCharacters)
                 throw new ArgumentException("La commande dépasse la limite de 16 Kio.", nameof(command));
+            AssertCommandAllowed(command);
+
             var directory = string.IsNullOrWhiteSpace(workingDirectory)
                 ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                 : Path.GetFullPath(workingDirectory);
@@ -50,20 +80,23 @@ try {{
             $script:truncated = $true
         }}
     }}
-    $pipelineSuccess = $?
-    if (-not $pipelineSuccess -and $LASTEXITCODE) {{ $exitCode = [int]$LASTEXITCODE }}
-    elseif (-not $pipelineSuccess) {{ $exitCode = 1 }}
+    $pipelineSucceeded = $?
+    if ($null -ne $LASTEXITCODE) {{ $exitCode = [int]$LASTEXITCODE }}
+    elseif (-not $pipelineSucceeded) {{ $exitCode = 1 }}
 }} catch {{
+    $errorText = $_.ToString()
     $exitCode = 1
-    $errorText = $_.Exception.Message
 }}
 $payload = @{{ output = $builder.ToString(); truncated = $truncated; exitCode = $exitCode; error = $errorText; workingDirectory = (Get-Location).Path }} | ConvertTo-Json -Compress -Depth 4
-Write-Output ('SYSTEMES_PS_RESULT:' + $payload)
+Write-Output (\"SYSTEMES_PS_RESULT:\" + $payload)
 ";
 
             var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             var powershell = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
             if (!File.Exists(powershell)) powershell = "powershell.exe";
+
+            // EncodedCommand évite les problèmes de quoting du shell.
+            var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
             var start = new ProcessStartInfo
             {
@@ -75,10 +108,11 @@ Write-Output ('SYSTEMES_PS_RESULT:' + $payload)
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            start.ArgumentList.Add("-NoLogo");
             start.ArgumentList.Add("-NoProfile");
             start.ArgumentList.Add("-NonInteractive");
-            start.ArgumentList.Add("-Command");
-            start.ArgumentList.Add(script);
+            start.ArgumentList.Add("-EncodedCommand");
+            start.ArgumentList.Add(encodedScript);
 
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Impossible de démarrer Windows PowerShell.");
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
