@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   renameFile: vi.fn(),
   copyFile: vi.fn(),
   moveFile: vi.fn(),
+  readWifiAdapterStatus: vi.fn(),
+  readBluetoothStatus: vi.fn(),
 }))
 
 vi.mock('../../services/NativeBridge', () => ({
@@ -23,6 +25,10 @@ vi.mock('../../services/NativeBridge', () => ({
 
 const renderExplorer = () => {
   vi.spyOn(window, 'confirm').mockReturnValue(true)
+  mocks.getFileLocations.mockResolvedValue({ locations: [] })
+  mocks.readHardware.mockResolvedValue({ disks: [] })
+  mocks.readWifiAdapterStatus.mockResolvedValue({ enabled: true })
+  mocks.readBluetoothStatus.mockResolvedValue({ powered: true })
   return render(<OSProvider><FileExplorerApp /></OSProvider>)
 }
 
