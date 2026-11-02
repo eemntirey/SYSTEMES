@@ -59,7 +59,7 @@ namespace Systemes.Native.Core
                             severity = Convert.ToString(item.MsrcSeverity) ?? "",
                             downloaded = Convert.ToBoolean(item.IsDownloaded),
                             mandatory = Convert.ToBoolean(item.IsMandatory),
-                            rebootBehavior = Convert.ToInt32(item.RebootRequired)
+                            rebootRequired = Convert.ToBoolean(item.RebootRequired)
                         });
                     }
                     finally
