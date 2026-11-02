@@ -24,7 +24,7 @@ pub enum PagingError {
     NxUnsupported,
     InvalidRegion,
     OverlappingRegions,
-    WriteExecuteViolation,
+    WriteExecuteViolation,\n    PermissionMismatch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,6 +161,32 @@ pub unsafe fn protect_regions(
             let index = ((address >> 12) & 0x1ff) as usize;
             // SAFETY: The page table has 512 entries and index is in 0..512.
             unsafe { table.add(index).write((address & ADDRESS_MASK) | region.permissions.flags()); }
+            address += PAGE_SIZE;
+        }
+    }
+    Ok(())
+}
+
+/// Verify that each requested 4 KiB leaf maps the same physical page with exact W/NX bits.
+pub unsafe fn verify_regions(root: u64, regions: &[MemoryRegion]) -> Result<(), PagingError> {
+    validate_regions(regions)?;
+    for region in regions {
+        let mut address = region.start;
+        while address < region.end {
+            let indices = page_table_indices(address);
+            // SAFETY: The supplied root is the active kernel-owned PML4 identity map.
+            let pml4 = root as *const u64;
+            let pdpt = unsafe { ((*pml4.add(indices[0])) & ADDRESS_MASK) as *const u64 };
+            let directory = unsafe { ((*pdpt.add(indices[1])) & ADDRESS_MASK) as *const u64 };
+            let pde = unsafe { directory.add(indices[2]).read() };
+            if pde & HUGE != 0 { return Err(PagingError::PermissionMismatch); }
+            let table = (pde & ADDRESS_MASK) as *const u64;
+            let pte = unsafe { table.add(indices[3]).read() };
+            let expected = region.permissions.flags();
+            if (pte & ADDRESS_MASK) != (address & ADDRESS_MASK)
+                || (pte & (WRITABLE | NX)) != (expected & (WRITABLE | NX)) {
+                return Err(PagingError::PermissionMismatch);
+            }
             address += PAGE_SIZE;
         }
     }
