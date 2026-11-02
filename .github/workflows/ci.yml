@@ -6,11 +6,13 @@ on:
       - main
       - AttaqueComplet
       - Phase2-Parametres-Natifs
+      - Phase3-Services-Windows
       - feat/systemes-modernisation-apps
       - Osreell
   pull_request:
     branches:
       - main
+      - Phase2-Parametres-Natifs
 
 permissions:
   contents: read
@@ -175,6 +177,8 @@ jobs:
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
             if ($null -eq $responses["phase2-devices"].result.devices -or $null -eq $responses["phase2-devices"].result.count -or $null -eq $responses["phase2-devices"].result.problemCount -or -not $responses["phase2-devices"].result.source) { throw "devices/read returned no Plug and Play health inventory." }
             if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
+            $protectedRpc = @($responses["phase2-services"].result.services | Where-Object { $_.name -eq "RpcSs" -and $_.isProtected -eq $true })
+            if ($protectedRpc.Count -ne 1) { throw "services/read did not mark the Windows RPC service as protected." }
             if (-not $responses["phase2-protected-service-stop"].error) { throw "services/control allowed stopping a protected Windows RPC service." }
             if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
             if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
