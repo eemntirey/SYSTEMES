@@ -242,6 +242,104 @@ namespace Systemes.Native.Core
             };
         }
 
+        private static void CopyDirectoryTree(string sourcePath, string destinationPath)
+        {
+            Directory.CreateDirectory(destinationPath);
+            foreach (var entry in new DirectoryInfo(sourcePath).EnumerateFileSystemInfos())
+            {
+                var attributes = File.GetAttributes(entry.FullName);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException("La copie récursive refuse les liens symboliques et points de réanalyse.");
+                var target = Path.Combine(destinationPath, entry.Name);
+                if ((attributes & FileAttributes.Directory) != 0)
+                    CopyDirectoryTree(entry.FullName, target);
+                else
+                    File.Copy(entry.FullName, target, overwrite: false);
+            }
+        }
+
+        private static void ValidateTransferDestination(string sourcePath, string destinationPath)
+        {
+            if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("La source et la destination sont identiques.");
+            var parent = Path.GetDirectoryName(destinationPath);
+            if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))
+                throw new DirectoryNotFoundException("Le dossier de destination n’existe pas.");
+            if (File.Exists(destinationPath) || Directory.Exists(destinationPath))
+                throw new IOException("La destination existe déjà ; aucun écrasement automatique n’est autorisé.");
+            if (Directory.Exists(sourcePath))
+            {
+                var sourcePrefix = Path.TrimEndingDirectorySeparator(sourcePath) + Path.DirectorySeparatorChar;
+                if (destinationPath.StartsWith(sourcePrefix, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Un dossier ne peut pas être copié ou déplacé à l’intérieur de lui-même.");
+            }
+        }
+
+        public static object CopyEntry(string source, string destination)
+        {
+            var sourcePath = ResolvePath(source);
+            var destinationPath = ResolvePath(destination);
+            if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+                throw new FileNotFoundException("L’élément source n’existe plus.", sourcePath);
+            ValidateTransferDestination(sourcePath, destinationPath);
+
+            var isDirectory = Directory.Exists(sourcePath);
+            if (isDirectory)
+                CopyDirectoryTree(sourcePath, destinationPath);
+            else
+                File.Copy(sourcePath, destinationPath, overwrite: false);
+
+            return new
+            {
+                copied = true,
+                isDirectory,
+                source = sourcePath.Replace('\\', '/'),
+                destination = destinationPath.Replace('\\', '/'),
+                note = "Copie Windows effectuée sans écrasement ; les liens symboliques sont refusés."
+            };
+        }
+
+        public static object MoveEntry(string source, string destination)
+        {
+            var sourcePath = ResolvePath(source);
+            var destinationPath = ResolvePath(destination);
+            if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+                throw new FileNotFoundException("L’élément source n’existe plus.", sourcePath);
+            ValidateTransferDestination(sourcePath, destinationPath);
+
+            var isDirectory = Directory.Exists(sourcePath);
+            var sameVolume = string.Equals(Path.GetPathRoot(sourcePath), Path.GetPathRoot(destinationPath), StringComparison.OrdinalIgnoreCase);
+            if (sameVolume)
+            {
+                if (isDirectory)
+                    Directory.Move(sourcePath, destinationPath);
+                else
+                    File.Move(sourcePath, destinationPath);
+            }
+            else
+            {
+                if (isDirectory)
+                {
+                    CopyDirectoryTree(sourcePath, destinationPath);
+                    Directory.Delete(sourcePath, recursive: true);
+                }
+                else
+                {
+                    File.Copy(sourcePath, destinationPath, overwrite: false);
+                    File.Delete(sourcePath);
+                }
+            }
+
+            return new
+            {
+                moved = true,
+                isDirectory,
+                source = sourcePath.Replace('\\', '/'),
+                destination = destinationPath.Replace('\\', '/'),
+                note = "Déplacement Windows effectué sans écrasement."
+            };
+        }
+
         public static object OpenRecycleBin()
         {
             var start = new ProcessStartInfo
