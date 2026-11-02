@@ -44,7 +44,7 @@ $exitCode = 0
 $errorText = ''
 try {{
     Set-Location -LiteralPath $directory -ErrorAction Stop
-    & ([scriptblock]::Create($command)) *>&1 | ForEach-Object {{
+    & ([scriptblock]::Create($command)) *>&1 | Out-String -Stream -Width 240 | ForEach-Object {{
         if ($builder.Length -lt {MaxOutputCharacters}) {{
             [void]$builder.AppendLine([string]$_)
         }} else {{
