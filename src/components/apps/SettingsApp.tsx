@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
 import { WALLPAPERS } from '../../data/constants'
 import { NativeBridge } from '../../services/NativeBridge'
+import { readDisplayLayout, readInstalledApps, readStorageVolumes, type AppsSnapshot, type DisplaySnapshot, type StorageSnapshot } from '../../native/p2'
 
-type SectionId = 'home' | 'system' | 'bluetooth' | 'network' | 'personalization' | 'apps' | 'accounts' | 'time' | 'gaming' | 'accessibility' | 'privacy' | 'update' | 'about'
+type SectionId = 'home' | 'system' | 'bluetooth' | 'network' | 'personalization' | 'apps' | 'accounts' | 'time' | 'gaming' | 'accessibility' | 'privacy' | 'update' | 'storage' | 'about'
 
 type WindowsUpdateResult = {
   success?: boolean
@@ -24,6 +25,7 @@ type NavItem = { id: SectionId; label: string; description: string; icon: string
 const NAV: NavItem[] = [
   { id: 'home', label: 'Accueil', description: 'Vue d’ensemble', icon: 'home' },
   { id: 'system', label: 'Système', description: 'Affichage, son, notifications, alimentation', icon: 'monitor' },
+  { id: 'storage', label: 'Stockage', description: 'Volumes, disques et espace disponible', icon: 'hard-drive' },
   { id: 'bluetooth', label: 'Bluetooth et appareils', description: 'Bluetooth et périphériques', icon: 'bluetooth' },
   { id: 'network', label: 'Réseau et Internet', description: 'Wi-Fi, mode avion et partage de connexion', icon: 'wifi' },
   { id: 'personalization', label: 'Personnalisation', description: 'Arrière-plan, couleurs, écran de verrouillage', icon: 'palette' },
@@ -62,6 +64,15 @@ const Row: React.FC<{ title: string; description?: string; control?: React.React
 const Group: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => <><h2 style={{ fontSize: 15, fontWeight: 650, margin: '25px 0 10px' }}>{title}</h2><div style={panel}>{children}</div></>
 const Range: React.FC<{ value: number; onChange: (value: number) => void; label: string; min?: number; max?: number }> = ({ value, onChange, label, min = 0, max = 100 }) => <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><input aria-label={label} type="range" min={min} max={max} value={value} onChange={e => onChange(Number(e.target.value))} style={{ width: 125, accentColor: 'var(--win-accent)' }} /><span style={{ ...muted, width: 35, textAlign: 'right' }}>{value}%</span></div>
 
+const formatStorageBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 Gio'
+  const units = ['o', 'Kio', 'Mio', 'Gio', 'Tio']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+  return `${value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} ${units[unit]}`
+}
+
 export const SettingsApp: React.FC = () => {
   const s = useOS()
   const [section, setSection] = useState<SectionId>('home')
@@ -71,12 +82,47 @@ export const SettingsApp: React.FC = () => {
   const [updateInfo, setUpdateInfo] = useState('Aucune recherche Windows Update effectuée dans cette session.')
   const [updateResult, setUpdateResult] = useState<WindowsUpdateResult | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [appsSnapshot, setAppsSnapshot] = useState<AppsSnapshot | null>(null)
+  const [appsError, setAppsError] = useState<string | null>(null)
+  const [appsLoading, setAppsLoading] = useState(false)
+  const [storageSnapshot, setStorageSnapshot] = useState<StorageSnapshot | null>(null)
+  const [storageError, setStorageError] = useState<string | null>(null)
+  const [storageLoading, setStorageLoading] = useState(false)
+  const [displaySnapshot, setDisplaySnapshot] = useState<DisplaySnapshot | null>(null)
+  const [displayError, setDisplayError] = useState<string | null>(null)
+  const [displayLoading, setDisplayLoading] = useState(false)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('fr')
     return q ? NAV.filter(item => `${item.label} ${item.description}`.toLocaleLowerCase('fr').includes(q)) : NAV
   }, [query])
   const current = NAV.find(item => item.id === section) ?? NAV[0]
+
+  useEffect(() => {
+    let active = true
+    if (section === 'apps') {
+      setAppsLoading(true)
+      setAppsError(null)
+      void readInstalledApps().then(value => { if (active) setAppsSnapshot(value) })
+        .catch(cause => { if (active) setAppsError(cause instanceof Error ? cause.message : String(cause)) })
+        .finally(() => { if (active) setAppsLoading(false) })
+    }
+    if (section === 'storage') {
+      setStorageLoading(true)
+      setStorageError(null)
+      void readStorageVolumes().then(value => { if (active) setStorageSnapshot(value) })
+        .catch(cause => { if (active) setStorageError(cause instanceof Error ? cause.message : String(cause)) })
+        .finally(() => { if (active) setStorageLoading(false) })
+    }
+    if (section === 'system') {
+      setDisplayLoading(true)
+      setDisplayError(null)
+      void readDisplayLayout().then(value => { if (active) setDisplaySnapshot(value) })
+        .catch(cause => { if (active) setDisplayError(cause instanceof Error ? cause.message : String(cause)) })
+        .finally(() => { if (active) setDisplayLoading(false) })
+    }
+    return () => { active = false }
+  }, [section])
   const checkWindowsUpdates = async () => {
     if (checkingUpdates) return
     setCheckingUpdates(true)
@@ -136,6 +182,19 @@ export const SettingsApp: React.FC = () => {
             <Row title="Résolution" description="Résolution logique de l’environnement." control={choose(s.resolution, s.setResolution, [['1280x720','1280 × 720'],['1366x768','1366 × 768'],['1600x900','1600 × 900'],['1920x1080','1920 × 1080'],['2560x1440','2560 × 1440']], 'Résolution')} />
             <Row title="Fréquence de rafraîchissement" control={choose(s.refreshRate, s.setRefreshRate, [['60Hz','60 Hz'],['75Hz','75 Hz'],['120Hz','120 Hz'],['144Hz','144 Hz']], 'Fréquence')} last />
           </Group>
+          <Group title="Écrans connectés">
+            {displayLoading && <Row title="Lecture des écrans Windows…" description="Interrogation de l’API User32." />}
+            {displayError && <Row title="Inventaire indisponible" description={displayError} />}
+            {displaySnapshot && <>
+              <Row title={`${displaySnapshot.monitorCount} écran(s) détecté(s)`} description={`Écran principal : ${displaySnapshot.resolution} · Bureau virtuel : ${displaySnapshot.virtualScreen.width} × ${displaySnapshot.virtualScreen.height}`} />
+              {displaySnapshot.monitors.map((monitor, index) => <Row
+                key={monitor.device || index}
+                title={`${monitor.device || `Écran ${index + 1}`} ${monitor.isPrimary ? '· Principal' : ''}`}
+                description={`${monitor.resolution} · Position ${monitor.bounds.x}, ${monitor.bounds.y} · Zone de travail ${monitor.workArea.width} × ${monitor.workArea.height}`}
+                last={index === displaySnapshot.monitors.length - 1}
+              />)}
+            </>}
+          </Group>
           <Group title="Son">
             <Row title="Volume général" control={<Range label="Volume" value={s.volume} onChange={s.setVolume} />} />
             <Row title="Son" description={s.isMuted ? 'Son coupé' : 'Son activé'} control={<button style={button} onClick={s.toggleMute}>{s.isMuted ? 'Réactiver' : 'Couper le son'}</button>} last />
@@ -177,10 +236,54 @@ export const SettingsApp: React.FC = () => {
         </>
       case 'apps':
         return <>
-          <Group title="Applications intégrées">{['Explorateur de fichiers','Navigateur web','Bloc-notes','Terminal','Calculatrice','Paint','Photos','Paramètres'].map((name, i, all) => <Row key={name} title={name} description="Application disponible dans le bureau SYSTEMES." control={<span style={muted}>Intégrée</span>} last={i === all.length - 1} />)}</Group>
+          <Group title="Applications intégrées">
+            {['Explorateur de fichiers','Navigateur web','Bloc-notes','Terminal','Calculatrice','Paint','Photos','Paramètres'].map((name, i, all) => <Row key={name} title={name} description="Application disponible dans le bureau SYSTEMES." control={<span style={muted}>Intégrée</span>} last={i === all.length - 1} />)}
+          </Group>
+          <Group title="Applications Windows installées">
+            {appsLoading && <Row title="Inventaire en cours…" description="Lecture des entrées de désinstallation du Registre Windows." />}
+            {appsError && <Row title="Inventaire indisponible" description={appsError} />}
+            {appsSnapshot && <>
+              <Row title={`${appsSnapshot.totalFound} application(s) détectée(s)`} description={`${appsSnapshot.source} · ${appsSnapshot.note}`} />
+              {appsSnapshot.apps.map((app, index) => <Row
+                key={app.id}
+                title={app.name}
+                description={[app.version ? `Version ${app.version}` : '', app.publisher, app.installDate ? `Installée le ${app.installDate}` : ''].filter(Boolean).join(' · ') || 'Informations éditeur non fournies'}
+                control={<span style={muted}>{app.hasUninstaller ? 'Désinstallateur détecté' : 'Inventaire seul'}</span>}
+                last={index === appsSnapshot.apps.length - 1}
+              />)}
+              {appsSnapshot.truncated && <Row title="Liste limitée" description={`Affichage de ${appsSnapshot.count} applications sur ${appsSnapshot.totalFound} détectées.`} last />}
+            </>}
+          </Group>
           <Group title="Applications par défaut"><Row title="Choisir les applications par défaut" description="L’association par type de fichier n’est pas encore reliée à un gestionnaire." control={<span style={muted}>Non configuré</span>} last /></Group>
         </>
-      case 'accounts':
+      case 'storage':
+        return <>
+          <Group title="Volumes Windows">
+            {storageLoading && <Row title="Lecture des volumes…" description="Interrogation de DriveInfo." />}
+            {storageError && <Row title="Inventaire indisponible" description={storageError} />}
+            {storageSnapshot && storageSnapshot.volumes.map((volume, index) => <Row
+              key={volume.name}
+              title={`${volume.name} ${volume.label ? `· ${volume.label}` : ''}`}
+              description={volume.isReady
+                ? `${volume.driveType} · ${volume.format || 'Format inconnu'} · ${formatStorageBytes(volume.freeBytes)} libres sur ${formatStorageBytes(volume.totalBytes)}`
+                : `${volume.driveType} · Volume non prêt ou inaccessible`}
+              control={volume.isReady ? <div style={{ width: 110 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{Math.max(0, 100 - volume.freePercent).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % utilisé</div>
+                <div style={{ height: 6, background: 'var(--window-border)', borderRadius: 6, overflow: 'hidden' }}><div style={{ height: '100%', width: `${Math.max(0, Math.min(100, 100 - volume.freePercent))}%`, background: 'var(--win-accent)' }} /></div>
+              </div> : <span style={muted}>Indisponible</span>}
+              last={index === storageSnapshot.volumes.length - 1 && storageSnapshot.disks.length === 0}
+            />)}
+          </Group>
+          <Group title="Disques physiques">
+            {storageSnapshot?.disks.map((disk, index) => <Row
+              key={`${disk.model}-${index}`}
+              title={disk.model}
+              description={[`${formatStorageBytes(disk.sizeBytes)}`, disk.interfaceType, disk.mediaType, disk.status].filter(Boolean).join(' · ')}
+              last={index === storageSnapshot.disks.length - 1}
+            />)}
+            {storageSnapshot && <Row title={`${storageSnapshot.diskCount} disque(s) physique(s)`} description={`${storageSnapshot.source} · Inventaire en lecture seule ; aucune opération sur les partitions.`} last />}
+          </Group>
+        </>      case 'accounts':
         return <>
           <div style={{ ...panel, padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--win-accent)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 22 }}>U</div><div><div style={{ fontSize: 17, fontWeight: 650 }}>Utilisateur</div><div style={muted}>Compte local · Session actuelle</div></div></div>
           <Group title="Synchronisation"><Row title="Synchroniser les paramètres" description="Préférence locale ; aucun compte cloud n’est connecté." control={toggle(s.syncSettings, s.toggleSyncSettings, 'Synchronisation')} last /></Group>
