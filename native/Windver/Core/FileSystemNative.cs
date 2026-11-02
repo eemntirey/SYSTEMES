@@ -14,8 +14,37 @@ namespace Systemes.Native.Core
         private static string ResolvePath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
-                return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.GetFullPath(path);
+                path = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (path.IndexOf('\0') >= 0 || path.Length > 32767)
+                throw new ArgumentException("Chemin vide, invalide ou trop long.", nameof(path));
+            if (path.StartsWith(@"\\\\.\\", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(@"\\\\?\\", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Les espaces de noms de périphériques Windows ne sont pas autorisés.", nameof(path));
+            if (path.Length > 2 && path[1] == ':' && path.IndexOf(':', 2) >= 0)
+                throw new ArgumentException("Les flux de données alternatifs NTFS ne sont pas autorisés.", nameof(path));
+
+            var fullPath = Path.GetFullPath(path);
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(root))
+                throw new ArgumentException("Le chemin doit appartenir à un volume ou partage valide.", nameof(path));
+
+            // Ne jamais suivre silencieusement un lien symbolique/jonction pendant une opération
+            // sur le système de fichiers : chaque composant existant est vérifié depuis la racine.
+            var current = root;
+            var relative = fullPath.Substring(root.Length);
+            foreach (var segment in relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if (!File.Exists(current) && !Directory.Exists(current))
+                    continue;
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(current); }
+                catch (Exception ex) { throw new IOException("Impossible de vérifier la sécurité du chemin.", ex); }
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException("Les liens symboliques et points de réanalyse sont refusés pour cette opération.");
+            }
+            return fullPath;
         }
 
         public static object ReadKnownLocations()
