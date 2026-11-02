@@ -34,6 +34,11 @@ interface ProcessSnapshot {
 type NativeMemorySnapshot = Awaited<ReturnType<typeof NativeBridge.readMemory>>
 const formatRate = (bytesPerSecond: number) => (bytesPerSecond / (1024 ** 2)).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mio/s'
 const formatGiB = (bytes: number) => (bytes / (1024 ** 3)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })
+const formatBytes = (bytes?: number | null) => bytes == null
+  ? '—'
+  : bytes >= 1024 ** 3
+    ? `${(bytes / (1024 ** 3)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Gio`
+    : `${(bytes / (1024 ** 2)).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} Mio`
 type SortMode = 'cpu' | 'memory' | 'name'
 
 const protectedProcessNames = new Set([
@@ -203,6 +208,48 @@ export const ProcessManagerApp: React.FC = () => {
           <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{performance?.networks?.length ? `${formatRate(performance.networks.reduce((sum, item) => sum + item.sendBytesPerSecond, 0))} envoyés` : performance?.networkError || 'Compteur réseau indisponible'}</div>
         </div>
       </div>
+      <details style={{ border: '1px solid var(--window-border)', borderRadius: 10, background: 'var(--flyout-card)', padding: '9px 12px' }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--text-secondary)' }}>
+          Détail des adaptateurs et compteurs · {performance?.sampledAtUtc ? new Date(performance.sampledAtUtc).toLocaleTimeString('fr-FR') : 'échantillon courant'}
+        </summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, paddingTop: 10 }}>
+          <section style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 11 }}>GPU</strong>
+            {performance?.gpus?.length ? performance.gpus.map(gpu => (
+              <div key={gpu.adapter} style={{ fontSize: 11, paddingTop: 5, overflowWrap: 'anywhere' }}>
+                <div>{gpu.adapter}</div>
+                <div style={{ color: 'var(--text-tertiary)' }}>
+                  {gpu.utilizationPercent == null ? 'Utilisation indisponible' : `Charge ${gpu.utilizationPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`}
+                  {' · VRAM dédiée '}{formatBytes(gpu.dedicatedMemoryBytes)}
+                  {' · mémoire partagée '}{formatBytes(gpu.sharedMemoryBytes)}
+                </div>
+              </div>
+            )) : <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{performance?.gpuError || 'Aucun compteur GPU exploitable.'}</div>}
+          </section>
+          <section style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 11 }}>Disques physiques</strong>
+            {performance?.disks?.length ? performance.disks.map(disk => (
+              <div key={disk.name} style={{ fontSize: 11, paddingTop: 5 }}>
+                <div>{disk.name} · {disk.activePercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % actif</div>
+                <div style={{ color: 'var(--text-tertiary)' }}>Lecture {formatRate(disk.readBytesPerSecond)} · Écriture {formatRate(disk.writeBytesPerSecond)}</div>
+              </div>
+            )) : <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{performance?.diskError || 'Aucun compteur disque exploitable.'}</div>}
+          </section>
+          <section style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 11 }}>Interfaces réseau</strong>
+            {performance?.networks?.length ? performance.networks.map(network => (
+              <div key={network.name} style={{ fontSize: 11, paddingTop: 5, overflowWrap: 'anywhere' }}>
+                <div>{network.name}</div>
+                <div style={{ color: 'var(--text-tertiary)' }}>Reçu {formatRate(network.receiveBytesPerSecond)} · Envoyé {formatRate(network.sendBytesPerSecond)}</div>
+              </div>
+            )) : <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{performance?.networkError || 'Aucun compteur réseau exploitable.'}</div>}
+          </section>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-tertiary)', paddingTop: 8 }}>
+          Source : {performance?.source || 'compteurs de performances Windows'} · Les compteurs non fournis par le pilote restent indiqués comme indisponibles.
+        </div>
+      </details>
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 8, background: 'var(--flyout-card)', flex: 1, minWidth: 220 }}>
           <FluentIcon name="search" size={16} />
