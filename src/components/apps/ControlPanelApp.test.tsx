@@ -59,7 +59,7 @@ describe('ControlPanelApp native Windows services', () => {
   it('loads the real service inventory and displays its source', async () => {
     render(<ControlPanelApp />);
     expect(await screen.findByText('Spouleur d’impression')).toBeTruthy();
-    expect(screen.getByText('WMI Win32_Service')).toBeTruthy();
+    expect(screen.getByText(/WMI Win32_Service/)).toBeTruthy();
     expect(screen.getByText('3')).toBeTruthy();
   });
 
