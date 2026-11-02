@@ -114,6 +114,22 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async checkWindowsUpdates() {
+    const response = await request<{
+      success?: boolean;
+      resultCode?: number;
+      updatesAvailable: number | null;
+      updates?: { title: string; kbArticles: string[]; severity: string; downloaded: boolean; mandatory: boolean; rebootRequired: boolean }[];
+      service: string;
+      searchedAtUtc?: string;
+      error?: string;
+      note: string;
+    }>('update/check');
+    if (!response.result) throw new Error('Windows Update n’a retourné aucun résultat.');
+    if (response.result.error) throw new Error(response.result.error);
+    return response.result;
+  },
+
   async controlService(name: string, action: 'start' | 'stop') {
     if (!/^[A-Za-z0-9_.-]{1,128}$/.test(name)) throw new Error('Nom de service invalide.');
     const response = await request('services/control', { name, action });
