@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - AttaqueComplet
+      - phase3-native-windows-settings
       - feat/systemes-modernisation-apps
       - Osreell
   pull_request:
@@ -178,6 +179,9 @@ jobs:
             if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
             if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
+            if ($null -eq $responses["phase2-update"].result.success) { throw "update/check did not report whether the Windows Update Agent search succeeded." }
+            if (-not $responses["phase2-update"].result.source) { throw "update/check did not identify its real Windows Update Agent source." }
+            if ($null -eq $responses["phase2-update"].result.updatesAvailable) { if ($responses["phase2-update"].result.success -eq $true) { throw "A successful Windows Update search must report updatesAvailable." } }
             if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
             if ($responses["phase2-file-copy"].result.copied -ne $true) { throw "files/copy did not create a native copy." }
             if ($responses["phase2-file-move"].result.moved -ne $true) { throw "files/move did not move the copied file." }
