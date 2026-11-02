@@ -112,6 +112,11 @@ jobs:
               @{ id = "phase2-file-read-content"; method = "files/read-content"; params = @{ path = $testFile } },
               @{ id = "phase2-file-write"; method = "files/write"; params = @{ path = $testFile; content = "SYSTEMES updated integration test" } },
               @{ id = "phase2-file-read-updated"; method = "files/read-content"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-copy"; method = "files/copy"; params = @{ source = $testFile; destination = (Join-Path $testRoot "copy-smoke.txt") } },
+              @{ id = "phase2-file-move"; method = "files/move"; params = @{ source = (Join-Path $testRoot "copy-smoke.txt"); destination = (Join-Path $testRoot "moved-smoke.txt") } },
+              @{ id = "phase2-file-ads"; method = "files/read-content"; params = @{ path = ($testFile + ":systemes") } },
+              @{ id = "phase2-file-device-path"; method = "files/read-content"; params = @{ path = '\\.\C:\Windows\win.ini' } },
+              @{ id = "phase2-terminal"; method = "terminal/execute"; params = @{ command = "Write-Output 'SYSTEMES_TERMINAL_OK'"; workingDirectory = $testRoot } },
               @{ id = "phase2-file-rename"; method = "files/rename"; params = @{ path = $testFile; newName = "renamed-smoke.txt" } },
               @{ id = "phase2-collision-create"; method = "files/create"; params = @{ path = (Join-Path $testRoot "collision.txt"); content = "keep existing file" } },
               @{ id = "phase2-rename-collision"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "collision.txt" } },
@@ -174,6 +179,15 @@ jobs:
             if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
             if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
             if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
+            if ($responses["phase2-file-copy"].result.copied -ne $true) { throw "files/copy did not create a native copy." }
+            if ($responses["phase2-file-move"].result.moved -ne $true) { throw "files/move did not move the copied file." }
+            if (-not $responses["phase2-file-ads"].error) { throw "files/read-content accepted an NTFS alternate data stream path." }
+            if (-not $responses["phase2-file-device-path"].error) { throw "files/read-content accepted a Windows device namespace path." }
+            $terminal = $responses["phase2-terminal"].result
+            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command." }
+            if ($terminal.workingDirectory -ne $testRoot) { throw "terminal/execute did not preserve the requested working directory." }
+            if ($terminal.elevated -ne $false) { throw "terminal/execute must never elevate automatically." }
+
             if ($responses["phase2-file-create"].result.created -ne $true) { throw "files/create failed." }
             if ($responses["phase2-file-list"].result.items.name -notcontains "bridge-smoke.txt") { throw "files/list did not return the created file." }
             if ($responses["phase2-file-read"].result.exists -ne $true) { throw "files/read did not find the created file." }
