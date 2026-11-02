@@ -25,8 +25,6 @@ vi.mock('../../services/NativeBridge', () => ({
 
 const renderExplorer = () => {
   vi.spyOn(window, 'confirm').mockReturnValue(true)
-  mocks.getFileLocations.mockResolvedValue({ locations: [] })
-  mocks.readHardware.mockResolvedValue({ disks: [] })
   mocks.readWifiAdapterStatus.mockResolvedValue({ enabled: true })
   mocks.readBluetoothStatus.mockResolvedValue({ powered: true })
   return render(<OSProvider><FileExplorerApp /></OSProvider>)
@@ -123,6 +121,8 @@ describe('FileExplorer native integration', () => {
   })
 
   it('renames a selected native file and refreshes the directory', async () => {
+    mocks.getFileLocations.mockResolvedValue({ locations: [] })
+    mocks.readHardware.mockResolvedValue({ disks: [] })
     mocks.listFiles.mockResolvedValue({
       path: 'C:/Users/test',
       count: 1,
