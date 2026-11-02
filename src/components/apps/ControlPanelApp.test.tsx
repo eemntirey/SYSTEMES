@@ -83,7 +83,7 @@ describe('ControlPanelApp native Windows services', () => {
   it('shows a native inventory error without fabricating service data', async () => {
     vi.mocked(NativeBridge.readServices).mockRejectedValueOnce(new Error('WMI indisponible'));
     render(<ControlPanelApp />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('WMI indisponible');
+    expect((await screen.findByRole('alert')).textContent).toContain('WMI indisponible');
     expect(screen.queryByText('Spouleur d’impression')).toBeNull();
   });
 });
