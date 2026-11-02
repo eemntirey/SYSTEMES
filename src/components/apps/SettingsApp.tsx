@@ -1,1 +1,1 @@
-SEE_FILE
+export { SettingsApp } from './SettingsApp.wired'
