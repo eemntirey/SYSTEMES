@@ -108,12 +108,22 @@ fn validate_regions(regions: &[MemoryRegion]) -> Result<(), PagingError> {
     }
     for i in 0..regions.len() {
         for j in i + 1..regions.len() {
-            if regions[i].start < regions[j].end && regions[j].start < regions[i].end {
+            if regions[i].start != regions[i].end && regions[j].start != regions[j].end\n                && regions[i].start < regions[j].end && regions[j].start < regions[i].end {
                 return Err(PagingError::OverlappingRegions);
             }
         }
     }
     Ok(())
+}
+
+fn split_huge_page_entries(huge_entry: u64) -> [u64; ENTRIES] {
+    let mut entries = [0u64; ENTRIES];
+    let physical_base = huge_entry & HUGE_ADDRESS_MASK;
+    for (index, entry) in entries.iter_mut().enumerate() {
+        let physical = physical_base + index as u64 * PAGE_SIZE;
+        *entry = physical | PRESENT | WRITABLE | NX;
+    }
+    entries
 }
 
 unsafe fn ensure_4k_table(
@@ -136,11 +146,10 @@ unsafe fn ensure_4k_table(
         // SAFETY: The newly allocated page is reachable through inherited identity mapping.
         unsafe { core::ptr::write_bytes(table_frame as *mut u8, 0, PAGE_SIZE as usize); }
         let table = table_frame as *mut u64;
-        let physical_base = pde & HUGE_ADDRESS_MASK;
-        for i in 0..ENTRIES {
-            let physical = physical_base + i as u64 * PAGE_SIZE;
-            // Preserve identity mapping, but make every 4 KiB leaf NX by default.
-            unsafe { table.add(i).write(physical | PRESENT | WRITABLE | NX); }
+        // Preserve all 512 physical mappings while replacing the 2 MiB leaf
+        // with 512 writable, NX 4 KiB leaves.
+        for (index, entry) in split_huge_page_entries(pde).iter().enumerate() {
+            unsafe { table.add(index).write(*entry); }
         }
         // Parent must permit both permissions; leaf entries enforce W^X.
         unsafe { pde_ptr.write(table_frame | PRESENT | WRITABLE); }
@@ -185,7 +194,7 @@ pub unsafe fn verify_regions(root: u64, regions: &[MemoryRegion]) -> Result<(), 
             let table = (pde & ADDRESS_MASK) as *const u64;
             let pte = unsafe { table.add(indices[3]).read() };
             let expected = region.permissions.flags();
-            if (pte & ADDRESS_MASK) != (address & ADDRESS_MASK)
+            if pte & PRESENT == 0 || (pte & ADDRESS_MASK) != (address & ADDRESS_MASK)
                 || (pte & (WRITABLE | NX)) != (expected & (WRITABLE | NX)) {
                 return Err(PagingError::PermissionMismatch);
             }
@@ -214,6 +223,14 @@ mod tests {
         assert_eq!(page_table_indices(0x1000), [0,0,0,1]);
         assert_eq!(page_table_indices(HUGE_PAGE_SIZE), [0,0,1,0]);
         assert_eq!(page_table_indices(1u64 << 30), [0,1,0,0]);
+    }
+    #[test] fn splitting_a_huge_page_preserves_all_4k_physical_frames_and_nx() {
+        let huge = 0x1240_0000 | PRESENT | WRITABLE | HUGE | NX;
+        let entries = split_huge_page_entries(huge);
+        assert_eq!(entries[0] & ADDRESS_MASK, 0x1240_0000);
+        assert_eq!(entries[511] & ADDRESS_MASK, 0x125F_F000);
+        assert_eq!(entries[0] & (PRESENT | WRITABLE | NX), PRESENT | WRITABLE | NX);
+        assert_eq!(entries[511] & (PRESENT | WRITABLE | NX), PRESENT | WRITABLE | NX);
     }
     #[test] fn permission_flags_never_create_writable_executable_pages() {
         for p in [PagePermissions::ReadOnlyExecute, PagePermissions::ReadOnlyNoExecute, PagePermissions::ReadWriteNoExecute] {
