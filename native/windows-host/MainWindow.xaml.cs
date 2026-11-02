@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -10,11 +11,51 @@ public partial class MainWindow : Window
     private readonly NativeProcessHost _native = new();
     private bool _uiSmokeReported;
 
+    private const int SM_XVIRTUALSCREEN = 76;
+    private const int SM_YVIRTUALSCREEN = 77;
+    private const int SM_CXVIRTUALSCREEN = 78;
+    private const int SM_CYVIRTUALSCREEN = 79;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
     public MainWindow()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Closed += OnClosed;
+        SourceInitialized += OnSourceInitialized;
+    }
+
+    /// <summary>
+    /// Étendre la fenêtre hôte sur tout le bureau virtuel Windows
+    /// pour que le placement React multi-écrans corresponde aux moniteurs physiques.
+    /// Désactiver via SYSTEMES_SINGLE_MONITOR=1.
+    /// </summary>
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        try
+        {
+            if (string.Equals(Environment.GetEnvironmentVariable("SYSTEMES_SINGLE_MONITOR"), "1", StringComparison.Ordinal))
+                return;
+
+            int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if (vw < 800 || vh < 600) return;
+
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            WindowState = WindowState.Normal;
+            Left = vx;
+            Top = vy;
+            Width = vw;
+            Height = vh;
+        }
+        catch
+        {
+            // Garder le layout XAML par défaut si metrics indisponibles.
+        }
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -99,13 +140,11 @@ public partial class MainWindow : Window
         }
         catch
         {
-            // Preserve the original startup failure; CI will report a missing result file.
         }
     }
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        // Only the packaged SYSTEMES origin may invoke privileged native operations.
         if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source)
             || !string.Equals(source.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(source.Host, "systemes.local", StringComparison.OrdinalIgnoreCase))
