@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod memory;
+
 //! Minimal, host-independent kernel contract.
 //!
 //! This crate deliberately contains no Windows, WPF, WebView2, or standard-library
