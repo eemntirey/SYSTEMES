@@ -21,19 +21,24 @@ namespace Systemes.Native.Core
         {
             using var searcher = new ManagementObjectSearcher(
                 "SELECT Name, DisplayName, State, StartMode, StartName, ProcessId, PathName FROM Win32_Service");
+            using var results = searcher.Get();
             var services = new List<object>();
-            foreach (ManagementObject item in searcher.Get())
+            foreach (ManagementObject item in results)
             {
-                services.Add(new
+                using (item)
                 {
-                    name = item["Name"]?.ToString() ?? "",
-                    displayName = item["DisplayName"]?.ToString() ?? "",
-                    state = item["State"]?.ToString() ?? "Unknown",
-                    startMode = item["StartMode"]?.ToString() ?? "Unknown",
-                    account = item["StartName"]?.ToString() ?? "",
-                    processId = Convert.ToUInt32(item["ProcessId"] ?? 0),
-                    executablePath = item["PathName"]?.ToString() ?? ""
-                });
+                    services.Add(new
+                    {
+                        name = item["Name"]?.ToString() ?? "",
+                        displayName = item["DisplayName"]?.ToString() ?? "",
+                        state = item["State"]?.ToString() ?? "Unknown",
+                        startMode = item["StartMode"]?.ToString() ?? "Unknown",
+                        account = item["StartName"]?.ToString() ?? "",
+                        processId = Convert.ToUInt32(item["ProcessId"] ?? 0),
+                        executablePath = item["PathName"]?.ToString() ?? "",
+                        isProtected = ProtectedServices.Contains(item["Name"]?.ToString() ?? "")
+                    });
+                }
             }
 
             return new
@@ -51,47 +56,57 @@ namespace Systemes.Native.Core
                 throw new ArgumentException("Nom de service Windows invalide.", nameof(name));
             if (action is not ("start" or "stop"))
                 throw new ArgumentException("Action de service non prise en charge.", nameof(action));
-            if (ProtectedServices.Contains(name))
-                throw new InvalidOperationException("Ce service est protégé car son arrêt peut rendre Windows instable ou inaccessible.");
 
+            string currentState;
             using (var lookup = new ManagementObjectSearcher(
                 "SELECT Name, State FROM Win32_Service WHERE Name='" + name + "'"))
             using (var results = lookup.Get())
             {
-                if (results.Count == 0) throw new InvalidOperationException("Service Windows introuvable.");
+                var service = results.Cast<ManagementObject>().FirstOrDefault();
+                if (service == null) throw new InvalidOperationException("Service Windows introuvable.");
+                using (service)
+                {
+                    currentState = service["State"]?.ToString() ?? "Unknown";
+                }
             }
+
+            if (action == "stop" && ProtectedServices.Contains(name))
+                throw new InvalidOperationException("Ce service est protégé car son arrêt peut rendre Windows instable ou inaccessible.");
+
+            var expectedState = action == "start" ? "Running" : "Stopped";
+            if (string.Equals(currentState, expectedState, StringComparison.OrdinalIgnoreCase))
+                return new { changed = false, name, state = currentState, action, note = "Le service possède déjà l’état demandé." };
 
             var start = new ProcessStartInfo
             {
                 FileName = "sc.exe",
                 UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
+                CreateNoWindow = true
             };
             start.ArgumentList.Add(action);
             start.ArgumentList.Add(name);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows n’a pas démarré sc.exe.");
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
             if (!process.WaitForExit(10000))
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
                 throw new TimeoutException("La commande de service a dépassé 10 secondes.");
             }
             if (process.ExitCode != 0)
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? output.Trim() : error.Trim());
+                throw new InvalidOperationException($"SC.exe a refusé l’action « {action} » sur « {name} » (code {process.ExitCode}). Vérifiez les droits et l’état du service.");
 
-            var expectedState = action == "start" ? "Running" : "Stopped";
             for (var attempt = 0; attempt < 20; attempt++)
             {
                 using var query = new ManagementObjectSearcher(
                     "SELECT State FROM Win32_Service WHERE Name='" + name + "'");
-                foreach (ManagementObject item in query.Get())
+                using var current = query.Get();
+                foreach (ManagementObject item in current)
                 {
-                    var state = item["State"]?.ToString() ?? "Unknown";
-                    if (string.Equals(state, expectedState, StringComparison.OrdinalIgnoreCase))
-                        return new { changed = true, name, state, action, note = "État du service relu et confirmé par WMI." };
+                    using (item)
+                    {
+                        var state = item["State"]?.ToString() ?? "Unknown";
+                        if (string.Equals(state, expectedState, StringComparison.OrdinalIgnoreCase))
+                            return new { changed = true, name, state, action, note = "État du service relu et confirmé par WMI." };
+                    }
                 }
                 Thread.Sleep(500);
             }
