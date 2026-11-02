@@ -2,7 +2,14 @@ import React, { useState, useRef, useEffect, ReactNode, useCallback } from 'reac
 import { SnapPosition, WindowState } from '../../types'
 import { useOS } from '../../context/OSContext'
 import { FluentIcon } from '../common/FluentIcon'
-import { MENU_BAR_HEIGHT } from '../../data/constants'
+import { useDisplayLayout } from '../../hooks/useDisplayLayout'
+import {
+  clampPosition,
+  maximizeRect,
+  monitorAt,
+  snapRect,
+  toCssRect,
+} from '../../utils/windowPlacement'
 
 interface WindowFrameProps {
   window: WindowState
@@ -12,7 +19,6 @@ interface WindowFrameProps {
 const MIN_WIDTH = 340
 const MIN_HEIGHT = 260
 const SNAP_MARGIN = 28
-const TASKBAR_RESERVE = 56
 
 export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children }) => {
   const {
@@ -26,6 +32,7 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     snapWindow,
   } = useOS()
 
+  const layout = useDisplayLayout()
   const isActive = activeWindowId === win.id
   const [showSnapMenu, setShowSnapMenu] = useState(false)
   const snapTimeoutRef = useRef<number | null>(null)
@@ -91,12 +98,15 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
       const dy = e.clientY - dragStartRef.current.y
       const rawX = dragStartRef.current.winX + dx
       const rawY = dragStartRef.current.winY + dy
-      const maxX = Math.max(0, window.innerWidth - Math.min(liveSizeRef.current.width, 120))
-      const maxY = Math.max(MENU_BAR_HEIGHT, window.innerHeight - TASKBAR_RESERVE - 40)
-      const x = Math.max(0, Math.min(maxX, rawX))
-      const y = Math.max(MENU_BAR_HEIGHT, Math.min(maxY, rawY))
-      livePosRef.current = { x, y }
-      updateWindowPosition(win.id, x, y)
+      const clamped = clampPosition(
+        rawX,
+        rawY,
+        liveSizeRef.current.width,
+        liveSizeRef.current.height,
+        layout,
+      )
+      livePosRef.current = clamped
+      updateWindowPosition(win.id, clamped.x, clamped.y)
     } else if (isResizingRef.current && resizeDirectionRef.current) {
       const dx = e.clientX - resizeStartRef.current.x
       const dy = e.clientY - resizeStartRef.current.y
@@ -120,21 +130,29 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
         const potentialH = resizeStartRef.current.winH - dy
         if (potentialH >= MIN_HEIGHT) {
           newH = potentialH
-          newY = Math.max(MENU_BAR_HEIGHT, resizeStartRef.current.winY + dy)
+          newY = resizeStartRef.current.winY + dy
         }
       }
 
-      if (newX + newW > window.innerWidth) newW = Math.max(MIN_WIDTH, window.innerWidth - newX)
-      if (newY + newH > window.innerHeight - TASKBAR_RESERVE) {
-        newH = Math.max(MIN_HEIGHT, window.innerHeight - TASKBAR_RESERVE - newY)
+      const mon = monitorAt(newX + newW / 2, newY + 20, layout)
+      const wa = mon.workArea
+      if (newX < wa.x) {
+        newW -= wa.x - newX
+        newX = wa.x
       }
+      if (newY < wa.y) {
+        newH -= wa.y - newY
+        newY = wa.y
+      }
+      if (newX + newW > wa.x + wa.width) newW = Math.max(MIN_WIDTH, wa.x + wa.width - newX)
+      if (newY + newH > wa.y + wa.height) newH = Math.max(MIN_HEIGHT, wa.y + wa.height - newY)
 
       livePosRef.current = { x: newX, y: newY }
       liveSizeRef.current = { width: newW, height: newH }
       updateWindowPosition(win.id, newX, newY)
       updateWindowSize(win.id, newW, newH)
     }
-  }, [win.id, updateWindowPosition, updateWindowSize])
+  }, [win.id, updateWindowPosition, updateWindowSize, layout])
 
   const handleMouseUp = useCallback(() => {
     const wasDragging = isDraggingRef.current
@@ -149,16 +167,17 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     const x = livePosRef.current.x
     const y = livePosRef.current.y
     const w = liveSizeRef.current.width
-    const screenW = window.innerWidth
+    const mon = monitorAt(x + w / 2, y + 10, layout)
+    const wa = mon.workArea
 
-    if (x <= SNAP_MARGIN) {
+    if (x <= wa.x + SNAP_MARGIN) {
       snapWindow(win.id, 'left-half')
-    } else if (x + w >= screenW - SNAP_MARGIN) {
+    } else if (x + w >= wa.x + wa.width - SNAP_MARGIN) {
       snapWindow(win.id, 'right-half')
-    } else if (y <= SNAP_MARGIN + MENU_BAR_HEIGHT) {
+    } else if (y <= wa.y + SNAP_MARGIN) {
       maximizeWindow(win.id)
     }
-  }, [win.id, snapWindow, maximizeWindow, win.isMaximized])
+  }, [win.id, snapWindow, maximizeWindow, win.isMaximized, layout])
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove)
@@ -177,48 +196,57 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
 
   if (win.isMinimized) return null
 
-  const frameStyle: React.CSSProperties = win.isMaximized
-    ? {
-        position: 'absolute',
-        left: 0,
-        top: MENU_BAR_HEIGHT,
-        width: '100%',
-        height: `calc(100% - ${MENU_BAR_HEIGHT + TASKBAR_RESERVE}px)`,
-        zIndex: win.zIndex,
-        borderRadius: 0,
-        boxShadow: 'none',
-        border: 'none',
-        backgroundColor: 'var(--window-bg)',
-        backdropFilter: 'var(--backdrop-blur)',
-        WebkitBackdropFilter: 'var(--backdrop-blur)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        transition: 'all 0.18s ease-out',
-      }
-    : {
-        position: 'absolute',
-        left: `${win.position.x}px`,
-        top: `${win.position.y}px`,
-        width: `${win.size.width}px`,
-        height: `${win.size.height}px`,
-        zIndex: win.zIndex,
-        borderRadius: 'var(--radius-xl)',
-        boxShadow: isActive
-          ? 'var(--window-shadow), 0 0 0 1px var(--window-border)'
-          : '0 16px 36px rgba(0,0,0,0.35), 0 0 0 1px rgba(139,92,246,0.15)',
-        border: isActive
-          ? '1px solid var(--window-border)'
-          : '1px solid rgba(139,92,246,0.2)',
-        backgroundColor: 'var(--window-bg)',
-        backdropFilter: 'var(--backdrop-blur)',
-        WebkitBackdropFilter: 'var(--backdrop-blur)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
-        animation: 'windowOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-      }
+  const css = win.isMaximized
+    ? (() => {
+        const mon = monitorAt(win.position.x + 40, win.position.y + 20, layout)
+        const r = maximizeRect(mon)
+        return toCssRect(r, layout)
+      })()
+    : toCssRect(
+        { x: win.position.x, y: win.position.y, width: win.size.width, height: win.size.height },
+        layout,
+      )
+
+  const frameStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: `${css.x}px`,
+    top: `${css.y}px`,
+    width: `${css.width}px`,
+    height: `${css.height}px`,
+    zIndex: win.zIndex,
+    borderRadius: win.isMaximized ? 0 : 'var(--radius-xl)',
+    boxShadow: win.isMaximized
+      ? 'none'
+      : isActive
+        ? 'var(--window-shadow), 0 0 0 1px var(--window-border)'
+        : '0 16px 36px rgba(0,0,0,0.35), 0 0 0 1px rgba(139,92,246,0.15)',
+    border: win.isMaximized
+      ? 'none'
+      : isActive
+        ? '1px solid var(--window-border)'
+        : '1px solid rgba(139,92,246,0.2)',
+    backgroundColor: 'var(--window-bg)',
+    backdropFilter: 'var(--backdrop-blur)',
+    WebkitBackdropFilter: 'var(--backdrop-blur)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    transition: win.isMaximized ? 'none' : 'box-shadow 0.15s ease, border-color 0.15s ease',
+    animation: win.isMaximized ? undefined : 'windowOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+  }
+
+  const applySnap = (pos: SnapPosition) => {
+    const mon = monitorAt(
+      livePosRef.current.x + liveSizeRef.current.width / 2,
+      livePosRef.current.y + 10,
+      layout,
+    )
+    const r = snapRect(pos, mon)
+    updateWindowPosition(win.id, r.x, r.y)
+    updateWindowSize(win.id, r.width, r.height)
+    snapWindow(win.id, pos)
+    setShowSnapMenu(false)
+  }
 
   return (
     <div onMouseDown={() => bringToFront(win.id)} style={frameStyle}>
@@ -310,14 +338,14 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
               >
                 <div style={{ display: 'flex', gap: '4px', height: '56px', padding: '4px', borderRadius: '8px', backgroundColor: 'rgba(139, 92, 246, 0.08)' }}>
                   <div
-                    onClick={() => { snapWindow(win.id, 'left-half'); setShowSnapMenu(false) }}
+                    onClick={() => applySnap('left-half')}
                     title="Ancrer à gauche"
                     style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.15s' }}
                     onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
                     onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)' }}
                   />
                   <div
-                    onClick={() => { snapWindow(win.id, 'right-half'); setShowSnapMenu(false) }}
+                    onClick={() => applySnap('right-half')}
                     title="Ancrer à droite"
                     style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.15s' }}
                     onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
@@ -329,7 +357,7 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
                   {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as SnapPosition[]).map(pos => (
                     <div
                       key={pos}
-                      onClick={() => { snapWindow(win.id, pos); setShowSnapMenu(false) }}
+                      onClick={() => applySnap(pos)}
                       title={`Ancrer ${pos}`}
                       style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '3px', cursor: 'pointer', transition: 'all 0.15s' }}
                       onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--win-accent-cyan)' }}
