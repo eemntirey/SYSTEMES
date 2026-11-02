@@ -144,7 +144,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     if (kernel_bytes > KERNEL_MAX_BYTES) fail(st, L"SYSTEMES: kernel image exceeds loader limit");
     debug_text("SYSTEMES_UEFI_KERNEL_FILE_OK\r\n");
 
-    kernel_pages = EFI_SIZE_TO_PAGES(kernel_bytes);
+    // Reserve the complete fixed kernel image window, including .bss. The flat
+    // binary omits zero-filled sections, but the kernel still uses their pages
+    // for static GDT/IDT and other zero-initialized data after ExitBootServices.
+    kernel_pages = EFI_SIZE_TO_PAGES(KERNEL_MAX_BYTES);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
     copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
