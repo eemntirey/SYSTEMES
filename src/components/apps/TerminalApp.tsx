@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { useOS } from '../../context/OSContext'
+import { NativeBridge } from '../../services/NativeBridge'
 import { FluentIcon } from '../common/FluentIcon'
 
 interface CommandOutput {
@@ -20,14 +20,15 @@ interface TerminalTab {
 }
 
 const KNOWN_COMMANDS = [
-  'help', 'cls', 'clear', 'dir', 'ls', 'cd', 'pwd', 'mkdir', 'md', 'cat', 'type',
-  'echo', 'ver', 'whoami', 'hostname', 'date', 'time', 'systeminfo', 'ping',
-  'ipconfig', 'tasklist', 'get-process', 'neofetch', 'matrix', 'history',
-  'write-host', 'get-date', 'clear-host'
+  'get-childitem', 'dir', 'ls', 'get-location', 'pwd', 'set-location', 'cd',
+  'new-item', 'mkdir', 'get-content', 'cat', 'type', 'set-content', 'add-content',
+  'write-output', 'write-host', 'get-date', 'whoami', 'hostname', 'systeminfo',
+  'get-process', 'get-service', 'get-netadapter', 'ipconfig', 'ping', 'tasklist',
+  'get-command', 'get-help', 'clear-host', 'cls', 'history'
 ]
 
 export const TerminalApp: React.FC = () => {
-  const { files, createFolder, createFile } = useOS()
+  const [isExecuting, setIsExecuting] = useState(false)
 
   const createInitialTab = (): TerminalTab => ({
     id: `tab-${Date.now()}`,
@@ -129,234 +130,67 @@ export const TerminalApp: React.FC = () => {
     }
   }
 
-  const executeCommand = (cmdStr: string) => {
+  const executeCommand = async (cmdStr: string) => {
     const trimmed = cmdStr.trim()
-    const newHistory = trimmed ? [...activeTab.history, trimmed] : activeTab.history
+    if (!trimmed || isExecuting) return
 
-    if (!trimmed) {
-      updateActiveTab(t => ({
-        ...t,
-        outputs: [...t.outputs, { id: `${Date.now()}`, command: `PS ${t.path}> ` }],
-        history: newHistory,
-        historyIndex: -1,
-      }))
-      setInputVal('')
+    const targetTabId = activeTab.id
+    const workingDirectory = activeTab.path
+    const newHistory = [...activeTab.history, trimmed]
+    setInputVal('')
+    setShowSuggestions(false)
+    setIsExecuting(true)
+
+    if (['clear', 'cls', 'clear-host'].includes(trimmed.toLowerCase())) {
+      setTabs(prev => prev.map(tab => tab.id === targetTabId
+        ? { ...tab, outputs: [], history: newHistory, historyIndex: -1 }
+        : tab))
+      setIsExecuting(false)
       return
     }
 
-    const [cmd, ...args] = trimmed.split(/\s+/)
-    const lowerCmd = cmd.toLowerCase()
-    let result = ''
-    let isErr = false
-    let isInfo = false
-    let newPath = activeTab.path
+    setTabs(prev => prev.map(tab => tab.id === targetTabId
+      ? {
+          ...tab,
+          outputs: [...tab.outputs, { id: `command-${Date.now()}`, command: `PS ${tab.path || '~'}> ${trimmed}` }],
+          history: newHistory,
+          historyIndex: -1,
+        }
+      : tab))
 
-    switch (lowerCmd) {
-      case 'help':
-        result = `Commandes PowerShell disponibles (Windows 11)\n\n  Navigation & Fichiers\n  ─────────────────────\n  help, ?              Affiche cette aide\n  dir, ls              Liste le contenu du répertoire\n  cd <chemin>          Change de répertoire\n  pwd                  Affiche le chemin actuel\n  mkdir, md <nom>      Crée un dossier\n  cat, type <fichier>  Affiche le contenu d'un fichier\n\n  Système\n  ───────\n  ver                  Version de Windows\n  whoami               Utilisateur courant\n  hostname             Nom de la machine\n  systeminfo           Infos matériel & OS\n  date, time, get-date Date et heure\n  neofetch             Affichage stylisé système\n\n  Réseau\n  ──────\n  ping <hôte>          Test de connectivité\n  ipconfig             Configuration réseau\n\n  Processus\n  ─────────\n  tasklist, get-process  Liste des processus\n\n  Utilitaires\n  ───────────\n  echo, write-host <t>  Affiche du texte\n  history              Historique des commandes\n  clear, cls, clear-host  Efface l'écran\n  matrix               Easter egg\n\n  Astuce : Tab pour l'autocomplétion des commandes.`
-        break
-
-      case 'clear':
-      case 'cls':
-      case 'clear-host':
-        updateActiveTab(t => ({ ...t, outputs: [], history: newHistory, historyIndex: -1 }))
-        setInputVal('')
-        return
-
-      case 'dir':
-      case 'ls': {
-        const normalizedCurrent = activeTab.path.replace(/\\/g, '/')
-        const matchingFiles = files.filter(f => {
-          const parts = f.path.split('/')
-          parts.pop()
-          return parts.join('/') === normalizedCurrent
-        })
-
-        const header = `  Répertoire : ${activeTab.path}\n\nMode                 Dernière écriture          Taille Nom\n----                 -----------------          ------ ----\n`
-        const rows = matchingFiles
-          .map(f => {
-            const mode = f.type === 'folder' ? 'd-----' : '-a----'
-            const size = f.size ? f.size.padStart(12, ' ') : '            '
-            return `${mode}    ${f.modified.padEnd(25, ' ')} ${size} ${f.name}`
-          })
-          .join('\n')
-        result = header + (rows || '  (Aucun élément)')
-        break
-      }
-
-      case 'cd': {
-        const target = args.join(' ')
-        if (!target || target === '.') {
-          // stay
-        } else if (target === '..') {
-          const parts = activeTab.path.split('\\')
-          if (parts.length > 1) {
-            parts.pop()
-            newPath = parts.join('\\') || 'C:\\'
+    try {
+      const result = await NativeBridge.executePowerShell(trimmed, workingDirectory)
+      const output = [
+        result.output,
+        result.error,
+        result.truncated ? '[Sortie tronquée : limite de 64 Kio atteinte.]' : '',
+      ].filter(Boolean).join('\n')
+      setTabs(prev => prev.map(tab => tab.id === targetTabId
+        ? {
+            ...tab,
+            path: result.workingDirectory || tab.path,
+            outputs: [...tab.outputs, {
+              id: `result-${Date.now()}`,
+              output: output || `PowerShell terminé (code ${result.exitCode}).`,
+              isError: result.exitCode !== 0 || !!result.error,
+              isInfo: result.exitCode === 0 && !result.error,
+            }],
           }
-        } else if (target.startsWith('C:') || target.startsWith('c:')) {
-          newPath = target.replace(/\//g, '\\')
-        } else {
-          newPath = `${activeTab.path}\\${target}`.replace(/\\\\+/g, '\\')
-        }
-        break
-      }
-
-      case 'pwd':
-        result = activeTab.path
-        isInfo = true
-        break
-
-      case 'mkdir':
-      case 'md': {
-        const folderName = args.join(' ')
-        if (!folderName) {
-          result = 'Erreur : nom de dossier requis. Exemple : mkdir Projets'
-          isErr = true
-        } else {
-          createFolder(activeTab.path.replace(/\\/g, '/'), folderName)
-          result = `Dossier "${folderName}" créé avec succès.`
-          isInfo = true
-        }
-        break
-      }
-
-      case 'touch': {
-        const fileName = args.join(' ').trim()
-        if (!fileName) {
-          result = 'Erreur : nom de fichier requis. Exemple : touch notes.txt'
-          isErr = true
-          break
-        }
-        const normalizedCurrent = activeTab.path.replace(/\\/g, '/')
-        const exists = files.some(file =>
-          file.name.toLowerCase() === fileName.toLowerCase() &&
-          file.path.slice(0, file.path.lastIndexOf('/')) === normalizedCurrent
-        )
-        if (exists) {
-          result = `Un élément nommé "${fileName}" existe déjà dans ce dossier.`
-          isErr = true
-        } else {
-          createFile(normalizedCurrent, fileName, '')
-          result = `Fichier "${fileName}" créé dans ${activeTab.path}.`
-          isInfo = true
-        }
-        break
-      }
-
-      case 'cat':
-      case 'type': {
-        const fileName = args.join(' ')
-        if (!fileName) {
-          result = 'Erreur : nom de fichier requis.'
-          isErr = true
-          break
-        }
-        const normalizedCurrent = activeTab.path.replace(/\\/g, '/')
-        const targetFile = files.find(
-          f => f.name.toLowerCase() === fileName.toLowerCase() && f.path.startsWith(normalizedCurrent)
-        )
-        if (targetFile) {
-          result = targetFile.content || '(Fichier vide)'
-        } else {
-          result = `Impossible de trouver le fichier : ${fileName}`
-          isErr = true
-        }
-        break
-      }
-
-      case 'echo':
-      case 'write-host':
-        result = args.join(' ')
-        isInfo = true
-        break
-
-      case 'ver':
-        result = 'Microsoft Windows [version 10.0.26100.1742] (Windows 11 24H2)'
-        break
-
-      case 'whoami':
-        result = 'WINDOWS-11\\eemntirey'
-        isInfo = true
-        break
-
-      case 'hostname':
-        result = 'DESKTOP-WIN11-PRO'
-        isInfo = true
-        break
-
-      case 'date':
-      case 'time':
-      case 'get-date':
-        result = new Date().toLocaleString('fr-FR', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        })
-        isInfo = true
-        break
-
-      case 'systeminfo':
-        result = `Nom de l'hôte:                 DESKTOP-WIN11-PRO\nNom du système d'exploitation: Microsoft Windows 11 Professionnel\nVersion du système:            10.0.26100 Version 24H2\nFabricant du système:          Antigravity High-Performance Systems\nType du système:               PC à architecture x64\nProcesseur(s):                 1 Processeur(s) installé(s).\n                               [01]: AMD64 Family 25 Model 97 Stepping 2 AuthenticAMD ~4500 Mhz\nMémoire physique totale:       32 768 Mo\nMémoire physique disponible:   18 432 Mo\nMémoire virtuelle: taille max: 37 888 Mo\nCarte graphique:               NVIDIA GeForce RTX 4090 24 Go\nStatut réseau:                 Connecté (Wi-Fi 6E / 1.2 Gbps)\nFuseau horaire:                (UTC+03:00) Nairobi`
-        break
-
-      case 'ping': {
-        const host = args[0] || '1.1.1.1'
-        result = `Envoi d'une requête 'Ping' sur ${host} avec 32 octets de données :\nRéponse de ${host} : octets=32 temps=12 ms TTL=56\nRéponse de ${host} : octets=32 temps=11 ms TTL=56\nRéponse de ${host} : octets=32 temps=13 ms TTL=56\nRéponse de ${host} : octets=32 temps=10 ms TTL=56\n\nStatistiques Ping pour ${host} :\n    Paquets : envoyés = 4, reçus = 4, perdus = 0 (perte 0%),\nDurée approximative des boucles en millisecondes :\n    Minimum = 10ms, Maximum = 13ms, Moyenne = 11ms`
-        break
-      }
-
-      case 'ipconfig':
-        result = `Configuration IP de Windows\n\nCarte réseau sans fil Wi-Fi :\n\n   Suffixe DNS propre à la connexion. . . : home.local\n   Adresse IPv6 de liaison locale. . . . . : fe80::a1b2:c3d4:e5f6:7890%12\n   Adresse IPv4. . . . . . . . . . . . . . : 192.168.1.42\n   Masque de sous-réseau. . . . . . . . . : 255.255.255.0\n   Passerelle par défaut. . . . . . . . . : 192.168.1.1\n\nCarte Ethernet Ethernet :\n\n   État du média. . . . . . . . . . . . . : Média déconnecté\n   Suffixe DNS propre à la connexion. . . :`
-        break
-
-      case 'tasklist':
-      case 'get-process':
-        result = `Nom de l'image                 PID Session Nom de session Utilisation mémoire\n========================= ======== ================ ================ ============\nSystem Idle Process              0 Services                   0         8 Ko\nSystem                           4 Services                   0       148 Ko\nswchost.exe                    892 Services                   0    12 456 Ko\nexplorer.exe                  4520 Console                    1    89 234 Ko\nWindowsTerminal.exe           7812 Console                    1    67 890 Ko\nmsedge.exe                    9104 Console                    1   245 678 Ko\nCode.exe                      6234 Console                    1   312 456 Ko\nRuntimeBroker.exe             3456 Console                    1    28 901 Ko\nSearchHost.exe                5678 Console                    1    45 123 Ko\nShellExperienceHost.exe       2345 Console                    1    67 890 Ko`
-        break
-
-      case 'neofetch':
-        result = `                  ..,\n                .o8Oo.=.\n               .o888Oo..=\n              .o88888Oo..=\n             .o8888888Oo..=\n            .o888888888Oo..=        eemntirey@DESKTOP-WIN11-PRO\n           .o88888888888Oo..=       ─────────────────────────────\n          .o8888888888888Oo..=      OS: Windows 11 Pro 24H2\n         .o888888888888888Oo..=     Host: Antigravity Systems\n        .o88888888888888888Oo..=    Kernel: 10.0.26100.1742\n       .o8888888888888888888Oo..=   Uptime: 4h 32m\n      .o888888888888888888888Oo..=  Shell: PowerShell 7.4\n     .o88888888888888888888888Oo..= CPU: AMD Ryzen 9 7950X (16) @ 4.5GHz\n    .o8888888888888888888888888Oo..= Memory: 14.3 GiB / 32.0 GiB\n   .o888888888888888888888888888Oo..= GPU: NVIDIA GeForce RTX 4090\n  .o88888888888888888888888888888Oo..= Resolution: 1920x1080 @ 144Hz\n .o8888888888888888888888888888888Oo..= Theme: Dark Neon (custom)\n.o888888888888888888888888888888888Oo..= Terminal: Windows Terminal`
-        isInfo = true
-        break
-
-      case 'matrix':
-        result = `01001000 01100101 01101100 01101100 01101111 00100000 01010111 01101111 01110010 01101100 01100100\n\nBienvenue dans la matrice Windows 11.\nRéveil de l'agent terminé. Suivez le lapin blanc.`
-        isInfo = true
-        break
-
-      case 'history':
-        result = activeTab.history.length
-          ? activeTab.history.map((h, i) => `  ${i + 1}  ${h}`).join('\n')
-          : '  (historique vide)'
-        break
-
-      default:
-        result = `'${cmd}' n'est pas reconnu en tant que commande interne\nou externe, un programme exécutable ou un fichier de commandes.\nVérifiez l'orthographe du nom, ou si un chemin d'accès existe,\nvérifiez que le chemin d'accès est correct et réessayez.`
-        isErr = true
+        : tab))
+    } catch (error) {
+      setTabs(prev => prev.map(tab => tab.id === targetTabId
+        ? {
+            ...tab,
+            outputs: [...tab.outputs, {
+              id: `error-${Date.now()}`,
+              output: error instanceof Error ? error.message : String(error),
+              isError: true,
+            }],
+          }
+        : tab))
+    } finally {
+      setIsExecuting(false)
     }
-
-    updateActiveTab(t => ({
-      ...t,
-      path: newPath,
-      outputs: [
-        ...t.outputs,
-        {
-          id: `${Date.now()}`,
-          command: `PS ${t.path}> ${cmdStr}`,
-          output: result,
-          isError: isErr,
-          isInfo,
-        },
-      ],
-      history: newHistory,
-      historyIndex: -1,
-    }))
-    setInputVal('')
   }
 
   return (
@@ -476,11 +310,12 @@ export const TerminalApp: React.FC = () => {
         {/* Input line */}
         <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
           <span style={{ color: 'var(--win-accent-cyan)', marginRight: 8, whiteSpace: 'nowrap', fontWeight: 600 }}>
-            PS {activeTab.path}{'>'}
+            PS {activeTab.path || '~'}{'>'}
           </span>
           <input
             ref={inputRef}
             type="text"
+            disabled={isExecuting}
             value={inputVal}
             onChange={e => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -550,8 +385,8 @@ export const TerminalApp: React.FC = () => {
           flexShrink: 0,
         }}
       >
-        <span>PowerShell 7.4 · UTF-8</span>
-        <span>{activeTab.history.length} commande(s) · Tab pour compléter</span>
+        <span>Windows PowerShell 5.1 · exécution native</span>
+        <span>{isExecuting ? 'Exécution…' : `${activeTab.history.length} commande(s) · Tab pour compléter`}</span>
       </div>
     </div>
   )
