@@ -16,44 +16,12 @@ namespace Systemes.Native.Core
         private const int MaxOutputCharacters = 65536;
         private const int TimeoutMilliseconds = 30000;
 
-        // Patterns explicitement refusés (pas un sandbox complet — le processus tourne
-        // sous l'identité Windows de l'utilisateur, sans élévation).
-        private static readonly string[] BlockedCommandPatterns =
-        {
-            "format-volume", "format ", "clear-disk", "initialize-disk",
-            "remove-partition", "remove-volume",
-            "stop-computer", "restart-computer", "checkpoint-computer",
-            "disable-computerrestore", "enable-windowsoptionalfeature",
-            "uninstall-windowsfeature", "remove-windowsfeature",
-            "set-executionpolicy unrestricted", "set-executionpolicy bypass",
-            "invoke-expression", "iex ", "downloadstring", "downloadfile",
-            "start-bitstransfer", "bitsadmin",
-            "reg delete", "remove-itemproperty",
-            "net user ", "net localgroup administrators",
-            "schtasks /create", "schtasks /delete",
-            "shutdown ", "shutdown.exe",
-        };
-
-        private static void AssertCommandAllowed(string command)
-        {
-            var lower = command.ToLowerInvariant();
-            foreach (var pattern in BlockedCommandPatterns)
-            {
-                if (lower.Contains(pattern))
-                    throw new UnauthorizedAccessException(
-                        $"Commande refusée par la politique SYSTEMES : motif « {pattern.Trim()} ». " +
-                        "Le terminal n’autorise pas les opérations destructives ou d’élévation implicite.");
-            }
-        }
-
         public static object Execute(string command, string workingDirectory)
         {
             if (string.IsNullOrWhiteSpace(command))
                 throw new ArgumentException("La commande PowerShell est obligatoire.", nameof(command));
             if (command.Length > MaxCommandCharacters)
                 throw new ArgumentException("La commande dépasse la limite de 16 Kio.", nameof(command));
-            AssertCommandAllowed(command);
-
             var directory = string.IsNullOrWhiteSpace(workingDirectory)
                 ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                 : Path.GetFullPath(workingDirectory);
@@ -109,8 +77,6 @@ Write-Output (\"SYSTEMES_PS_RESULT:\" + $payload)
             };
             start.ArgumentList.Add("-NoProfile");
             start.ArgumentList.Add("-NonInteractive");
-            start.ArgumentList.Add("-ExecutionPolicy");
-            start.ArgumentList.Add("Bypass");
             start.ArgumentList.Add("-Command");
             start.ArgumentList.Add(script);
 
