@@ -25,6 +25,7 @@ import { ClockApp } from './components/apps/ClockApp'
 import { MusicApp } from './components/apps/MusicApp'
 import { StoreApp } from './components/apps/StoreApp'
 import { ControlPanelApp } from './components/apps/ControlPanelApp'
+import { ServicesApp } from './components/apps/ServicesApp'
 import { WindowState } from './types'
 
 const WindowsDesktopContent: React.FC = () => {
@@ -69,6 +70,8 @@ const WindowsDesktopContent: React.FC = () => {
         return <StoreApp />
       case 'controlpanel':
         return <ControlPanelApp />
+      case 'services':
+        return <ServicesApp />
       default:
         return (
           <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>
@@ -80,7 +83,6 @@ const WindowsDesktopContent: React.FC = () => {
 
   return (
     <div style={{ position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0 }}>
-      {/* Desktop & Window Container */}
       <Desktop>
         {windows.map(win => (
           <Window key={win.id} window={win}>
@@ -89,7 +91,6 @@ const WindowsDesktopContent: React.FC = () => {
         ))}
       </Desktop>
 
-      {/* Flyouts & Modals */}
       <StartMenu />
       <SearchFlyout />
       <QuickSettings />
@@ -97,21 +98,16 @@ const WindowsDesktopContent: React.FC = () => {
       <WidgetsBoard />
       <TaskView />
 
-      {/* Centered Taskbar */}
       <Taskbar />
-
-      {/* Lock / Sleep Screen */}
       <LockScreen />
     </div>
   )
 }
 
-export const App: React.FC = () => {
+export default function App() {
   return (
     <OSProvider>
       <WindowsDesktopContent />
     </OSProvider>
   )
 }
-
-export default App

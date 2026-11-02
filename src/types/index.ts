@@ -13,6 +13,7 @@ export type AppId =
   | 'music'
   | 'store'
   | 'controlpanel'
+  | 'services'
 
 export type SnapPosition =
   | 'left-half'
