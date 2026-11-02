@@ -56,6 +56,11 @@ namespace Systemes.Native.Core
                         case "system/ping":
                             result = new { status = "ready", engine = "SYSTEMES Native Core" };
                             break;
+                        case "terminal/execute":
+                            result = TerminalNative.Execute(
+                                args["command"]?.Value<string>() ?? "",
+                                args["workingDirectory"]?.Value<string>() ?? "");
+                            break;
                         case "security/read":
                             result = SecurityManager.ReadSecurityContext();
                             break;
