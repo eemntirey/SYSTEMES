@@ -127,11 +127,11 @@ mod tests {
 
     #[test]
     fn huge_page_entries_use_present_writable_and_page_size_flags() {
-        let entry = (0x1234_0000 & HUGE_ADDRESS_MASK)
+        let entry = (0x1240_0000 & HUGE_ADDRESS_MASK)
             | PAGE_PRESENT
             | PAGE_WRITABLE
             | PAGE_SIZE_FLAG;
         assert_eq!(entry & 0xFFF, 0x83);
-        assert_eq!(entry & HUGE_ADDRESS_MASK, 0x1234_0000);
+        assert_eq!(entry & HUGE_ADDRESS_MASK, 0x1240_0000);
     }
 }
