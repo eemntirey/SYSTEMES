@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NativeBridge } from './NativeBridge';
+import { NativeBridge, ALLOWED_NATIVE_METHODS } from './NativeBridge';
 
 type Listener = (event: MessageEvent) => void;
 
@@ -47,7 +47,7 @@ describe('NativeBridge WebView2 transport', () => {
 
   it('rejects a native protocol error', async () => {
     const bridge = new NativeBridge();
-    const pending = bridge.send('files/read', { path: 'Z:/missing.txt' });
+    const pending = bridge.send('files/list', { path: 'Z:/missing' });
     await Promise.resolve();
     const request = postMessage.mock.calls[0][0] as { id: string };
 
@@ -57,7 +57,7 @@ describe('NativeBridge WebView2 transport', () => {
     bridge.disconnect();
   });
 
-  it('rejects requests that exceed the 15 second deadline', async () => {
+  it('rejects requests that exceed the deadline', async () => {
     vi.useFakeTimers();
     const bridge = new NativeBridge();
     const pending = bridge.send('hardware/read');
@@ -84,5 +84,48 @@ describe('NativeBridge WebView2 transport', () => {
     const bridge = new NativeBridge();
 
     await expect(bridge.send('hardware/read')).rejects.toThrow('Native Host indisponible');
+  });
+
+  it('rejects methods not on the client allowlist', async () => {
+    const bridge = new NativeBridge();
+    await expect(bridge.send('evil/pwn')).rejects.toThrow('non autorisée');
+    expect(postMessage).not.toHaveBeenCalled();
+    bridge.disconnect();
+  });
+
+  it('rejects invalid method format', async () => {
+    const bridge = new NativeBridge();
+    await expect(bridge.send('../escape')).rejects.toThrow('Format de méthode');
+    await expect(bridge.send('')).rejects.toThrow('invalide');
+    expect(postMessage).not.toHaveBeenCalled();
+    bridge.disconnect();
+  });
+
+  it('rejects non-object params', async () => {
+    const bridge = new NativeBridge();
+    await expect(bridge.send('hardware/read', null as unknown as Record<string, unknown>)).rejects.toThrow('objet JSON');
+    expect(postMessage).not.toHaveBeenCalled();
+    bridge.disconnect();
+  });
+
+  it('ignores malformed responses without id', async () => {
+    const bridge = new NativeBridge();
+    const pending = bridge.send('system/ping');
+    await Promise.resolve();
+    const request = postMessage.mock.calls[0][0] as { id: string };
+
+    listeners[0]({ data: { result: 'no-id' } } as MessageEvent);
+    listeners[0]({ data: null } as MessageEvent);
+    listeners[0]({ data: { id: request.id, result: { status: 'ready' } } } as MessageEvent);
+
+    await expect(pending).resolves.toMatchObject({ result: { status: 'ready' } });
+    bridge.disconnect();
+  });
+
+  it('exports a non-empty allowlist used by the server surface', () => {
+    expect(ALLOWED_NATIVE_METHODS.has('system/ping')).toBe(true);
+    expect(ALLOWED_NATIVE_METHODS.has('files/delete')).toBe(true);
+    expect(ALLOWED_NATIVE_METHODS.has('hardware/read')).toBe(true);
+    expect(ALLOWED_NATIVE_METHODS.size).toBeGreaterThan(20);
   });
 });
