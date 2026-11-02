@@ -125,6 +125,23 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async executePowerShell(command: string, workingDirectory = '') {
+    if (!command.trim()) throw new Error('La commande PowerShell est obligatoire.');
+    if (command.length > 16384) throw new Error('La commande dépasse la limite de 16 Kio.');
+    const response = await request<{
+      output: string;
+      error: string;
+      exitCode: number;
+      workingDirectory: string;
+      truncated: boolean;
+      executedBy: string;
+      elevated: boolean;
+      source: string;
+    }>('terminal/execute', { command, workingDirectory });
+    if (!response.result) throw new Error('PowerShell n’a retourné aucun résultat.');
+    return response.result;
+  },
+
   async killProcess(pid: number, expectedName: string, expectedStartTimeUtcTicks: string) {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('PID invalide.');
     if (!expectedName.trim()) throw new Error('Le nom du processus est obligatoire pour vérifier le PID.');
