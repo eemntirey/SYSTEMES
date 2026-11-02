@@ -3,7 +3,7 @@
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use systemes_kernel::{BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+use systemes_kernel::{memory::PhysicalFrameAllocator, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
 const DEBUG_PORT: u16 = 0xE9;
 
@@ -48,6 +48,51 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES: UEFI memory map accepted\r\n") };
+
+    let map_size = match usize::try_from(boot.memory_map_size) {
+        Ok(size) => size,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: memory map size overflow\r\n") };
+            halt();
+        }
+    };
+    let descriptor_size = match usize::try_from(boot.memory_map_descriptor_size) {
+        Ok(size) => size,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: descriptor size overflow\r\n") };
+            halt();
+        }
+    };
+
+    // SAFETY: BootInfo was validated by the loader contract; UEFI keeps this
+    // identity-mapped allocation valid after ExitBootServices for the boot phase.
+    let memory_map = unsafe {
+        core::slice::from_raw_parts(boot.memory_map_address as *const u8, map_size)
+    };
+    let mut frame_allocator = match PhysicalFrameAllocator::from_uefi_memory_map(memory_map, descriptor_size) {
+        Ok(allocator) => allocator,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid UEFI memory descriptors\\r\\n") };
+            halt();
+        }
+    };
+    let initial_free_pages = frame_allocator.free_pages();
+    let test_frame = match frame_allocator.allocate_frame() {
+        Some(address) => address,
+        None => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: no conventional memory frames\\r\\n") };
+            halt();
+        }
+    };
+    if frame_allocator.free_frame(test_frame).is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame release failed\\r\\n") };
+        halt();
+    }
+    if frame_allocator.free_pages() != initial_free_pages {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame accounting mismatch\\r\\n") };
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
             0 => 0x00_20_C0_70u32, // GOP PixelRedGreenBlueReserved8BitPerColor
