@@ -92,6 +92,8 @@ const METHOD_TIMEOUT_MS: Record<string, number> = {
   'storage/volumes': 20_000,
   'apps/installed': 25_000,
   'devices/read': 25_000,
+  'services/read': 25_000,
+  'services/control': 45_000,
 }
 
 const METHOD_PATTERN = /^[a-z][a-z0-9/_-]{0,126}[a-z0-9]$/
