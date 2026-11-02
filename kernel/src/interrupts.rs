@@ -7,7 +7,6 @@ use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
-const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 
@@ -63,7 +62,38 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
-    fn systemes_isr0();\n    fn systemes_isr1();\n    fn systemes_isr2();\n    fn systemes_isr3();\n    fn systemes_isr4();\n    fn systemes_isr5();\n    fn systemes_isr6();\n    fn systemes_isr7();\n    fn systemes_isr8();\n    fn systemes_isr9();\n    fn systemes_isr10();\n    fn systemes_isr11();\n    fn systemes_isr12();\n    fn systemes_isr13();\n    fn systemes_isr14();\n    fn systemes_isr15();\n    fn systemes_isr16();\n    fn systemes_isr17();\n    fn systemes_isr18();\n    fn systemes_isr19();\n    fn systemes_isr20();\n    fn systemes_isr21();\n    fn systemes_isr22();\n    fn systemes_isr23();\n    fn systemes_isr24();\n    fn systemes_isr25();\n    fn systemes_isr26();\n    fn systemes_isr27();\n    fn systemes_isr28();\n    fn systemes_isr29();\n    fn systemes_isr30();\n    fn systemes_isr31();
+    fn systemes_isr0();
+    fn systemes_isr1();
+    fn systemes_isr2();
+    fn systemes_isr3();
+    fn systemes_isr4();
+    fn systemes_isr5();
+    fn systemes_isr6();
+    fn systemes_isr7();
+    fn systemes_isr8();
+    fn systemes_isr9();
+    fn systemes_isr10();
+    fn systemes_isr11();
+    fn systemes_isr12();
+    fn systemes_isr13();
+    fn systemes_isr14();
+    fn systemes_isr15();
+    fn systemes_isr16();
+    fn systemes_isr17();
+    fn systemes_isr18();
+    fn systemes_isr19();
+    fn systemes_isr20();
+    fn systemes_isr21();
+    fn systemes_isr22();
+    fn systemes_isr23();
+    fn systemes_isr24();
+    fn systemes_isr25();
+    fn systemes_isr26();
+    fn systemes_isr27();
+    fn systemes_isr28();
+    fn systemes_isr29();
+    fn systemes_isr30();
+    fn systemes_isr31();
 }
 
 global_asm!(r#"
@@ -88,147 +118,209 @@ systemes_load_gdt:
 systemes_isr0:
     push 0
     push 0
-    jmp systemes_exception_common\n\n.global systemes_isr1
+    jmp systemes_exception_common
+
+.global systemes_isr1
 .type systemes_isr1, @function
 systemes_isr1:
     push 0
     push 1
-    jmp systemes_exception_common\n\n.global systemes_isr2
+    jmp systemes_exception_common
+
+.global systemes_isr2
 .type systemes_isr2, @function
 systemes_isr2:
     push 0
     push 2
-    jmp systemes_exception_common\n\n.global systemes_isr3
+    jmp systemes_exception_common
+
+.global systemes_isr3
 .type systemes_isr3, @function
 systemes_isr3:
     push 0
     push 3
-    jmp systemes_exception_common\n\n.global systemes_isr4
+    jmp systemes_exception_common
+
+.global systemes_isr4
 .type systemes_isr4, @function
 systemes_isr4:
     push 0
     push 4
-    jmp systemes_exception_common\n\n.global systemes_isr5
+    jmp systemes_exception_common
+
+.global systemes_isr5
 .type systemes_isr5, @function
 systemes_isr5:
     push 0
     push 5
-    jmp systemes_exception_common\n\n.global systemes_isr6
+    jmp systemes_exception_common
+
+.global systemes_isr6
 .type systemes_isr6, @function
 systemes_isr6:
     push 0
     push 6
-    jmp systemes_exception_common\n\n.global systemes_isr7
+    jmp systemes_exception_common
+
+.global systemes_isr7
 .type systemes_isr7, @function
 systemes_isr7:
     push 0
     push 7
-    jmp systemes_exception_common\n\n.global systemes_isr8
+    jmp systemes_exception_common
+
+.global systemes_isr8
 .type systemes_isr8, @function
 systemes_isr8:
     push 8
-    jmp systemes_exception_common\n\n.global systemes_isr9
+    jmp systemes_exception_common
+
+.global systemes_isr9
 .type systemes_isr9, @function
 systemes_isr9:
     push 0
     push 9
-    jmp systemes_exception_common\n\n.global systemes_isr10
+    jmp systemes_exception_common
+
+.global systemes_isr10
 .type systemes_isr10, @function
 systemes_isr10:
     push 10
-    jmp systemes_exception_common\n\n.global systemes_isr11
+    jmp systemes_exception_common
+
+.global systemes_isr11
 .type systemes_isr11, @function
 systemes_isr11:
     push 11
-    jmp systemes_exception_common\n\n.global systemes_isr12
+    jmp systemes_exception_common
+
+.global systemes_isr12
 .type systemes_isr12, @function
 systemes_isr12:
     push 12
-    jmp systemes_exception_common\n\n.global systemes_isr13
+    jmp systemes_exception_common
+
+.global systemes_isr13
 .type systemes_isr13, @function
 systemes_isr13:
     push 13
-    jmp systemes_exception_common\n\n.global systemes_isr14
+    jmp systemes_exception_common
+
+.global systemes_isr14
 .type systemes_isr14, @function
 systemes_isr14:
     push 14
-    jmp systemes_exception_common\n\n.global systemes_isr15
+    jmp systemes_exception_common
+
+.global systemes_isr15
 .type systemes_isr15, @function
 systemes_isr15:
     push 0
     push 15
-    jmp systemes_exception_common\n\n.global systemes_isr16
+    jmp systemes_exception_common
+
+.global systemes_isr16
 .type systemes_isr16, @function
 systemes_isr16:
     push 0
     push 16
-    jmp systemes_exception_common\n\n.global systemes_isr17
+    jmp systemes_exception_common
+
+.global systemes_isr17
 .type systemes_isr17, @function
 systemes_isr17:
     push 17
-    jmp systemes_exception_common\n\n.global systemes_isr18
+    jmp systemes_exception_common
+
+.global systemes_isr18
 .type systemes_isr18, @function
 systemes_isr18:
     push 0
     push 18
-    jmp systemes_exception_common\n\n.global systemes_isr19
+    jmp systemes_exception_common
+
+.global systemes_isr19
 .type systemes_isr19, @function
 systemes_isr19:
     push 0
     push 19
-    jmp systemes_exception_common\n\n.global systemes_isr20
+    jmp systemes_exception_common
+
+.global systemes_isr20
 .type systemes_isr20, @function
 systemes_isr20:
     push 0
     push 20
-    jmp systemes_exception_common\n\n.global systemes_isr21
+    jmp systemes_exception_common
+
+.global systemes_isr21
 .type systemes_isr21, @function
 systemes_isr21:
     push 21
-    jmp systemes_exception_common\n\n.global systemes_isr22
+    jmp systemes_exception_common
+
+.global systemes_isr22
 .type systemes_isr22, @function
 systemes_isr22:
     push 0
     push 22
-    jmp systemes_exception_common\n\n.global systemes_isr23
+    jmp systemes_exception_common
+
+.global systemes_isr23
 .type systemes_isr23, @function
 systemes_isr23:
     push 0
     push 23
-    jmp systemes_exception_common\n\n.global systemes_isr24
+    jmp systemes_exception_common
+
+.global systemes_isr24
 .type systemes_isr24, @function
 systemes_isr24:
     push 0
     push 24
-    jmp systemes_exception_common\n\n.global systemes_isr25
+    jmp systemes_exception_common
+
+.global systemes_isr25
 .type systemes_isr25, @function
 systemes_isr25:
     push 0
     push 25
-    jmp systemes_exception_common\n\n.global systemes_isr26
+    jmp systemes_exception_common
+
+.global systemes_isr26
 .type systemes_isr26, @function
 systemes_isr26:
     push 0
     push 26
-    jmp systemes_exception_common\n\n.global systemes_isr27
+    jmp systemes_exception_common
+
+.global systemes_isr27
 .type systemes_isr27, @function
 systemes_isr27:
     push 0
     push 27
-    jmp systemes_exception_common\n\n.global systemes_isr28
+    jmp systemes_exception_common
+
+.global systemes_isr28
 .type systemes_isr28, @function
 systemes_isr28:
     push 0
     push 28
-    jmp systemes_exception_common\n\n.global systemes_isr29
+    jmp systemes_exception_common
+
+.global systemes_isr29
 .type systemes_isr29, @function
 systemes_isr29:
     push 29
-    jmp systemes_exception_common\n\n.global systemes_isr30
+    jmp systemes_exception_common
+
+.global systemes_isr30
 .type systemes_isr30, @function
 systemes_isr30:
     push 30
-    jmp systemes_exception_common\n\n.global systemes_isr31
+    jmp systemes_exception_common
+
+.global systemes_isr31
 .type systemes_isr31, @function
 systemes_isr31:
     push 0
@@ -278,7 +370,38 @@ pub unsafe fn initialize() {
     unsafe { systemes_load_gdt(&gdt_pointer) };
 
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
-        systemes_isr0 as usize,\n        systemes_isr1 as usize,\n        systemes_isr2 as usize,\n        systemes_isr3 as usize,\n        systemes_isr4 as usize,\n        systemes_isr5 as usize,\n        systemes_isr6 as usize,\n        systemes_isr7 as usize,\n        systemes_isr8 as usize,\n        systemes_isr9 as usize,\n        systemes_isr10 as usize,\n        systemes_isr11 as usize,\n        systemes_isr12 as usize,\n        systemes_isr13 as usize,\n        systemes_isr14 as usize,\n        systemes_isr15 as usize,\n        systemes_isr16 as usize,\n        systemes_isr17 as usize,\n        systemes_isr18 as usize,\n        systemes_isr19 as usize,\n        systemes_isr20 as usize,\n        systemes_isr21 as usize,\n        systemes_isr22 as usize,\n        systemes_isr23 as usize,\n        systemes_isr24 as usize,\n        systemes_isr25 as usize,\n        systemes_isr26 as usize,\n        systemes_isr27 as usize,\n        systemes_isr28 as usize,\n        systemes_isr29 as usize,\n        systemes_isr30 as usize,\n        systemes_isr31 as usize
+        systemes_isr0 as usize,
+        systemes_isr1 as usize,
+        systemes_isr2 as usize,
+        systemes_isr3 as usize,
+        systemes_isr4 as usize,
+        systemes_isr5 as usize,
+        systemes_isr6 as usize,
+        systemes_isr7 as usize,
+        systemes_isr8 as usize,
+        systemes_isr9 as usize,
+        systemes_isr10 as usize,
+        systemes_isr11 as usize,
+        systemes_isr12 as usize,
+        systemes_isr13 as usize,
+        systemes_isr14 as usize,
+        systemes_isr15 as usize,
+        systemes_isr16 as usize,
+        systemes_isr17 as usize,
+        systemes_isr18 as usize,
+        systemes_isr19 as usize,
+        systemes_isr20 as usize,
+        systemes_isr21 as usize,
+        systemes_isr22 as usize,
+        systemes_isr23 as usize,
+        systemes_isr24 as usize,
+        systemes_isr25 as usize,
+        systemes_isr26 as usize,
+        systemes_isr27 as usize,
+        systemes_isr28 as usize,
+        systemes_isr29 as usize,
+        systemes_isr30 as usize,
+        systemes_isr31 as usize
     ];
     let idt = addr_of_mut!(IDT) as *mut IdtEntry;
     for (vector, handler) in handlers.iter().enumerate() {
@@ -307,7 +430,7 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         debug_hex(vector);
         debug_write(b" error=0x");
         debug_hex(error_code);
-        debug_write(b"\\r\\n");
+        debug_write(b"\r\n");
         asm!("cli", options(nomem, nostack));
         loop {
             asm!("hlt", options(nomem, nostack));
