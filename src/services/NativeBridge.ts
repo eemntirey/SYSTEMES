@@ -185,6 +185,18 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async copyFile(source: string, destination: string) {
+    if (!source.trim() || !destination.trim()) throw new Error('Source et destination sont obligatoires.');
+    const response = await request('files/copy', { source, destination });
+    return response.result;
+  },
+
+  async moveFile(source: string, destination: string) {
+    if (!source.trim() || !destination.trim()) throw new Error('Source et destination sont obligatoires.');
+    const response = await request('files/move', { source, destination });
+    return response.result;
+  },
+
   async deleteFile(path: string) {
     const response = await request('files/delete', { path });
     return response.result;
