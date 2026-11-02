@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 
 namespace SYSTEMES.WindowsHost;
@@ -17,6 +18,10 @@ internal sealed class NativeProcessHost : IAsyncDisposable
         if (!File.Exists(executable))
             throw new FileNotFoundException("Le moteur natif SYSTEMES est absent du dossier d'installation.", executable);
 
+        // Keep the redirected IPC streams in UTF-8 on every Windows locale.
+        // Without these settings .NET may use the active OEM code page and corrupt
+        // accented characters in paths, filenames, passwords and JSON payloads.
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         var startInfo = new ProcessStartInfo(executable)
         {
             WorkingDirectory = Path.GetDirectoryName(executable)!,
@@ -24,7 +29,10 @@ internal sealed class NativeProcessHost : IAsyncDisposable
             CreateNoWindow = true,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true
+            RedirectStandardError = true,
+            StandardInputEncoding = utf8,
+            StandardOutputEncoding = utf8,
+            StandardErrorEncoding = utf8
         };
 
         _process = Process.Start(startInfo) ?? throw new InvalidOperationException("Impossible de démarrer SYSTEMES Native Core.");
