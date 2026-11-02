@@ -120,6 +120,16 @@ namespace Systemes.Native.Core
                                 args["path"]?.Value<string>() ?? "",
                                 args["newName"]?.Value<string>() ?? "");
                             break;
+                        case "files/copy":
+                            result = FileSystemNative.CopyEntry(
+                                args["source"]?.Value<string>() ?? "",
+                                args["destination"]?.Value<string>() ?? "");
+                            break;
+                        case "files/move":
+                            result = FileSystemNative.MoveEntry(
+                                args["source"]?.Value<string>() ?? "",
+                                args["destination"]?.Value<string>() ?? "");
+                            break;
                         case "devices/read":
                             result = DeviceManager.ReadRealDevices();
                             break;
