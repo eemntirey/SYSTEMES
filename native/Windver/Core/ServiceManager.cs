@@ -81,18 +81,29 @@ namespace Systemes.Native.Core
             {
                 FileName = "sc.exe",
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             };
             start.ArgumentList.Add(action);
             start.ArgumentList.Add(name);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows n’a pas démarré sc.exe.");
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(10000))
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
                 throw new TimeoutException("La commande de service a dépassé 10 secondes.");
             }
+            var output = outputTask.GetAwaiter().GetResult();
+            var error = errorTask.GetAwaiter().GetResult();
             if (process.ExitCode != 0)
-                throw new InvalidOperationException($"SC.exe a refusé l’action « {action} » sur « {name} » (code {process.ExitCode}). Vérifiez les droits et l’état du service.");
+            {
+                var detail = string.IsNullOrWhiteSpace(error) ? output.Trim() : error.Trim();
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
+                    ? $"SC.exe a refusé l’action « {action} » sur « {name} » (code {process.ExitCode}). Vérifiez les droits et l’état du service."
+                    : detail);
+            }
 
             for (var attempt = 0; attempt < 20; attempt++)
             {
