@@ -224,7 +224,7 @@ export const SettingsApp: React.FC = () => {
               <div key={item.kbArticles.join('-') || (item.title + '-' + index)} style={{ padding: '12px 0', borderBottom: '1px solid var(--window-border)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{item.title}</div>
                 <div style={muted}>{item.kbArticles.length ? item.kbArticles.map(kb => 'KB' + kb).join(', ') : 'Référence KB non fournie'}{item.severity ? ' · ' + item.severity : ''}</div>
-                <div style={muted}>{item.downloaded ? 'Déjà téléchargée' : 'Non téléchargée'}{item.mandatory ? ' · Obligatoire' : ''}{item.rebootRequired ? ' · Redémarrage requis' : ''}</div>
+                <div style={muted}>{item.downloaded ? 'Déjà téléchargée' : 'Non téléchargée'}{item.mandatory ? ' · Obligatoire' : ''}{item.rebootBehavior === 1 ? ' · Redémarrage systématiquement requis après installation' : item.rebootBehavior === 2 ? ' · Redémarrage potentiellement requis après installation' : ''}</div>
               </div>
             )) : <p style={muted}>Aucune mise à jour applicable n’a été signalée par Windows Update.</p>}
           </Group>}
