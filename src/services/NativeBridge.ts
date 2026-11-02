@@ -109,7 +109,7 @@ export const NativeBridge = {
   },
 
   async readServices() {
-    const response = await request<{ services: { name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string }[]; count: number; source: string }>('services/read');
+    const response = await request<{ services: { name: string; displayName: string; state: string; startMode: string; account: string; processId: number; executablePath: string; isProtected: boolean }[]; count: number; source: string }>('services/read');
     if (!response.result) throw new Error('Windows n’a retourné aucun inventaire de services.');
     return response.result;
   },
