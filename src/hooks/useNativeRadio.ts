@@ -4,11 +4,8 @@ import { NativeBridge } from '../services/NativeBridge'
 type Notify = (title: string, message: string, appName: string, icon?: string) => void
 
 /**
- * Synchronise les interrupteurs Wi-Fi / Bluetooth du bureau avec le moteur natif Windows.
- * - Lecture réelle au montage (netsh / Get-PnpDevice)
- * - toggleWifi : déconnexion native si connecté, sinon ouverture des paramètres réseau
- * - toggleBluetooth : ouverture des paramètres Bluetooth + relecture de l'état réel
- * Hors host WebView2, retombe sur un basculement local (aucun faux succès silencieux).
+ * Contrôle les adaptateurs physiques via le moteur natif Windows.
+ * Aucun état optimiste : l'interface ne change qu'après confirmation de Windows.
  */
 export function useNativeRadio(
   setWifiEnabled: (value: boolean | ((prev: boolean) => boolean)) => void,
@@ -20,24 +17,12 @@ export function useNativeRadio(
   useEffect(() => {
     mounted.current = true
     let cancelled = false
-    ;(async () => {
-      try {
-        const wifi = await NativeBridge.readWifiStatus()
-        if (!cancelled && wifi && !wifi.error) {
-          setWifiEnabled(!!wifi.connected || (wifi.state != null && wifi.state !== ''))
-        }
-      } catch {
-        /* hors host : conserver la préférence locale */
-      }
-      try {
-        const bt = await NativeBridge.readBluetoothStatus()
-        if (!cancelled && bt && !bt.error) {
-          setBluetoothEnabled(!!bt.powered)
-        }
-      } catch {
-        /* hors host */
-      }
-    })()
+    void NativeBridge.readWifiAdapterStatus()
+      .then(status => { if (!cancelled) setWifiEnabled(status.enabled) })
+      .catch(() => { /* Moteur natif absent : ne pas fabriquer un état radio. */ })
+    void NativeBridge.readBluetoothStatus()
+      .then(status => { if (!cancelled && !status.error) setBluetoothEnabled(!!status.powered) })
+      .catch(() => { /* Moteur natif absent. */ })
     return () => {
       cancelled = true
       mounted.current = false
@@ -45,102 +30,50 @@ export function useNativeRadio(
   }, [setWifiEnabled, setBluetoothEnabled])
 
   const refreshWifiStatus = useCallback(async () => {
-    try {
-      const wifi = await NativeBridge.readWifiStatus()
-      if (wifi?.error) return wifi
-      if (mounted.current) {
-        setWifiEnabled(!!wifi?.connected || (wifi?.state != null && wifi.state !== ''))
-      }
-      return wifi
-    } catch {
-      return null
-    }
+    const status = await NativeBridge.readWifiAdapterStatus()
+    if (mounted.current) setWifiEnabled(status.enabled)
+    return status
   }, [setWifiEnabled])
 
   const refreshBluetoothStatus = useCallback(async () => {
-    try {
-      const bt = await NativeBridge.readBluetoothStatus()
-      if (bt?.error) return bt
-      if (mounted.current) {
-        setBluetoothEnabled(!!bt?.powered)
-      }
-      return bt
-    } catch {
-      return null
-    }
+    const status = await NativeBridge.readBluetoothStatus()
+    if (status.error) throw new Error(status.error)
+    if (mounted.current) setBluetoothEnabled(!!status.powered)
+    return status
   }, [setBluetoothEnabled])
 
   const toggleWifi = useCallback(() => {
     void (async () => {
       try {
-        const current = await NativeBridge.readWifiStatus()
-        if (current?.connected) {
-          await NativeBridge.disconnectWifi()
-          await refreshWifiStatus()
-          addNotification(
-            'Wi-Fi',
-            current.ssid ? `Déconnecté de « ${current.ssid} ».` : 'Réseau Wi-Fi déconnecté.',
-            'Réseau',
-          )
-        } else {
-          setWifiEnabled(true)
-          try {
-            await NativeBridge.openWindowsSettings('network-status')
-          } catch {
-            /* ignore hors host */
-          }
-          addNotification(
-            'Wi-Fi',
-            'Ouvrez les paramètres Windows pour vous connecter à un réseau.',
-            'Réseau',
-          )
-          setTimeout(() => {
-            void refreshWifiStatus()
-          }, 2500)
-        }
-      } catch {
-        setWifiEnabled(prev => !prev)
-        addNotification(
-          'Wi-Fi',
-          'Moteur natif indisponible — état local uniquement.',
-          'Réseau',
-        )
+        const current = await NativeBridge.readWifiAdapterStatus()
+        const result = await NativeBridge.setWifiEnabled(!current.enabled)
+        if (mounted.current) setWifiEnabled(result.enabled)
+        addNotification('Wi-Fi', result.enabled
+          ? `Adaptateur « ${result.adapterName} » activé.`
+          : `Adaptateur « ${result.adapterName} » désactivé.`, 'Réseau')
+      } catch (cause) {
+        addNotification('Wi-Fi — opération refusée',
+          cause instanceof Error ? cause.message : String(cause), 'Réseau')
       }
     })()
-  }, [refreshWifiStatus, addNotification, setWifiEnabled])
+  }, [addNotification, setWifiEnabled])
 
   const toggleBluetooth = useCallback(() => {
     void (async () => {
       try {
         const current = await NativeBridge.readBluetoothStatus()
-        if (current?.error) throw new Error(current.error)
-        const wasPowered = !!current?.powered
-        setBluetoothEnabled(!wasPowered)
-        try {
-          await NativeBridge.openWindowsSettings('bluetooth')
-        } catch {
-          /* ignore hors host */
-        }
-        addNotification(
-          'Bluetooth',
-          wasPowered
-            ? 'Paramètres Bluetooth ouverts — désactivez l’adaptateur dans Windows si besoin.'
-            : 'Paramètres Bluetooth ouverts — activez l’adaptateur dans Windows.',
-          'Bluetooth',
-        )
-        setTimeout(() => {
-          void refreshBluetoothStatus()
-        }, 2500)
-      } catch {
-        setBluetoothEnabled(prev => !prev)
-        addNotification(
-          'Bluetooth',
-          'Moteur natif indisponible — état local uniquement.',
-          'Bluetooth',
-        )
+        if (current.error) throw new Error(current.error)
+        const result = await NativeBridge.setBluetoothEnabled(!current.powered)
+        if (mounted.current) setBluetoothEnabled(result.enabled)
+        addNotification('Bluetooth', result.enabled
+          ? `Adaptateur « ${result.adapterName} » activé.`
+          : `Adaptateur « ${result.adapterName} » désactivé.`, 'Bluetooth')
+      } catch (cause) {
+        addNotification('Bluetooth — opération refusée',
+          cause instanceof Error ? cause.message : String(cause), 'Bluetooth')
       }
     })()
-  }, [refreshBluetoothStatus, addNotification, setBluetoothEnabled])
+  }, [addNotification, setBluetoothEnabled])
 
   return { toggleWifi, toggleBluetooth, refreshWifiStatus, refreshBluetoothStatus }
 }
