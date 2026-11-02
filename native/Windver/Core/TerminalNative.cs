@@ -58,7 +58,7 @@ try {{
     $errorText = $_.Exception.Message
 }}
 $payload = @{{ output = $builder.ToString(); truncated = $truncated; exitCode = $exitCode; error = $errorText; workingDirectory = (Get-Location).Path }} | ConvertTo-Json -Compress -Depth 4
-Write-Output (\"SYSTEMES_PS_RESULT:\" + $payload)
+Write-Output ('SYSTEMES_PS_RESULT:' + $payload)
 ";
 
             var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
