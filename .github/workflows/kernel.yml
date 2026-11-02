@@ -99,6 +99,7 @@ jobs:
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
+          grep -q 'SYSTEMES: kernel-owned 4-level identity paging active' build/uefi/debug.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
       - name: Upload boot evidence
         if: always()
