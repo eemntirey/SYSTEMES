@@ -1,0 +1,119 @@
+name: Kernel memory protection hardware faults
+
+on:
+  pull_request:
+    paths:
+      - 'kernel/**'
+      - 'boot/**'
+      - '.github/workflows/kernel-memory-faults.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qemu-memory-fault:
+    name: QEMU hardware fault — ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: NX execution must fault
+            feature: qemu-nx-execute-test
+            expected_error: '0000000000000011'
+            expected_test: 'SYSTEMES_TEST: attempting instruction fetch from NX page'
+          - label: RX write must fault
+            feature: qemu-rx-write-test
+            expected_error: '0000000000000003'
+            expected_test: 'SYSTEMES_TEST: attempting write to RX kernel text'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain and firmware tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnu-efi binutils dosfstools mtools xorriso qemu-system-x86 ovmf
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-none
+
+      - name: Build freestanding kernel
+        shell: bash
+        run: |
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features "${{ matrix.feature }}" --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          mkdir -p build/uefi
+          objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
+          test -s build/uefi/KERNEL.BIN
+          kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
+          test -n "$kernel_end"
+          kernel_image_bytes=$((kernel_end - 0x00200000))
+          test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
+          echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
+
+      - name: Build GNU-EFI loader
+        run: |
+          gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
+          ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
+          objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
+          test -s build/uefi/BOOTX64.EFI
+
+      - name: Create UEFI bootable ISO
+        run: |
+          truncate -s 16M build/uefi/esp.img
+          mkfs.vfat build/uefi/esp.img
+          mmd -i build/uefi/esp.img ::/EFI ::/EFI/BOOT
+          mcopy -i build/uefi/esp.img build/uefi/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+          mcopy -i build/uefi/esp.img build/uefi/KERNEL.BIN ::/EFI/BOOT/KERNEL.BIN
+          mkdir -p build/uefi/iso-root/EFI/BOOT
+          cp build/uefi/BOOTX64.EFI build/uefi/iso-root/EFI/BOOT/BOOTX64.EFI
+          cp build/uefi/KERNEL.BIN build/uefi/iso-root/EFI/BOOT/KERNEL.BIN
+          cp build/uefi/esp.img build/uefi/iso-root/esp.img
+          xorriso -as mkisofs -R -J -V SYSTEMES-MEMORY-FAULT -o build/uefi/systemes-memory-fault.iso -e esp.img -no-emul-boot build/uefi/iso-root
+          test -s build/uefi/systemes-memory-fault.iso
+
+      - name: Boot QEMU and require the expected CPU page fault
+        shell: bash
+        run: |
+          firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
+          variables="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_VARS*.fd' | sort | head -n 1)"
+          test -n "$firmware"
+          test -n "$variables"
+          cp "$variables" build/uefi/OVMF_VARS.fd
+          set +e
+          timeout 20s qemu-system-x86_64 -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-memory-fault.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          qemu_status=$?
+          set -e
+          if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
+            echo "QEMU exited unexpectedly with status $qemu_status"
+            cat build/uefi/serial.log || true
+            exit 1
+          fi
+          cat build/uefi/debug.log
+          grep -q 'SYSTEMES_UEFI_ENTRY_REACHED' build/uefi/debug.log
+          grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
+          grep -q 'SYSTEMES: CPU NX capability detected and EFER.NXE enabled' build/uefi/debug.log
+          grep -q 'SYSTEMES: CR0.WP supervisor write protection enabled' build/uefi/debug.log
+          grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
+          grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
+          grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
+          grep -q "SYSTEMES_EXCEPTION: vector=0x000000000000000E error=0x${{ matrix.expected_error }}" build/uefi/debug.log
+          if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
+            echo "Kernel reported a failure marker"
+            exit 1
+          fi
+
+      - name: Upload hardware fault evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-fault-evidence-${{ matrix.feature }}
+          path: |
+            build/uefi/systemes-memory-fault.iso
+            build/uefi/serial.log
+            build/uefi/debug.log
+            build/uefi/qemu.log
+          if-no-files-found: warn
