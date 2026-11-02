@@ -108,7 +108,8 @@ fn validate_regions(regions: &[MemoryRegion]) -> Result<(), PagingError> {
     }
     for i in 0..regions.len() {
         for j in i + 1..regions.len() {
-            if regions[i].start != regions[i].end && regions[j].start != regions[j].end\n                && regions[i].start < regions[j].end && regions[j].start < regions[i].end {
+            if regions[i].start != regions[i].end && regions[j].start != regions[j].end
+                && regions[i].start < regions[j].end && regions[j].start < regions[i].end {
                 return Err(PagingError::OverlappingRegions);
             }
         }
