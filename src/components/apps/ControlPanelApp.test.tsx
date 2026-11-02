@@ -1,4 +1,3 @@
-import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ControlPanelApp } from './ControlPanelApp';
@@ -51,7 +50,6 @@ describe('ControlPanelApp native Windows services', () => {
       services,
       count: services.length,
       source: 'WMI Win32_Service',
-      note: 'Inventaire réel',
     });
     vi.mocked(NativeBridge.controlService).mockResolvedValue({ changed: true });
   });
