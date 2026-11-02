@@ -76,6 +76,7 @@ const DEFAULT_TIMEOUT_MS = 15_000
 
 const METHOD_TIMEOUT_MS: Record<string, number> = {
   'system/ping': 5_000,
+  'update/check': 180_000,
   'files/list': 30_000,
   'files/read-content': 30_000,
   'files/write': 30_000,
