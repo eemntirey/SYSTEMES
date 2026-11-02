@@ -170,6 +170,8 @@ unsafe fn ensure_4k_table(
         }
         // Parent must permit both permissions; leaf entries enforce W^X.
         unsafe { pde_ptr.write(table_frame | PRESENT | WRITABLE); }
+        // SAFETY: Invalidate any cached 2 MiB translation before using the new 4 KiB table.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
         Ok(table)
     } else {
         if pde & PRESENT == 0 { return Err(PagingError::InvalidRegion); }
@@ -189,6 +191,8 @@ pub unsafe fn protect_regions(
             let index = ((address >> 12) & 0x1ff) as usize;
             // SAFETY: The page table has 512 entries and index is in 0..512.
             unsafe { table.add(index).write((address & ADDRESS_MASK) | region.permissions.flags()); }
+            // SAFETY: Flush a stale translation so the new permission takes effect immediately.
+            unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
             address += PAGE_SIZE;
         }
     }
