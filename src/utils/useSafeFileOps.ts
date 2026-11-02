@@ -25,7 +25,7 @@ export function useSafeFileOps(opts: {
   setIsRenaming: (v: boolean) => void
   setRenameValue: (v: string) => void
   setSelectedItemId: (id: string | null) => void
-  setPermissionText: (t: string) => void
+  setPermissionText: (t: string | null) => void
   refreshDirectory: () => Promise<void>
 }) {
   const {
