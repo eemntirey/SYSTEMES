@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +45,7 @@ jobs:
   windows-native-host:
     name: Windows native host build
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -189,7 +190,7 @@ jobs:
             if (-not $responses["phase2-file-ads"].error) { throw "files/read-content accepted an NTFS alternate data stream path." }
             if (-not $responses["phase2-file-device-path"].error) { throw "files/read-content accepted a Windows device namespace path." }
             $terminal = $responses["phase2-terminal"].result
-            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command." }
+            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command. Response: $($responses['phase2-terminal'] | ConvertTo-Json -Compress -Depth 8)" }
             if ($terminal.workingDirectory -ne $testRoot) { throw "terminal/execute did not preserve the requested working directory." }
             if ($terminal.elevated -ne $false) { throw "terminal/execute must never elevate automatically." }
 

@@ -5,6 +5,7 @@
 //! This crate deliberately contains no Windows, WPF, WebView2, or standard-library
 //! dependencies. The UEFI loader will populate BootInfo before transferring control.
 
+pub mod interrupts;
 pub mod memory;
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;

@@ -93,6 +93,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\\r\\n") };
+    // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
+    unsafe { systemes_kernel::interrupts::initialize() };
+    unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
             0 => 0x00_20_C0_70u32, // GOP PixelRedGreenBlueReserved8BitPerColor
@@ -122,6 +126,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-exception-test")]
+    {
+        // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
+        unsafe { asm!("int3", options(nomem, nostack)) };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
+        halt();
+    }
     halt();
 }
 
