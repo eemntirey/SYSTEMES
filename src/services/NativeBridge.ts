@@ -230,6 +230,18 @@ export const NativeBridge = {
     return response.result;
   },
 
+  async setWifiEnabled(enabled: boolean) {
+    const response = await request<{ enabled: boolean; adapterName: string; status: string; source: string }>('network/wifi/set-enabled', { enabled });
+    if (!response.result) throw new Error('Windows n’a retourné aucun état Wi-Fi.');
+    return response.result;
+  },
+
+  async setBluetoothEnabled(enabled: boolean) {
+    const response = await request<{ enabled: boolean; adapterName: string; instanceId: string; status: string; source: string }>('bluetooth/set-enabled', { enabled });
+    if (!response.result) throw new Error('Windows n’a retourné aucun état Bluetooth.');
+    return response.result;
+  },
+
   async readWifiStatus() {
     const response = await request('network/wifi/status');
     return response.result as { connected: boolean; ssid?: string | null; state?: string | null; signal?: string | null; error?: string };
