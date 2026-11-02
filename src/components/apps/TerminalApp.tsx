@@ -33,10 +33,10 @@ export const TerminalApp: React.FC = () => {
   const createInitialTab = (): TerminalTab => ({
     id: `tab-${Date.now()}`,
     title: 'Windows PowerShell',
-    path: 'C:\\Users\\eemntirey',
+    path: '',
     outputs: [{
       id: 'init-1',
-      output: `Windows PowerShell\nCopyright (C) Microsoft Corporation. Tous droits réservés.\n\nEssaie les nouvelles commandes : neofetch, ipconfig, tasklist, get-process, hostname\nTape "help" pour la liste complète.\n`,
+      output: `Terminal PowerShell SYSTEMES\nLes commandes sont exécutées par Windows sous le compte utilisateur courant.\nAucune élévation automatique. Tapez Get-Help pour l’aide PowerShell.\n`,
     }],
     history: [],
     historyIndex: -1,
