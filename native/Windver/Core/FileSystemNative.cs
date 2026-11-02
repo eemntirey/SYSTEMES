@@ -258,6 +258,25 @@ namespace Systemes.Native.Core
             }
         }
 
+        private static void CopyDirectoryTreeSafely(string sourcePath, string destinationPath)
+        {
+            try
+            {
+                CopyDirectoryTree(sourcePath, destinationPath);
+            }
+            catch
+            {
+                // Éliminer les copies partielles créées par cette opération avant de remonter l'erreur.
+                try
+                {
+                    if (Directory.Exists(destinationPath))
+                        Directory.Delete(destinationPath, recursive: true);
+                }
+                catch { /* Conserver l'erreur initiale ; aucun écrasement de source. */ }
+                throw;
+            }
+        }
+
         private static void ValidateTransferDestination(string sourcePath, string destinationPath)
         {
             if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
@@ -285,7 +304,7 @@ namespace Systemes.Native.Core
 
             var isDirectory = Directory.Exists(sourcePath);
             if (isDirectory)
-                CopyDirectoryTree(sourcePath, destinationPath);
+                CopyDirectoryTreeSafely(sourcePath, destinationPath);
             else
                 File.Copy(sourcePath, destinationPath, overwrite: false);
 
@@ -320,7 +339,7 @@ namespace Systemes.Native.Core
             {
                 if (isDirectory)
                 {
-                    CopyDirectoryTree(sourcePath, destinationPath);
+                    CopyDirectoryTreeSafely(sourcePath, destinationPath);
                     Directory.Delete(sourcePath, recursive: true);
                 }
                 else
