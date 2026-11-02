@@ -47,7 +47,7 @@ namespace Systemes.Native.Core
                     object? update = null;
                     try
                     {
-                        update = Invoke(updates, "Item", index);
+                        update = GetIndexedProperty(updates, "Item", index);
                         if (update == null) continue;
 
                         var title = Convert.ToString(GetProperty(update, "Title")) ?? "Mise à jour sans titre";
@@ -124,6 +124,16 @@ namespace Systemes.Native.Core
                 binder: null,
                 target: target,
                 args: args);
+        }
+
+        private static object? GetIndexedProperty(object target, string property, params object[] indexes)
+        {
+            return target.GetType().InvokeMember(
+                property,
+                BindingFlags.GetProperty,
+                binder: null,
+                target: target,
+                args: indexes);
         }
 
         private static object? GetProperty(object? target, string property)
