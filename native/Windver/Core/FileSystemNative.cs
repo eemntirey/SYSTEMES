@@ -17,8 +17,8 @@ namespace Systemes.Native.Core
                 path = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (path.IndexOf('\0') >= 0 || path.Length > 32767)
                 throw new ArgumentException("Chemin vide, invalide ou trop long.", nameof(path));
-            if (path.StartsWith(@"\\\\.\\", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith(@"\\\\?\\", StringComparison.OrdinalIgnoreCase))
+            if (path.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("Les espaces de noms de périphériques Windows ne sont pas autorisés.", nameof(path));
             if (path.Length > 2 && path[1] == ':' && path.IndexOf(':', 2) >= 0)
                 throw new ArgumentException("Les flux de données alternatifs NTFS ne sont pas autorisés.", nameof(path));
