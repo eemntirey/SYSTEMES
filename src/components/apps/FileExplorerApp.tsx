@@ -194,6 +194,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
   const [newFileName, setNewFileName] = useState('')
   const [showInspector, setShowInspector] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(['doc-welcome'])
+  const [clipboard, setClipboard] = useState<{ path: string; name: string; mode: 'copy' | 'move' } | null>(null)
   const [sortBy, setSortBy] = useState<'name' | 'type' | 'modified'>('name')
 
   const refreshDirectory = async (path = currentPath) => {
@@ -358,6 +359,25 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
     }
   }
 
+  const pasteClipboard = async () => {
+    if (!clipboard) return
+    const parent = currentPath.replace(/\\/+$/, '')
+    const destination = `${parent}/${clipboard.name}`
+    setNativeError(null)
+    try {
+      if (clipboard.mode === 'copy') {
+        await NativeBridge.copyFile(clipboard.path, destination)
+      } else {
+        await NativeBridge.moveFile(clipboard.path, destination)
+        setClipboard(null)
+      }
+      setSelectedItemId(null)
+      await refreshDirectory()
+    } catch (cause) {
+      setNativeError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
 
   return (
     <div
@@ -447,6 +467,11 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           </select>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {selectedItem && <>
+            <ActionButton icon="copy" label="Copier" onClick={() => setClipboard({ path: selectedItem.path, name: selectedItem.name, mode: 'copy' })} />
+            <ActionButton icon="scissors" label="Couper" onClick={() => setClipboard({ path: selectedItem.path, name: selectedItem.name, mode: 'move' })} />
+          </>}
+          {clipboard && <ActionButton icon="clipboard" label={`Coller · ${clipboard.name}`} onClick={() => void pasteClipboard()} />}
           <ActionButton icon="trash" label="Corbeille" onClick={() => { void NativeBridge.openRecycleBin().catch((cause: unknown) => setNativeError(cause instanceof Error ? cause.message : String(cause))) }} />
           <ActionButton icon="folder" label="Nouveau dossier" onClick={() => setIsCreatingFolder(true)} />
           <ActionButton icon="file-text" label="Nouveau fichier" onClick={() => setIsCreatingFile(true)} />
