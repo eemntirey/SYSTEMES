@@ -33,7 +33,14 @@ pub unsafe fn build_identity_map(
 ) -> Result<u64, PagingError> {
     let mut frames = [0u64; PAGE_TABLE_FRAME_COUNT];
     for frame in &mut frames {
-        *frame = allocator.allocate_frame().ok_or(PagingError::OutOfFrames)?;
+        // Keep page-table structures out of the legacy low-memory area.
+        let candidate = loop {
+            let address = allocator.allocate_frame().ok_or(PagingError::OutOfFrames)?;
+            if address >= 0x10_0000 {
+                break address;
+            }
+        };
+        *frame = candidate;
         if *frame % PAGE_SIZE != 0 {
             return Err(PagingError::InvalidFrameAlignment);
         }
