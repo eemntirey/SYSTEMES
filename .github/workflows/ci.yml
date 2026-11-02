@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - AttaqueComplet
+      - Phase2-Parametres-Natifs
       - feat/systemes-modernisation-apps
       - Osreell
   pull_request:
