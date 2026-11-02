@@ -144,6 +144,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR3 verification failed\\r\\n") };
         halt();
     }
+    if unsafe { systemes_kernel::paging::verify_regions(page_table_root, &kernel_regions) }.is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X page-table verification failed\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\\r\\n") };
     unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
