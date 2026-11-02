@@ -58,6 +58,35 @@ namespace Systemes.Native.Core
             return result;
         }
 
+        public static object ReadWifiEnabled()
+        {
+            const string script = @"
+$ErrorActionPreference = 'Stop'
+try {
+    $adapter = Get-NetAdapter -Physical -ErrorAction Stop |
+        Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wireless|Wi-?Fi|802\.11' } |
+        Select-Object -First 1
+    if (-not $adapter) { throw 'Aucun adaptateur Wi-Fi physique n’a été détecté.' }
+    @{
+        enabled = ($adapter.Status -ne 'Disabled' -and $adapter.Status -ne 'Not Present')
+        adapterName = $adapter.Name
+        status = [string]$adapter.Status
+        source = 'Windows NetAdapter cmdlets'
+    } | ConvertTo-Json -Compress
+} catch {
+    @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+    exit 1
+}";
+            var result = RunPowerShell(script);
+            return new
+            {
+                enabled = result.Value<bool?>("enabled") ?? false,
+                adapterName = result.Value<string>("adapterName"),
+                status = result.Value<string>("status"),
+                source = result.Value<string>("source")
+            };
+        }
+
         public static object SetWifiEnabled(bool enabled)
         {
             var action = enabled ? "Enable-NetAdapter" : "Disable-NetAdapter";
