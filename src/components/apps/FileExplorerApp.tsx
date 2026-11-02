@@ -361,7 +361,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
   const pasteClipboard = async () => {
     if (!clipboard) return
-    const parent = currentPath.replace(/\\/+$/, '')
+    const parent = currentPath.replace(/\/+$/, '')
     const destination = `${parent}/${clipboard.name}`
     setNativeError(null)
     try {
