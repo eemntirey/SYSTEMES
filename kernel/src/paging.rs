@@ -26,6 +26,7 @@ pub enum PagingError {
     OverlappingRegions,
     WriteExecuteViolation,
     PermissionMismatch,
+    WriteProtectUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +49,21 @@ impl PagePermissions {
         }
     }
     pub const fn is_write_execute(self) -> bool { matches!(self, Self::ReadWriteExecute) }
+}
+
+/// Enable supervisor-mode write protection so CR0.WP enforces read-only PTEs.
+pub fn enable_write_protect() -> Result<(), PagingError> {
+    let current: u64;
+    // SAFETY: Reading CR0 is permitted in ring 0.
+    unsafe { core::arch::asm!("mov {}, cr0", out(reg) current, options(nomem, nostack, preserves_flags)); }
+    let updated = current | (1 << 16);
+    // SAFETY: Setting CR0.WP makes supervisor writes respect read-only page entries.
+    unsafe { core::arch::asm!("mov cr0, {}", in(reg) updated, options(nostack, preserves_flags)); }
+    let verified: u64;
+    // SAFETY: Read back CR0 to fail closed if WP did not latch.
+    unsafe { core::arch::asm!("mov {}, cr0", out(reg) verified, options(nomem, nostack, preserves_flags)); }
+    if verified & (1 << 16) == 0 { return Err(PagingError::WriteProtectUnavailable); }
+    Ok(())
 }
 
 pub fn enable_nx() -> Result<(), PagingError> {
