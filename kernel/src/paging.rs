@@ -98,7 +98,7 @@ pub unsafe fn build_identity_map(allocator: &mut PhysicalFrameAllocator) -> Resu
 
 fn validate_regions(regions: &[MemoryRegion]) -> Result<(), PagingError> {
     for region in regions {
-        if region.start >= region.end || region.end > IDENTITY_MAP_BYTES
+        if region.start > region.end || region.end > IDENTITY_MAP_BYTES
             || region.start % PAGE_SIZE != 0 || region.end % PAGE_SIZE != 0 {
             return Err(PagingError::InvalidRegion);
         }
