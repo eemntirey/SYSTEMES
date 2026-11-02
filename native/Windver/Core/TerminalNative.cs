@@ -51,7 +51,9 @@ try {{
             $script:truncated = $true
         }}
     }}
+    $pipelineSucceeded = $?
     if ($null -ne $LASTEXITCODE) {{ $exitCode = [int]$LASTEXITCODE }}
+    elseif (-not $pipelineSucceeded) {{ $exitCode = 1 }}
 }} catch {{
     $errorText = $_.ToString()
     $exitCode = 1
@@ -119,7 +121,8 @@ $payload = @{{
             return new
             {
                 output,
-                error = json.Value<string>("error") ?? "",
+                error = (string?)null,
+                commandError = json.Value<string>("error") ?? "",
                 exitCode = json.Value<int?>("exitCode") ?? process.ExitCode,
                 workingDirectory = json.Value<string>("workingDirectory") ?? directory,
                 truncated,
