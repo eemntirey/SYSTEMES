@@ -9,6 +9,8 @@ default = []
 qemu-exception-test = []
 qemu-nx-execute-test = []
 qemu-rx-write-test = []
+qemu-ist-nmi-test = []
+qemu-ist-machine-check-test = []
 
 [lib]
 path = "src/lib.rs"
