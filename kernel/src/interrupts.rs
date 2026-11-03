@@ -845,12 +845,20 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
     if vector == IRQ_VECTOR_BASE as u64 {
         TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
     }
-    let irq = vector as usize - IRQ_VECTOR_BASE;
-    unsafe {
-        if irq >= 8 {
-            asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+    if APIC_ACTIVE.load(Ordering::Acquire) {
+        let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+        if !base.is_null() {
+            // SAFETY: The UC-mapped Local APIC page is published before STI.
+            unsafe { lapic_write(base, 0xB0, 0); }
         }
-        asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+    } else {
+        let irq = vector as usize - IRQ_VECTOR_BASE;
+        unsafe {
+            if irq >= 8 {
+                asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+            }
+            asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+        }
     }
 }
 
