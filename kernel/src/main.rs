@@ -198,6 +198,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC masks are not IRQ0-only\\r\\n"); }
         halt();
     }
+    if !systemes_kernel::interrupts::verify_irq_gates() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PIC IRQ IDT gates invalid\\\\r\\\\n"); }
+        halt();
+    }
     unsafe { debug_write(b"SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked\\r\\n"); }
     unsafe { debug_write(b"SYSTEMES: PIT channel 0 programmed at 100 Hz\\r\\n"); }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
