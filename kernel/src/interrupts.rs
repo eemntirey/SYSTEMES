@@ -936,10 +936,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
             PIC_SPURIOUS_15_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         match pic_eoi_policy(irq, in_service) {
-            PicEoi::None => {
-                if irq == 7 { PIC_SPURIOUS_7_COUNT.fetch_add(1, Ordering::Relaxed); }
-                return;
-            },
+            PicEoi::None => return,
             PicEoi::MasterOnly => {
                 unsafe { asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack)); }
                 return;
