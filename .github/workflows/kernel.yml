@@ -160,6 +160,11 @@ jobs:
             expected_vector: NONE
             expected_error: NONE
             expected_test: 'SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks'
+          - label: Local APIC spurious vector handling
+            feature: qemu-apic-spurious-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
