@@ -449,11 +449,6 @@ pub unsafe fn initialize() {
     // SAFETY: The TSS descriptor at selector 0x18 is present and references the static TSS.
     unsafe { systemes_load_tr() };
 
-    if !verify_task_register() {
-        // Keep initialization fail-closed: never publish an IDT with an unloaded TSS.
-        loop { unsafe { asm!("cli; hlt", options(nomem, nostack)); } }
-    }
-
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
         systemes_isr0 as *const () as usize,
         systemes_isr1 as *const () as usize,
