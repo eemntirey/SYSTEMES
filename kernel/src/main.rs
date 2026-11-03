@@ -186,6 +186,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
     }
 
+    let mut apic_initialized = false;
     if boot.acpi_rsdp_address != 0 {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
         // SAFETY: The RSDP address is supplied by UEFI and the active identity
