@@ -105,6 +105,9 @@ jobs:
           grep -q 'SYSTEMES: CPU NX capability detected and EFER.NXE enabled' build/uefi/debug.log
           grep -q 'SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX' build/uefi/debug.log
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
+          grep -q 'SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked' build/uefi/debug.log
+          grep -q 'SYSTEMES: PIT channel 0 programmed at 100 Hz' build/uefi/debug.log
+          grep -q 'SYSTEMES: hardware interrupts enabled' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
@@ -152,6 +155,11 @@ jobs:
             expected_vector: '0000000000000012'
             expected_error: '0000000000000000'
             expected_test: 'SYSTEMES_TEST: IST3 machine-check stack switch verified'
+          - label: PIT IRQ0 timer delivery
+            feature: qemu-pit-timer-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -219,7 +227,9 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
-          grep -q "SYSTEMES_EXCEPTION: vector=0x${{ matrix.expected_vector }} error=0x${{ matrix.expected_error }}" build/uefi/debug.log
+          if [ "${{ matrix.expected_vector }}" != "NONE" ]; then
+            grep -q "SYSTEMES_EXCEPTION: vector=0x${{ matrix.expected_vector }} error=0x${{ matrix.expected_error }}" build/uefi/debug.log
+          fi
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1
