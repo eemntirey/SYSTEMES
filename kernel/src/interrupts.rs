@@ -48,6 +48,7 @@ static mut TSS: TaskStateSegment = TaskStateSegment {
     ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0,
     reserved2: 0, reserved3: 0, iomap_base: core::mem::size_of::<TaskStateSegment>() as u16,
 };
+static mut PRIVILEGE_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut DOUBLE_FAULT_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut NMI_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut MACHINE_CHECK_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
@@ -399,19 +400,28 @@ systemes_exception_common:
     jmp .Lsystemes_exception_halt
 "#);
 
-/// Install a private ring-0 GDT and gates for all architecturally defined
-/// exception vectors 0..31. Hardware interrupts remain disabled.
+/// Return true only when the processor loaded the kernel's 64-bit TSS selector.
+pub fn verify_task_register() -> bool {
+    let selector: u16;
+    // SAFETY: STR is available at CPL0 and reads the current task-register selector.
+    unsafe { asm!("str {0:x}", out(reg) selector, options(nomem, nostack, preserves_flags)); }
+    selector == TSS_SELECTOR
+}
+
+/// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
+/// Hardware interrupts remain disabled.
 pub unsafe fn initialize() {
     // SAFETY: This runs during single-core boot before the kernel enables IRQs.
     unsafe { asm!("cli", options(nomem, nostack)) };
 
     // Initialize independent, page-aligned emergency stacks before exposing IST gates.
+    let rsp0_top = unsafe { addr_of_mut!(PRIVILEGE_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let df_top = unsafe { addr_of_mut!(DOUBLE_FAULT_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let nmi_top = unsafe { addr_of_mut!(NMI_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let mc_top = unsafe { addr_of_mut!(MACHINE_CHECK_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let tss = addr_of_mut!(TSS);
     unsafe {
-        core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(0);
+        core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(rsp0_top);
         core::ptr::addr_of_mut!((*tss).ist1).write_unaligned(df_top);
         core::ptr::addr_of_mut!((*tss).ist2).write_unaligned(nmi_top);
         core::ptr::addr_of_mut!((*tss).ist3).write_unaligned(mc_top);
@@ -438,6 +448,11 @@ pub unsafe fn initialize() {
     unsafe { systemes_load_gdt(&gdt_pointer) };
     // SAFETY: The TSS descriptor at selector 0x18 is present and references the static TSS.
     unsafe { systemes_load_tr() };
+
+    if !verify_task_register() {
+        // Keep initialization fail-closed: never publish an IDT with an unloaded TSS.
+        loop { unsafe { asm!("cli; hlt", options(nomem, nostack)); } }
+    }
 
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
         systemes_isr0 as *const () as usize,
