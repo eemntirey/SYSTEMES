@@ -107,6 +107,7 @@ const FileCard: React.FC<{
   onDoubleClick: () => void
 }> = ({ item, isSelected, isFav, onSelect, onToggleFav, onDoubleClick }) => (
   <div
+    className={`obsidian-explorer-file${isSelected ? ' is-selected' : ''}`}
     onClick={onSelect}
     onDoubleClick={onDoubleClick}
     style={{
@@ -378,6 +379,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
   return (
     <div
+      className="obsidian-file-explorer"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -388,6 +390,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
       }}
     >
       <div
+        className="obsidian-explorer-toolbar"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -402,7 +405,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
           <NavButton icon="arrow-up" label="Monter" onClick={goUp} />
         </div>
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+        <div className="obsidian-explorer-location" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
             <FluentIcon name="pc" size={15} style={{ flexShrink: 0, color: 'var(--text-tertiary)' }} />
             <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -427,7 +430,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             </div>
           </div>
 
-          <div style={{
+          <div className="obsidian-explorer-search" style={{
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
@@ -476,8 +479,9 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
         </div>
       </div>
 
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div className="obsidian-explorer-workspace" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           <div
+            className="obsidian-explorer-sidebar"
             style={{
               width: 196,
               display: 'flex',
@@ -550,7 +554,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             </div>
           </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column' }}>
+        <div className="obsidian-explorer-content" style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column' }}>
           {nativeError && <div role="alert" style={{ padding: 10, marginBottom: 12, borderRadius: 8, background: 'rgba(185,28,28,.18)', color: '#fecaca', fontSize: 12 }}>{nativeError}</div>}
           {isNativeLoading && <div role="status" style={{ padding: 8, color: 'var(--text-tertiary)', fontSize: 11 }}>Lecture du dossier Windows…</div>}
           {isCreatingFolder && (
@@ -569,7 +573,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
             </form>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '20px', alignItems: 'start' }}>
+          <div className="obsidian-explorer-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '20px', alignItems: 'start' }}>
             {currentItems.map((item) => (
               <FileCard
                 key={item.id}
@@ -592,6 +596,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
 
         {showInspector && (
           <div
+            className="obsidian-explorer-inspector"
             style={{
               width: 280,
               display: 'flex',
@@ -661,6 +666,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({
       </div>
 
       <div
+        className="obsidian-explorer-statusbar"
         style={{
           padding: '6px 14px',
           borderTop: 'none',
