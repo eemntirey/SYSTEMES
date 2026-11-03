@@ -539,6 +539,36 @@ pub unsafe fn initialize() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> ! {
+    #[cfg(feature = "qemu-ist-nmi-test")]
+    if vector == 2 {
+        let rsp: u64;
+        // SAFETY: The dispatcher runs at CPL0 after the CPU has applied the IDT IST2 switch.
+        unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
+        let start = addr_of!(NMI_STACK.0) as *const u8 as u64;
+        let end = start + INTERRUPT_STACK_SIZE as u64;
+        unsafe {
+            if rsp >= start && rsp < end {
+                debug_write(b"SYSTEMES_TEST: IST2 NMI stack switch verified\r\n");
+            } else {
+                debug_write(b"SYSTEMES_KERNEL_FAIL: IST2 stack switch missing\r\n");
+            }
+        }
+    }
+    #[cfg(feature = "qemu-ist-machine-check-test")]
+    if vector == 18 {
+        let rsp: u64;
+        // SAFETY: The dispatcher runs at CPL0 after the CPU has applied the IDT IST3 switch.
+        unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
+        let start = addr_of!(MACHINE_CHECK_STACK.0) as *const u8 as u64;
+        let end = start + INTERRUPT_STACK_SIZE as u64;
+        unsafe {
+            if rsp >= start && rsp < end {
+                debug_write(b"SYSTEMES_TEST: IST3 machine-check stack switch verified\r\n");
+            } else {
+                debug_write(b"SYSTEMES_KERNEL_FAIL: IST3 stack switch missing\r\n");
+            }
+        }
+    }
     unsafe {
         debug_write(b"SYSTEMES_EXCEPTION: vector=0x");
         debug_hex(vector);
