@@ -11,6 +11,7 @@
  const MAX_IO_APICS: usize = 8;
  const MAX_ISO: usize = 16;
  const MAX_LOCAL_APICS: usize = 64;
+const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
  
  #[derive(Clone, Copy, Debug, Eq, PartialEq)]
  pub enum AcpiError {
@@ -167,6 +168,9 @@
  /// kernel's identity map covers the RSDP and all referenced ACPI tables.
  pub unsafe fn discover_madt(rsdp_address: u64) -> Result<MadtInfo, AcpiError> {
      if rsdp_address == 0 { return Err(AcpiError::NullAddress); }
+     if rsdp_address >= IDENTITY_MAP_LIMIT || rsdp_address.checked_add(4096).filter(|end| *end <= IDENTITY_MAP_LIMIT).is_none() {
+         return Err(AcpiError::InvalidRsdpLength);
+     }
      // SAFETY: The caller guarantees this firmware-provided physical range is mapped.
      let rsdp_prefix = unsafe { core::slice::from_raw_parts(rsdp_address as *const u8, 20) };
      if rsdp_prefix.get(0..8) != Some(&RSDP_SIGNATURE[..]) { return Err(AcpiError::InvalidRsdpSignature); }
@@ -186,6 +190,9 @@
          (read_u32(rsdp_prefix, 16)? as u64, b"RSDT" as &[u8], 4usize)
      };
      if root_address == 0 { return Err(AcpiError::UnsupportedRootTable); }
+     if root_address >= IDENTITY_MAP_LIMIT || root_address.checked_add(SDT_HEADER_SIZE as u64).filter(|end| *end <= IDENTITY_MAP_LIMIT).is_none() {
+         return Err(AcpiError::InvalidTableLength);
+     }
  
      // SAFETY: The root table address comes from the validated firmware RSDP.
      let root_header = unsafe { core::slice::from_raw_parts(root_address as *const u8, SDT_HEADER_SIZE) };
@@ -201,6 +208,9 @@
      for offset in (SDT_HEADER_SIZE..root_length).step_by(entry_width) {
          let address = if entry_width == 8 { read_u64(root, offset)? } else { read_u32(root, offset)? as u64 };
          if address == 0 { continue; }
+         if address >= IDENTITY_MAP_LIMIT || address.checked_add(SDT_HEADER_SIZE as u64).filter(|end| *end <= IDENTITY_MAP_LIMIT).is_none() {
+             return Err(AcpiError::InvalidTableLength);
+         }
          // SAFETY: Each SDT address is firmware-provided and covered by the identity map.
          let header = unsafe { core::slice::from_raw_parts(address as *const u8, SDT_HEADER_SIZE) };
          if header.get(0..4) != Some(&b"APIC"[..]) { continue; }
