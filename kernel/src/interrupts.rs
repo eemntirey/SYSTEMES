@@ -182,6 +182,7 @@ unsafe extern "C" {
     fn systemes_irq13();
     fn systemes_irq14();
     fn systemes_irq15();
+    fn systemes_apic_spurious();
 }
 
 global_asm!(r#"
@@ -531,6 +532,13 @@ systemes_irq14:
 systemes_irq15:
     push 0
     push 47
+    jmp systemes_irq_common
+
+.global systemes_apic_spurious
+.type systemes_apic_spurious, @function
+systemes_apic_spurious:
+    push 0
+    push 255
     jmp systemes_irq_common
 
 .global systemes_exception_common
@@ -992,8 +1000,11 @@ pub unsafe fn initialize() {
         unsafe { idt.add(IRQ_VECTOR_BASE + irq).write(IdtEntry::interrupt_gate(*handler as u64, 0)) };
     }
 
+    // The Local APIC spurious vector is architecturally 0xFF; it must have a gate.
+    unsafe { idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)) };
+
     let idt_pointer = DescriptorTablePointer {
-        limit: (ACTIVE_VECTOR_COUNT * core::mem::size_of::<IdtEntry>() - 1) as u16,
+        limit: (256 * core::mem::size_of::<IdtEntry>() - 1) as u16,
         base: idt as u64,
     };
     // SAFETY: IDT is static storage and all exception entries have been initialized.
