@@ -302,3 +302,288 @@
 @media (max-width: 380px) {
   .obsidian-shell .obsidian-start-app-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
 }
+
+
+/* Obsidian File Explorer — visual-only treatment of the existing native explorer. */
+.obsidian-shell .obsidian-file-explorer {
+  --explorer-panel: rgba(23, 23, 32, .82);
+  --explorer-panel-strong: rgba(13, 14, 20, .88);
+  --explorer-line: rgba(213, 203, 237, .12);
+  --explorer-line-strong: rgba(184, 161, 255, .25);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 52% -18%, rgba(155,124,255,.09), transparent 54%),
+    linear-gradient(145deg, rgba(23,24,33,.98), rgba(13,14,20,.98)) !important;
+  color: #f2f0f7 !important;
+}
+.obsidian-shell .obsidian-explorer-toolbar {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  padding: 12px 16px !important;
+  gap: 10px !important;
+  border-bottom: 1px solid var(--explorer-line);
+  background: rgba(12,13,19,.78) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.14);
+}
+.obsidian-shell .obsidian-explorer-toolbar button {
+  border: 1px solid var(--explorer-line) !important;
+  background: rgba(255,255,255,.045) !important;
+  color: #e9e5f2 !important;
+}
+.obsidian-shell .obsidian-explorer-toolbar button:hover:not(:disabled) {
+  border-color: var(--explorer-line-strong) !important;
+  background: rgba(155,124,255,.14) !important;
+  color: #fff !important;
+}
+.obsidian-shell .obsidian-explorer-toolbar button:disabled {
+  opacity: .42;
+}
+.obsidian-shell .obsidian-explorer-location {
+  flex-wrap: wrap;
+  gap: 9px !important;
+}
+.obsidian-shell .obsidian-explorer-location > div:first-child {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--explorer-line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.035);
+}
+.obsidian-shell .obsidian-explorer-location > div:first-child span {
+  border-radius: 5px;
+  padding: 3px 2px;
+}
+.obsidian-shell .obsidian-explorer-search {
+  min-width: 180px;
+  min-height: 38px;
+  border: 1px solid var(--explorer-line) !important;
+  border-radius: 10px !important;
+  background: rgba(5,6,10,.52) !important;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.obsidian-shell .obsidian-explorer-search:focus-within {
+  border-color: rgba(184,161,255,.5) !important;
+  box-shadow: 0 0 0 3px rgba(155,124,255,.10);
+}
+.obsidian-shell .obsidian-explorer-search input {
+  min-width: 0;
+  color: #f4f1fa !important;
+}
+.obsidian-shell .obsidian-explorer-toolbar select,
+.obsidian-shell .obsidian-file-explorer input,
+.obsidian-shell .obsidian-file-explorer select {
+  border: 1px solid var(--explorer-line) !important;
+  border-radius: 9px !important;
+  background-color: rgba(8,9,14,.72) !important;
+  color: #f2f0f7 !important;
+}
+.obsidian-shell .obsidian-explorer-toolbar select option { background: #171720; color: #f2f0f7; }
+.obsidian-shell .obsidian-explorer-workspace {
+  min-height: 0;
+  background: transparent;
+}
+.obsidian-shell .obsidian-explorer-sidebar {
+  flex: 0 0 218px;
+  width: 218px !important;
+  padding: 8px 7px;
+  border-right: 1px solid var(--explorer-line);
+  background: linear-gradient(180deg, rgba(11,12,18,.82), rgba(17,18,25,.72)) !important;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:first-child {
+  padding: 12px 7px 8px !important;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:first-child,
+.obsidian-shell .obsidian-explorer-sidebar > div:last-child > div:first-child {
+  padding: 7px 9px !important;
+  color: #a69db8 !important;
+  font-size: 10px !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:nth-child(2) > div {
+  min-height: 36px;
+  padding: 8px 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 9px !important;
+  color: #d5d0df !important;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:nth-child(2) > div:hover {
+  background: rgba(255,255,255,.055) !important;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:nth-child(2) > div[aria-current="page"] {
+  border-color: var(--explorer-line-strong) !important;
+  background: rgba(155,124,255,.13) !important;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:last-child {
+  padding: 12px 7px 9px !important;
+  border-top: 1px solid var(--explorer-line);
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:last-child [role="button"] {
+  border: 1px solid var(--explorer-line) !important;
+  border-radius: 11px !important;
+  background: rgba(255,255,255,.035) !important;
+  transition: border-color .16s ease, background .16s ease;
+}
+.obsidian-shell .obsidian-explorer-sidebar > div:last-child [role="button"]:hover {
+  border-color: var(--explorer-line-strong) !important;
+  background: rgba(155,124,255,.09) !important;
+}
+.obsidian-shell .obsidian-explorer-content {
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+  padding: 22px !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(170,151,216,.3) transparent;
+}
+.obsidian-shell .obsidian-explorer-content::-webkit-scrollbar,
+.obsidian-shell .obsidian-explorer-inspector *::-webkit-scrollbar {
+  width: 8px;
+}
+.obsidian-shell .obsidian-explorer-content::-webkit-scrollbar-thumb,
+.obsidian-shell .obsidian-explorer-inspector *::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: rgba(170,151,216,.28);
+}
+.obsidian-shell .obsidian-explorer-grid {
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)) !important;
+  gap: 12px !important;
+}
+.obsidian-shell .obsidian-explorer-file {
+  min-height: 132px;
+  padding: 18px 12px !important;
+  border: 1px solid rgba(213,203,237,.09) !important;
+  border-radius: 13px !important;
+  background: linear-gradient(150deg, rgba(255,255,255,.055), rgba(255,255,255,.022)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+  transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease !important;
+}
+.obsidian-shell .obsidian-explorer-file:hover {
+  transform: translateY(-2px);
+  border-color: rgba(184,161,255,.32) !important;
+  background: linear-gradient(150deg, rgba(155,124,255,.13), rgba(255,255,255,.035)) !important;
+  box-shadow: 0 12px 26px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.05) !important;
+}
+.obsidian-shell .obsidian-explorer-file.is-selected {
+  border-color: rgba(184,161,255,.58) !important;
+  background: linear-gradient(150deg, rgba(155,124,255,.23), rgba(92,73,137,.12)) !important;
+  box-shadow: 0 0 0 2px rgba(155,124,255,.10), 0 12px 28px rgba(0,0,0,.20) !important;
+}
+.obsidian-shell .obsidian-explorer-file > span:nth-of-type(1) {
+  color: #f0edf7 !important;
+}
+.obsidian-shell .obsidian-explorer-file > span:nth-of-type(2) {
+  color: #a69db8 !important;
+}
+.obsidian-shell .obsidian-explorer-file > button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent !important;
+  border-radius: 7px !important;
+}
+.obsidian-shell .obsidian-explorer-file > button:hover {
+  border-color: rgba(213,203,237,.14) !important;
+  background: rgba(255,255,255,.08) !important;
+}
+.obsidian-shell .obsidian-explorer-inspector {
+  flex: 0 0 276px;
+  width: 276px !important;
+  border-left: 1px solid var(--explorer-line);
+  background: linear-gradient(180deg, rgba(13,14,20,.94), rgba(20,19,29,.88)) !important;
+}
+.obsidian-shell .obsidian-explorer-inspector > div:first-child {
+  min-height: 50px;
+  border-bottom: 1px solid var(--explorer-line) !important;
+  background: rgba(255,255,255,.025) !important;
+}
+.obsidian-shell .obsidian-explorer-inspector > div:first-child span {
+  color: #d8cafa !important;
+}
+.obsidian-shell .obsidian-explorer-inspector > div:nth-child(2) {
+  scrollbar-width: thin;
+}
+.obsidian-shell .obsidian-explorer-inspector button {
+  border: 1px solid var(--explorer-line) !important;
+  border-radius: 9px !important;
+  background: rgba(255,255,255,.045) !important;
+  color: #e9e5f2 !important;
+  transition: border-color .16s ease, background .16s ease;
+}
+.obsidian-shell .obsidian-explorer-inspector button:hover {
+  border-color: var(--explorer-line-strong) !important;
+  background: rgba(155,124,255,.12) !important;
+}
+.obsidian-shell .obsidian-explorer-inspector button[style*="f87171"] {
+  color: #fca5a5 !important;
+}
+.obsidian-shell .obsidian-explorer-inspector input,
+.obsidian-shell .obsidian-explorer-content input {
+  min-height: 36px;
+  padding: 8px 10px !important;
+  border: 1px solid var(--explorer-line-strong) !important;
+  border-radius: 8px !important;
+  background: rgba(5,6,10,.62) !important;
+  color: #f2f0f7 !important;
+}
+.obsidian-shell .obsidian-explorer-statusbar {
+  min-height: 34px;
+  flex: 0 0 auto;
+  padding: 7px 15px !important;
+  border-top: 1px solid var(--explorer-line) !important;
+  background: rgba(9,10,15,.88) !important;
+  color: #aaa3b8 !important;
+  font-size: 10.5px !important;
+}
+.obsidian-shell .obsidian-file-explorer [role="alert"] {
+  border: 1px solid rgba(248,113,113,.24);
+  background: rgba(127,29,29,.18) !important;
+}
+.obsidian-shell .obsidian-file-explorer form {
+  border: 1px solid var(--explorer-line-strong) !important;
+  border-radius: 12px !important;
+  background: rgba(155,124,255,.10) !important;
+}
+.obsidian-shell .obsidian-file-explorer button:focus-visible,
+.obsidian-shell .obsidian-file-explorer [role="button"]:focus-visible,
+.obsidian-shell .obsidian-file-explorer input:focus-visible,
+.obsidian-shell .obsidian-file-explorer select:focus-visible {
+  outline: 2px solid rgba(184,161,255,.88);
+  outline-offset: 2px;
+}
+@media (max-width: 900px) {
+  .obsidian-shell .obsidian-explorer-toolbar { gap: 7px !important; }
+  .obsidian-shell .obsidian-explorer-toolbar > div:last-child { flex-wrap: wrap; }
+  .obsidian-shell .obsidian-explorer-sidebar { flex-basis: 184px; width: 184px !important; }
+  .obsidian-shell .obsidian-explorer-inspector { flex-basis: 238px; width: 238px !important; }
+}
+@media (max-width: 680px) {
+  .obsidian-shell .obsidian-explorer-toolbar { padding: 8px 10px !important; }
+  .obsidian-shell .obsidian-explorer-toolbar > div:nth-child(3) { display: none !important; }
+  .obsidian-shell .obsidian-explorer-toolbar > div:last-child { width: 100%; overflow-x: auto; }
+  .obsidian-shell .obsidian-explorer-toolbar > div:last-child button { flex: 0 0 auto; }
+  .obsidian-shell .obsidian-explorer-sidebar { flex-basis: 54px; width: 54px !important; padding: 5px 3px; }
+  .obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:first-child span,
+  .obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:nth-child(2) span,
+  .obsidian-shell .obsidian-explorer-sidebar > div:last-child > div:first-child span,
+  .obsidian-shell .obsidian-explorer-sidebar > div:last-child [role="button"] > div > div { display: none !important; }
+  .obsidian-shell .obsidian-explorer-sidebar > div:first-child > div:nth-child(2) > div { justify-content: center; padding: 9px 4px !important; }
+  .obsidian-shell .obsidian-explorer-sidebar > div:last-child [role="button"] { padding: 8px 4px !important; }
+  .obsidian-shell .obsidian-explorer-content { padding: 12px !important; }
+  .obsidian-shell .obsidian-explorer-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)) !important; gap: 8px !important; }
+  .obsidian-shell .obsidian-explorer-file { min-height: 116px; padding: 14px 8px !important; }
+  .obsidian-shell .obsidian-explorer-inspector { flex-basis: 210px; width: 210px !important; }
+  .obsidian-shell .obsidian-explorer-statusbar > div { gap: 7px !important; }
+  .obsidian-shell .obsidian-explorer-statusbar > div span:nth-child(2),
+  .obsidian-shell .obsidian-explorer-statusbar > div span:nth-child(3) { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .obsidian-shell .obsidian-explorer-file,
+  .obsidian-shell .obsidian-explorer-toolbar button,
+  .obsidian-shell .obsidian-explorer-inspector button {
+    transition-duration: .01ms !important;
+  }
+}
