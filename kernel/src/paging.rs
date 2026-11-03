@@ -199,6 +199,37 @@ pub unsafe fn protect_regions(
     Ok(())
 }
 
+/// Identity-map an MMIO range using the architectural PAT UC slot (PWT|PCD).
+/// The reset IA32_PAT entry 3 is UC; the mapping is writable, NX and uncached.
+pub unsafe fn map_mmio_uncached(
+    allocator: &mut PhysicalFrameAllocator,
+    root: u64,
+    physical_address: u64,
+    length: u64,
+) -> Result<*mut u8, PagingError> {
+    const PWT: u64 = 1 << 3;
+    const PCD: u64 = 1 << 4;
+    if length == 0 { return Err(PagingError::InvalidRegion); }
+    let page_start = physical_address & !(PAGE_SIZE - 1);
+    let end = physical_address.checked_add(length).ok_or(PagingError::InvalidRegion)?;
+    let page_end = end.checked_add(PAGE_SIZE - 1).ok_or(PagingError::InvalidRegion)? & !(PAGE_SIZE - 1);
+    if page_start >= IDENTITY_MAP_BYTES || page_end > IDENTITY_MAP_BYTES || page_end <= page_start {
+        return Err(PagingError::InvalidRegion);
+    }
+    let mut address = page_start;
+    while address < page_end {
+        // SAFETY: The caller supplies the active kernel-owned identity map and allocator.
+        let table = unsafe { ensure_4k_table(allocator, root, address)? };
+        let index = ((address >> 12) & 0x1ff) as usize;
+        // Replace the inherited WB identity leaf with a writable, NX, UC mapping.
+        unsafe { table.add(index).write((address & ADDRESS_MASK) | PRESENT | WRITABLE | NX | PWT | PCD); }
+        // SAFETY: Invalidate stale translations and paging-structure cache entries.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
+        address += PAGE_SIZE;
+    }
+    Ok(physical_address as *mut u8)
+}
+
 /// Verify that each requested 4 KiB leaf maps the same physical page with exact W/NX bits.
 pub unsafe fn verify_regions(root: u64, regions: &[MemoryRegion]) -> Result<(), PagingError> {
     validate_regions(regions)?;
