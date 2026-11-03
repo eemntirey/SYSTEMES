@@ -3,7 +3,6 @@
  //! The UEFI loader supplies the physical RSDP address in BootInfo. The kernel's
  //! current identity map makes firmware tables below the 512-GiB window readable.
  
- use core::mem::size_of;
  
  const RSDP_SIGNATURE: &[u8; 8] = b"RSD PTR ";
  const SDT_HEADER_SIZE: usize = 36;
