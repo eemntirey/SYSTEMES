@@ -634,6 +634,139 @@ pub fn verify_ist_configuration() -> bool {
         && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApicInitError {
+    CpuApicUnsupported, X2ApicUnsupported, InvalidPhysicalAddress,
+    MmioMappingFailed, InvalidIoApicVersion, Irq0GsiNotCovered,
+    InvalidInterruptOverride,
+}
+
+unsafe fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    unsafe { asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high, options(nomem, nostack)); }
+    ((high as u64) << 32) | low as u64
+}
+
+unsafe fn write_msr(msr: u32, value: u64) {
+    unsafe { asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32, options(nomem, nostack)); }
+}
+
+unsafe fn lapic_write(base: *mut u8, offset: usize, value: u32) {
+    unsafe { core::ptr::write_volatile(base.add(offset) as *mut u32, value); }
+}
+
+unsafe fn ioapic_read(base: *mut u8, register: u8) -> u32 {
+    unsafe {
+        core::ptr::write_volatile(base as *mut u32, register as u32);
+        core::ptr::read_volatile(base.add(0x10) as *const u32)
+    }
+}
+
+unsafe fn ioapic_write(base: *mut u8, register: u8, value: u32) {
+    unsafe {
+        core::ptr::write_volatile(base as *mut u32, register as u32);
+        core::ptr::write_volatile(base.add(0x10) as *mut u32, value);
+    }
+}
+
+/// Activate xAPIC and route ISA PIT IRQ0 through the matching MADT IOAPIC GSI.
+pub unsafe fn initialize_apic_ioapic(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+) -> Result<(), ApicInitError> {
+    if unsafe { core::arch::x86_64::__cpuid(1) }.edx & CPUID_APIC == 0 {
+        return Err(ApicInitError::CpuApicUnsupported);
+    }
+    if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    let mut apic_base = unsafe { read_msr(IA32_APIC_BASE_MSR) };
+    if apic_base & APIC_X2_ENABLE != 0 { return Err(ApicInitError::X2ApicUnsupported); }
+    if madt.local_apic_address == 0 || madt.local_apic_address & 0xFFF != 0
+        || madt.local_apic_address & !APIC_BASE_MASK != 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    apic_base = (apic_base & !(APIC_BASE_MASK | APIC_X2_ENABLE))
+        | (madt.local_apic_address & APIC_BASE_MASK) | APIC_ENABLE;
+    unsafe { write_msr(IA32_APIC_BASE_MSR, apic_base); }
+
+    let lapic = unsafe {
+        crate::paging::map_mmio_uncached(allocator, page_table_root, madt.local_apic_address, 4096)
+    }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+    let lapic_id = unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24;
+    if lapic_id > 255 { return Err(ApicInitError::InvalidPhysicalAddress); }
+    unsafe {
+        lapic_write(lapic, 0x80, 0);
+        for offset in [0x320usize, 0x330, 0x340, 0x350, 0x360, 0x370] {
+            lapic_write(lapic, offset, 1 << 16);
+        }
+        lapic_write(lapic, 0xF0, (1 << 8) | APIC_SPURIOUS_VECTOR);
+        lapic_write(lapic, 0xB0, 0);
+    }
+
+    let mut irq0_gsi = 0u32;
+    let mut iso_flags = 0u16;
+    for index in 0..madt.override_count {
+        let iso = madt.overrides[index];
+        if iso.bus == 0 && iso.source == 0 {
+            if iso.flags & 0x3 == 2 || (iso.flags >> 2) & 0x3 == 2 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            irq0_gsi = iso.gsi;
+            iso_flags = iso.flags;
+            break;
+        }
+    }
+
+    let mut selected: Option<(*mut u8, u32)> = None;
+    for index in 0..madt.io_apic_count {
+        let io = madt.io_apics[index];
+        if io.address == 0 || io.address & 0xFFF != 0
+            || io.address as u64 >= crate::paging::IDENTITY_MAP_BYTES {
+            return Err(ApicInitError::InvalidPhysicalAddress);
+        }
+        let base = unsafe {
+            crate::paging::map_mmio_uncached(allocator, page_table_root, io.address as u64, 4096)
+        }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+        let version = unsafe { ioapic_read(base, IOAPIC_REG_VERSION) };
+        let max_redirection = (version >> 16) & 0xFF;
+        if max_redirection == 0 || max_redirection > 119 {
+            return Err(ApicInitError::InvalidIoApicVersion);
+        }
+        let last_gsi = io.gsi_base.checked_add(max_redirection).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        if irq0_gsi >= io.gsi_base && irq0_gsi <= last_gsi {
+            selected = Some((base, irq0_gsi - io.gsi_base));
+            break;
+        }
+    }
+    let (io_base, redir_index) = selected.ok_or(ApicInitError::Irq0GsiNotCovered)?;
+    let low_reg = IOAPIC_REG_REDIR_BASE.checked_add((redir_index * 2) as u8)
+        .ok_or(ApicInitError::InvalidIoApicVersion)?;
+    let high_reg = low_reg.checked_add(1).ok_or(ApicInitError::InvalidIoApicVersion)?;
+    let mut low = APIC_TIMER_VECTOR as u32 | (1 << 16);
+    if iso_flags & 0x3 == 3 { low |= 1 << 13; }
+    if (iso_flags >> 2) & 0x3 == 3 { low |= 1 << 15; }
+    unsafe {
+        ioapic_write(io_base, high_reg, (lapic_id as u32) << 24);
+        ioapic_write(io_base, low_reg, low);
+        ioapic_write(io_base, low_reg, low & !(1 << 16));
+    }
+    LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
+    APIC_ACTIVE.store(true, Ordering::Release);
+    Ok(())
+}
+
+pub unsafe fn mask_legacy_pic() {
+    unsafe {
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0xFFu8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0xFFu8, options(nomem, nostack));
+    }
+}
+
+pub fn apic_active() -> bool { APIC_ACTIVE.load(Ordering::Acquire) }
+
 unsafe fn io_wait() {
     // SAFETY: Port 0x80 is the conventional legacy I/O delay port.
     unsafe { asm!("out 0x80, al", in("al") 0u8, options(nomem, nostack, preserves_flags)); }
