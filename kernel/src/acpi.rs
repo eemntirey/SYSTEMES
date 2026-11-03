@@ -252,6 +252,21 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
      }
  
      #[test]
+     fn parses_local_apic_io_apic_and_isa_override_records() {
+         let bytes = sample_madt();
+         let info = parse_madt(&bytes).unwrap();
+         assert_eq!(info.local_apic_address, 0xFEE0_0000);
+         assert_eq!(info.flags, 1);
+         assert_eq!(info.local_apic_count, 1);
+         assert_eq!(info.local_apics[0].apic_id, 2);
+         assert_eq!(info.io_apic_count, 1);
+         assert_eq!(info.io_apics[0].address, 0xFEC0_0000);
+         assert_eq!(info.override_count, 1);
+         assert_eq!(info.overrides[0].source, 0);
+         assert_eq!(info.overrides[0].gsi, 2);
+     }
+
+     #[test]
      fn rejects_bad_madt_signature_and_checksum() {
          let mut bytes = sample_madt();
          bytes[0] = b'X';
