@@ -188,8 +188,20 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     if boot.acpi_rsdp_address != 0 {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
+        // SAFETY: The RSDP address is supplied by UEFI and the active identity
+        // map covers firmware physical addresses below 512 GiB.
+        match unsafe { systemes_kernel::acpi::discover_madt(boot.acpi_rsdp_address) } {
+            Ok(madt) => {
+                if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
+                    unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
+                } else {
+                    unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
+                }
+            }
+            Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT validation unavailable; retaining legacy PIC path\r\n") },
+        }
     } else {
-        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\r\n") };
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable; retaining legacy PIC path\r\n") };
     }
 
     // Keep all IRQ lines masked except PIT IRQ0 until the timer is fully programmed.
