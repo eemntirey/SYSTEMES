@@ -5,7 +5,8 @@
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use crate::{acpi::MadtInfo, memory::PhysicalFrameAllocator};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const TSS_SELECTOR: u16 = 0x18;
@@ -24,6 +25,17 @@ const PIT_INPUT_HZ: u32 = 1_193_182;
 const PIT_FREQUENCY_HZ: u32 = 100;
 const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / PIT_FREQUENCY_HZ) as u16;
 static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
+static APIC_ACTIVE: AtomicBool = AtomicBool::new(false);
+static LOCAL_APIC_BASE: AtomicUsize = AtomicUsize::new(0);
+const IA32_APIC_BASE_MSR: u32 = 0x1B;
+const APIC_BASE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+const APIC_ENABLE: u64 = 1 << 11;
+const APIC_X2_ENABLE: u64 = 1 << 10;
+const CPUID_APIC: u32 = 1 << 9;
+const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
+const IOAPIC_REG_VERSION: u8 = 0x01;
+const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
+
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
 static mut GDT: [u64; 5] = [
