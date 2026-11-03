@@ -197,7 +197,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     {
         unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 2 through IST2\r\n"); }
         // SAFETY: The ring-0 IDT vector 2 is installed with IST2 and has a valid stub.
-        unsafe { asm!("int 2", options(nomem, nostack)); }
+        unsafe { asm!("int 2"); }
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: IST2 test interrupt returned\r\n"); }
         halt();
     }
@@ -205,7 +205,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     {
         unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 18 through IST3\r\n"); }
         // SAFETY: The ring-0 IDT vector 18 is installed with IST3 and has a valid stub.
-        unsafe { asm!("int 18", options(nomem, nostack)); }
+        unsafe { asm!("int 18"); }
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: IST3 test interrupt returned\r\n"); }
         halt();
     }
