@@ -915,6 +915,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
     }
 
     if APIC_ACTIVE.load(Ordering::Acquire) {
+        IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
         let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
         if !base.is_null() {
             // SAFETY: The UC-mapped Local APIC page is published before STI.
