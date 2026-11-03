@@ -5,11 +5,25 @@
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const TSS_SELECTOR: u16 = 0x18;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
+const IRQ_VECTOR_BASE: usize = 32;
+const IRQ_COUNT: usize = 16;
+const ACTIVE_VECTOR_COUNT: usize = IRQ_VECTOR_BASE + IRQ_COUNT;
+const PIC_MASTER_COMMAND: u16 = 0x20;
+const PIC_MASTER_DATA: u16 = 0x21;
+const PIC_SLAVE_COMMAND: u16 = 0xA0;
+const PIC_SLAVE_DATA: u16 = 0xA1;
+const PIT_CHANNEL0: u16 = 0x40;
+const PIT_COMMAND: u16 = 0x43;
+const PIT_INPUT_HZ: u32 = 1_193_182;
+const PIT_FREQUENCY_HZ: u32 = 100;
+const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / PIT_FREQUENCY_HZ) as u16;
+static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
 static mut GDT: [u64; 5] = [
@@ -140,6 +154,22 @@ unsafe extern "C" {
     fn systemes_isr29();
     fn systemes_isr30();
     fn systemes_isr31();
+    fn systemes_irq0();
+    fn systemes_irq1();
+    fn systemes_irq2();
+    fn systemes_irq3();
+    fn systemes_irq4();
+    fn systemes_irq5();
+    fn systemes_irq6();
+    fn systemes_irq7();
+    fn systemes_irq8();
+    fn systemes_irq9();
+    fn systemes_irq10();
+    fn systemes_irq11();
+    fn systemes_irq12();
+    fn systemes_irq13();
+    fn systemes_irq14();
+    fn systemes_irq15();
 }
 
 global_asm!(r#"
@@ -379,6 +409,118 @@ systemes_isr31:
     push 31
     jmp systemes_exception_common
 
+.global systemes_irq0
+.type systemes_irq0, @function
+systemes_irq0:
+    push 0
+    push 32
+    jmp systemes_irq_common
+
+.global systemes_irq1
+.type systemes_irq1, @function
+systemes_irq1:
+    push 0
+    push 33
+    jmp systemes_irq_common
+
+.global systemes_irq2
+.type systemes_irq2, @function
+systemes_irq2:
+    push 0
+    push 34
+    jmp systemes_irq_common
+
+.global systemes_irq3
+.type systemes_irq3, @function
+systemes_irq3:
+    push 0
+    push 35
+    jmp systemes_irq_common
+
+.global systemes_irq4
+.type systemes_irq4, @function
+systemes_irq4:
+    push 0
+    push 36
+    jmp systemes_irq_common
+
+.global systemes_irq5
+.type systemes_irq5, @function
+systemes_irq5:
+    push 0
+    push 37
+    jmp systemes_irq_common
+
+.global systemes_irq6
+.type systemes_irq6, @function
+systemes_irq6:
+    push 0
+    push 38
+    jmp systemes_irq_common
+
+.global systemes_irq7
+.type systemes_irq7, @function
+systemes_irq7:
+    push 0
+    push 39
+    jmp systemes_irq_common
+
+.global systemes_irq8
+.type systemes_irq8, @function
+systemes_irq8:
+    push 0
+    push 40
+    jmp systemes_irq_common
+
+.global systemes_irq9
+.type systemes_irq9, @function
+systemes_irq9:
+    push 0
+    push 41
+    jmp systemes_irq_common
+
+.global systemes_irq10
+.type systemes_irq10, @function
+systemes_irq10:
+    push 0
+    push 42
+    jmp systemes_irq_common
+
+.global systemes_irq11
+.type systemes_irq11, @function
+systemes_irq11:
+    push 0
+    push 43
+    jmp systemes_irq_common
+
+.global systemes_irq12
+.type systemes_irq12, @function
+systemes_irq12:
+    push 0
+    push 44
+    jmp systemes_irq_common
+
+.global systemes_irq13
+.type systemes_irq13, @function
+systemes_irq13:
+    push 0
+    push 45
+    jmp systemes_irq_common
+
+.global systemes_irq14
+.type systemes_irq14, @function
+systemes_irq14:
+    push 0
+    push 46
+    jmp systemes_irq_common
+
+.global systemes_irq15
+.type systemes_irq15, @function
+systemes_irq15:
+    push 0
+    push 47
+    jmp systemes_irq_common
+
 .global systemes_exception_common
 .type systemes_exception_common, @function
 systemes_exception_common:
@@ -406,6 +548,48 @@ systemes_exception_common:
     cli
     hlt
     jmp .Lsystemes_exception_halt
+
+.global systemes_irq_common
+.type systemes_irq_common, @function
+systemes_irq_common:
+    cld
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    mov rdi, qword ptr [rsp + 120]
+    mov r12, rsp
+    and rsp, -16
+    call systemes_irq_dispatch
+    mov rsp, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
+    iretq
 "#);
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
@@ -436,6 +620,75 @@ pub fn verify_ist_configuration() -> bool {
         && aligned_stack(ist3)
         && iomap_base == core::mem::size_of::<TaskStateSegment>() as u16
         && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
+}
+
+/// Read the current legacy PIC interrupt masks.
+pub fn legacy_pic_masks() -> (u8, u8) {
+    unsafe {
+        let master: u8;
+        let slave: u8;
+        asm!("in al, dx", in("dx") PIC_MASTER_DATA, out("al") master, options(nomem, nostack, preserves_flags));
+        asm!("in al, dx", in("dx") PIC_SLAVE_DATA, out("al") slave, options(nomem, nostack, preserves_flags));
+        (master, slave)
+    }
+}
+
+/// Configure and remap both 8259 PICs, unmasking only IRQ0, then program PIT channel 0.
+/// Interrupt delivery remains disabled until enable_hardware_interrupts is called.
+pub unsafe fn initialize_pic_pit() {
+    unsafe { asm!("cli", options(nomem, nostack)); }
+    unsafe {
+        asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x11u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x11u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x20u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x28u8, options(nomem, nostack));
+        // ICW3: slave is connected to master IRQ2; slave identity is 2.
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x04u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x02u8, options(nomem, nostack));
+        // ICW4: 8086 mode.
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x01u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x01u8, options(nomem, nostack));
+        // Mask every line except the PIT timer on IRQ0.
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0xFEu8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0xFFu8, options(nomem, nostack));
+        // PIT channel 0, low/high byte, mode 3 (square wave), binary counter.
+        asm!("out dx, al", in("dx") PIT_COMMAND, in("al") 0x36u8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIT_CHANNEL0, in("al") (PIT_DIVISOR as u8), options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIT_CHANNEL0, in("al") ((PIT_DIVISOR >> 8) as u8), options(nomem, nostack));
+    }
+    TIMER_TICKS.store(0, Ordering::Release);
+}
+
+/// Enable maskable hardware interrupts after the IDT, PIC and PIT are ready.
+pub unsafe fn enable_hardware_interrupts() {
+    unsafe { asm!("sti", options(nomem, nostack)); }
+}
+
+/// Disable maskable hardware interrupts.
+pub unsafe fn disable_hardware_interrupts() {
+    unsafe { asm!("cli", options(nomem, nostack)); }
+}
+
+/// Return the number of PIT timer ticks delivered since initialization.
+pub fn timer_ticks() -> u64 {
+    TIMER_TICKS.load(Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn systemes_irq_dispatch(vector: u64) {
+    if !(IRQ_VECTOR_BASE as u64..(ACTIVE_VECTOR_COUNT as u64)).contains(&vector) {
+        return;
+    }
+    if vector == IRQ_VECTOR_BASE as u64 {
+        TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
+    }
+    let irq = vector as usize - IRQ_VECTOR_BASE;
+    unsafe {
+        if irq >= 8 {
+            asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+        }
+        asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+    }
 }
 
 /// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
@@ -511,6 +764,24 @@ pub unsafe fn initialize() {
         systemes_isr30 as *const () as usize,
         systemes_isr31 as *const () as usize
     ];
+    let irq_handlers: [usize; IRQ_COUNT] = [
+        systemes_irq0 as *const () as usize,
+        systemes_irq1 as *const () as usize,
+        systemes_irq2 as *const () as usize,
+        systemes_irq3 as *const () as usize,
+        systemes_irq4 as *const () as usize,
+        systemes_irq5 as *const () as usize,
+        systemes_irq6 as *const () as usize,
+        systemes_irq7 as *const () as usize,
+        systemes_irq8 as *const () as usize,
+        systemes_irq9 as *const () as usize,
+        systemes_irq10 as *const () as usize,
+        systemes_irq11 as *const () as usize,
+        systemes_irq12 as *const () as usize,
+        systemes_irq13 as *const () as usize,
+        systemes_irq14 as *const () as usize,
+        systemes_irq15 as *const () as usize,
+    ];
     let idt = addr_of_mut!(IDT) as *mut IdtEntry;
     for (vector, handler) in handlers.iter().enumerate() {
         let ist = match vector {
@@ -523,8 +794,13 @@ pub unsafe fn initialize() {
         unsafe { idt.add(vector).write(IdtEntry::interrupt_gate(*handler as u64, ist)) };
     }
 
+    for (irq, handler) in irq_handlers.iter().enumerate() {
+        // SAFETY: IRQ vectors 32..47 are reserved by the PIC remap and IDT has 256 entries.
+        unsafe { idt.add(IRQ_VECTOR_BASE + irq).write(IdtEntry::interrupt_gate(*handler as u64, 0)) };
+    }
+
     let idt_pointer = DescriptorTablePointer {
-        limit: (EXCEPTION_VECTOR_COUNT * core::mem::size_of::<IdtEntry>() - 1) as u16,
+        limit: (ACTIVE_VECTOR_COUNT * core::mem::size_of::<IdtEntry>() - 1) as u16,
         base: idt as u64,
     };
     // SAFETY: IDT is static storage and all exception entries have been initialized.
