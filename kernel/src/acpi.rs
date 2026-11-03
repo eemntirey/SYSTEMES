@@ -91,7 +91,7 @@
  
  /// Parse a complete APIC (MADT) SDT, including its header and checksum.
  pub fn parse_madt(table: &[u8]) -> Result<MadtInfo, AcpiError> {
-     if table.len() < SDT_HEADER_SIZE + 8 || table.get(0..4) != Some(b"APIC") {
+     if table.len() < SDT_HEADER_SIZE + 8 || table.get(0..4) != Some(&b"APIC"[..]) {
          return Err(AcpiError::InvalidSdtSignature);
      }
      let declared = read_u32(table, 4)? as usize;
@@ -169,7 +169,7 @@
      if rsdp_address == 0 { return Err(AcpiError::NullAddress); }
      // SAFETY: The caller guarantees this firmware-provided physical range is mapped.
      let rsdp_prefix = unsafe { core::slice::from_raw_parts(rsdp_address as *const u8, 20) };
-     if rsdp_prefix.get(0..8) != Some(RSDP_SIGNATURE) { return Err(AcpiError::InvalidRsdpSignature); }
+     if rsdp_prefix.get(0..8) != Some(&RSDP_SIGNATURE[..]) { return Err(AcpiError::InvalidRsdpSignature); }
      if !checksum_valid(rsdp_prefix) { return Err(AcpiError::InvalidChecksum); }
  
      let revision = rsdp_prefix[15];
@@ -203,7 +203,7 @@
          if address == 0 { continue; }
          // SAFETY: Each SDT address is firmware-provided and covered by the identity map.
          let header = unsafe { core::slice::from_raw_parts(address as *const u8, SDT_HEADER_SIZE) };
-         if header.get(0..4) != Some(b"APIC") { continue; }
+         if header.get(0..4) != Some(&b"APIC"[..]) { continue; }
          let length = read_u32(header, 4)? as usize;
          if !(SDT_HEADER_SIZE + 8..=MAX_TABLE_LENGTH).contains(&length) {
              return Err(AcpiError::InvalidTableLength);
@@ -225,10 +225,10 @@
          bytes[offset] = 0u8.wrapping_sub(sum);
      }
  
-     fn sample_madt() -> [u8; 66] {
-         let mut bytes = [0u8; 66];
+     fn sample_madt() -> [u8; 74] {
+         let mut bytes = [0u8; 74];
          bytes[0..4].copy_from_slice(b"APIC");
-         bytes[4..8].copy_from_slice(&(66u32).to_le_bytes());
+         bytes[4..8].copy_from_slice(&(74u32).to_le_bytes());
          bytes[SDT_HEADER_SIZE..SDT_HEADER_SIZE + 4].copy_from_slice(&0xFEE0_0000u32.to_le_bytes());
          bytes[SDT_HEADER_SIZE + 4..SDT_HEADER_SIZE + 8].copy_from_slice(&1u32.to_le_bytes());
          // Processor Local APIC record.
@@ -236,8 +236,7 @@
          // IO APIC record.
          bytes[52..64].copy_from_slice(&[1, 12, 3, 0, 0, 0, 0xC0, 0xFE, 0, 0, 0, 0]);
          // ISA IRQ0 -> GSI2 override.
-         bytes[64..66].copy_from_slice(&[2, 10]);
-         // This deliberately truncated fixture is built separately by the test below.
+         bytes[64..74].copy_from_slice(&[2, 10, 0, 0, 2, 0, 0, 0, 0, 0]);
          checksum(&mut bytes, 9);
          bytes
      }
