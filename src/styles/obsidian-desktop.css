@@ -1,0 +1,152 @@
+/* Obsidian desktop shell — visual layer only. Keep behavior in existing components. */
+.obsidian-shell {
+  --win-bg: #08090c;
+  --win-accent: #9b7cff;
+  --win-accent-hover: #b49cff;
+  --win-accent-active: #805be8;
+  --win-accent-cyan: #b8a1ff;
+  --win-accent-light: rgba(155, 124, 255, .14);
+  --win-cyan-light: rgba(184, 161, 255, .10);
+  --taskbar-bg: rgba(13, 14, 19, .76);
+  --taskbar-border: rgba(210, 203, 235, .13);
+  --taskbar-item-hover: rgba(255, 255, 255, .085);
+  --taskbar-item-active: rgba(155, 124, 255, .19);
+  --flyout-bg: rgba(18, 19, 25, .94);
+  --flyout-border: rgba(210, 203, 235, .15);
+  --flyout-card: rgba(255, 255, 255, .045);
+  --flyout-card-hover: rgba(155, 124, 255, .13);
+  --flyout-input-bg: rgba(0, 0, 0, .32);
+  --window-bg: rgba(17, 18, 24, .97);
+  --window-titlebar: rgba(22, 23, 30, .96);
+  --window-border: rgba(210, 203, 235, .17);
+  --window-shadow: 0 26px 70px rgba(0, 0, 0, .52), 0 0 0 1px rgba(255,255,255,.035);
+  --text-primary: #f2f0f7;
+  --text-secondary: #b4afc1;
+  --text-tertiary: #827b91;
+  --text-inverse: #08090c;
+  --control-hover: rgba(255,255,255,.075);
+  --backdrop-blur: blur(26px) saturate(145%);
+  color: var(--text-primary);
+  background: #08090c;
+}
+
+/* Desktop canvas: quiet graphite veil over any selected wallpaper. */
+.obsidian-desktop {
+  isolation: isolate;
+  background-color: #08090c !important;
+}
+.obsidian-desktop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 8%, rgba(130, 105, 190, .12), transparent 48%),
+    linear-gradient(180deg, rgba(5, 6, 9, .10) 0%, rgba(5, 6, 9, .04) 48%, rgba(5, 6, 9, .28) 100%);
+}
+.obsidian-desktop > * { position: relative; }
+.obsidian-desktop .desktop-icons-grid { z-index: 5; }
+
+/* Desktop shortcuts: readable, restrained, consistent selection affordance. */
+.obsidian-desktop .desktop-icons-grid > div > div {
+  border-radius: 10px !important;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease !important;
+}
+.obsidian-desktop .desktop-icons-grid > div > div:hover {
+  background: rgba(22, 22, 31, .48) !important;
+  border-color: rgba(220, 214, 239, .13) !important;
+}
+.obsidian-desktop .desktop-icons-grid > div > div span {
+  color: #f0edf6 !important;
+  text-shadow: 0 1px 5px rgba(0,0,0,.95) !important;
+}
+.obsidian-desktop .selection-box {
+  border-color: rgba(177, 151, 255, .9);
+  background: rgba(155, 124, 255, .14);
+  box-shadow: 0 0 0 1px rgba(155,124,255,.12);
+}
+
+/* Floating taskbar: glass panel with a fine neutral outline. */
+.obsidian-shell .obsidian-taskbar {
+  left: 50% !important;
+  right: auto !important;
+  bottom: 12px !important;
+  width: max-content !important;
+  max-width: calc(100vw - 24px) !important;
+  height: 58px !important;
+  padding: 0 10px !important;
+  transform: translateX(-50%) !important;
+  border: 1px solid rgba(224, 218, 241, .16) !important;
+  border-radius: 19px !important;
+  background: rgba(15, 16, 22, .78) !important;
+  backdrop-filter: blur(30px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(145%) !important;
+  box-shadow: 0 16px 46px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.055) !important;
+}
+.obsidian-shell .taskbar-center {
+  position: relative !important;
+  left: auto !important;
+  transform: none !important;
+  gap: 5px !important;
+}
+.obsidian-shell .taskbar-center.align-left { left: auto !important; }
+.obsidian-shell .taskbar-tray {
+  position: relative !important;
+  right: auto !important;
+  margin-left: 8px !important;
+  padding: 0 0 0 8px !important;
+  border-left: 1px solid rgba(224,218,241,.12);
+}
+.obsidian-shell .taskbar-btn,
+.obsidian-shell .taskbar-app,
+.obsidian-shell .taskbar-clock {
+  border-radius: 12px !important;
+  color: #f2f0f7 !important;
+}
+.obsidian-shell .taskbar-btn:hover,
+.obsidian-shell .taskbar-app:hover,
+.obsidian-shell .taskbar-clock:hover {
+  background: rgba(255,255,255,.09) !important;
+}
+.obsidian-shell .taskbar-btn.open,
+.obsidian-shell .taskbar-app.active {
+  background: rgba(155,124,255,.18) !important;
+}
+.obsidian-shell .taskbar-indicator.active {
+  background: #b49cff !important;
+  box-shadow: 0 0 9px rgba(180,156,255,.55) !important;
+}
+.obsidian-shell .taskbar-showdesktop { border-left-color: rgba(224,218,241,.16) !important; }
+.obsidian-shell .tray-flyout {
+  bottom: 66px !important;
+  border-radius: 16px !important;
+  background: rgba(18,19,25,.96) !important;
+  border-color: rgba(224,218,241,.15) !important;
+}
+
+/* Respect reduced-motion preferences and narrow screens. */
+@media (max-width: 760px) {
+  .obsidian-shell .obsidian-taskbar {
+    bottom: 7px !important;
+    width: calc(100vw - 14px) !important;
+    max-width: none !important;
+    height: 54px !important;
+    padding: 0 5px !important;
+    border-radius: 16px !important;
+  }
+  .obsidian-shell .taskbar-center { gap: 1px !important; }
+  .obsidian-shell .taskbar-center > button:nth-child(2) { width: 42px !important; overflow: hidden; }
+  .obsidian-shell .taskbar-center > button:nth-child(2) span { display: none; }
+  .obsidian-shell .taskbar-tray { margin-left: 3px !important; padding-left: 3px !important; }
+  .obsidian-shell .taskbar-btn { min-width: 34px !important; padding-left: 4px !important; padding-right: 4px !important; }
+  .obsidian-shell .taskbar-app { width: 34px !important; }
+  .obsidian-desktop .desktop-icons-grid { left: 10px !important; gap: 4px 6px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .obsidian-shell *, .obsidian-shell *::before, .obsidian-shell *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
