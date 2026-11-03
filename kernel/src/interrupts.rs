@@ -416,6 +416,28 @@ pub fn verify_task_register() -> bool {
     selector == TSS_SELECTOR
 }
 
+/// Validate the live TSS stack pointers and the IST selectors installed in the IDT.
+pub fn verify_ist_configuration() -> bool {
+    let tss = addr_of!(TSS);
+    let idt = addr_of!(IDT) as *const IdtEntry;
+    let rsp0 = unsafe { core::ptr::addr_of!((*tss).rsp0).read_unaligned() };
+    let ist1 = unsafe { core::ptr::addr_of!((*tss).ist1).read_unaligned() };
+    let ist2 = unsafe { core::ptr::addr_of!((*tss).ist2).read_unaligned() };
+    let ist3 = unsafe { core::ptr::addr_of!((*tss).ist3).read_unaligned() };
+    let iomap_base = unsafe { core::ptr::addr_of!((*tss).iomap_base).read_unaligned() };
+    let df_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(8)).ist).read_unaligned() };
+    let nmi_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(2)).ist).read_unaligned() };
+    let mc_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(18)).ist).read_unaligned() };
+
+    let aligned_stack = |top: u64| top != 0 && top & 0x0F == 0;
+    aligned_stack(rsp0)
+        && aligned_stack(ist1)
+        && aligned_stack(ist2)
+        && aligned_stack(ist3)
+        && iomap_base == core::mem::size_of::<TaskStateSegment>() as u16
+        && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
+}
+
 /// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
 /// Hardware interrupts remain disabled.
 pub unsafe fn initialize() {
