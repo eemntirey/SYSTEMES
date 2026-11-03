@@ -227,6 +227,11 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
+          if [ "${{ matrix.feature }}" = "qemu-pit-timer-test" ]; then
+            grep -q 'SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed' build/uefi/debug.log
+            grep -q 'SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: IOAPIC delivered PIT IRQ0 through Local APIC EOI' build/uefi/debug.log
+          fi
           if [ "${{ matrix.expected_vector }}" != "NONE" ]; then
             grep -q "SYSTEMES_EXCEPTION: vector=0x${{ matrix.expected_vector }} error=0x${{ matrix.expected_error }}" build/uefi/debug.log
           fi
