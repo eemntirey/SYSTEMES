@@ -238,7 +238,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
     #[cfg(feature = "qemu-pit-timer-test")]
     {
-        unsafe { debug_write(b"SYSTEMES_TEST: waiting for three PIT IRQ0 ticks\\r\\n"); }
+        if !apic_initialized || !systemes_kernel::interrupts::apic_active() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC route not active for PIT test\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for three IOAPIC-routed PIT IRQ0 ticks\\r\\n"); }
         while systemes_kernel::interrupts::timer_ticks() < 3 {
             // SAFETY: STI is active and PIT IRQ0 is the only unmasked PIC line.
             unsafe { asm!("hlt", options(nomem, nostack)); }
@@ -250,6 +254,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
         unsafe { debug_write(b"SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: IOAPIC delivered PIT IRQ0 through Local APIC EOI\\r\\n"); }
     }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
