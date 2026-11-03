@@ -137,6 +137,13 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
                  };
                  info.io_apic_count += 1;
              }
+             5 => {
+                 if length != 12 { return Err(AcpiError::MalformedMadtEntry); }
+                 info.local_apic_address = u64::from_le_bytes([
+                     entry[4], entry[5], entry[6], entry[7],
+                     entry[8], entry[9], entry[10], entry[11],
+                 ]);
+             }
              2 => {
                  if length != 10 { return Err(AcpiError::MalformedMadtEntry); }
                  if info.override_count == MAX_ISO { return Err(AcpiError::TooManyEntries); }
