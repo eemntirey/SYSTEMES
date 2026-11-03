@@ -140,6 +140,14 @@ jobs:
             feature: qemu-rx-write-test
             expected_error: '0000000000000003'
             expected_test: 'SYSTEMES_TEST: attempting write to RX kernel text'
+          - label: NMI IST2 stack switch
+            feature: qemu-ist-nmi-test
+            expected_error: '0000000000000000'
+            expected_test: 'SYSTEMES_TEST: IST2 NMI stack switch verified'
+          - label: Machine Check IST3 stack switch
+            feature: qemu-ist-machine-check-test
+            expected_error: '0000000000000000'
+            expected_test: 'SYSTEMES_TEST: IST3 machine-check stack switch verified'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
