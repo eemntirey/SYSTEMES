@@ -709,6 +709,28 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
     }
 }
 
+/// Validate all sixteen remapped legacy PIC IRQ gates before enabling interrupts.
+pub fn verify_irq_gates() -> bool {
+    let idt = addr_of!(IDT) as *const IdtEntry;
+    for irq in 0..IRQ_COUNT {
+        let entry = unsafe { &*idt.add(IRQ_VECTOR_BASE + irq) };
+        let selector = unsafe { addr_of!(entry.selector).read_unaligned() };
+        let attributes = unsafe { addr_of!(entry.attributes).read_unaligned() };
+        let low = unsafe { addr_of!(entry.offset_low).read_unaligned() };
+        let middle = unsafe { addr_of!(entry.offset_middle).read_unaligned() };
+        let high = unsafe { addr_of!(entry.offset_high).read_unaligned() };
+        let handler = low as u64 | ((middle as u64) << 16) | ((high as u64) << 32);
+        if selector != KERNEL_CODE_SELECTOR
+            || attributes != EXCEPTION_GATE_ATTRIBUTES
+            || handler == 0
+            || entry.ist != 0
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
 /// Hardware interrupts remain disabled.
 pub unsafe fn initialize() {
@@ -897,6 +919,19 @@ unsafe fn debug_hex(value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_pic_vectors_follow_the_remapped_8259_layout() {
+        assert_eq!(IRQ_VECTOR_BASE, 32);
+        assert_eq!(IRQ_VECTOR_BASE + IRQ_COUNT - 1, 47);
+    }
+
+    #[test]
+    fn pit_divisor_targets_approximately_one_hundred_hertz() {
+        assert_eq!(PIT_DIVISOR, 11_931);
+        let actual_hz = PIT_INPUT_HZ / PIT_DIVISOR as u32;
+        assert!((95..=105).contains(&actual_hz));
+    }
 
     #[test]
     fn encodes_a_64_bit_ring_zero_interrupt_gate() {
