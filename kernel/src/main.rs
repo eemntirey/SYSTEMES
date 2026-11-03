@@ -197,6 +197,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
                 } else {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
+                    match unsafe { systemes_kernel::interrupts::initialize_apic_ioapic(&madt, &mut frame_allocator, page_table_root) } {
+                        Ok(()) => {
+                            apic_initialized = true;
+                            unsafe { debug_write(b"SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed\r\n") };
+                        }
+                        Err(_) => unsafe { debug_write(b"SYSTEMES: APIC initialization unavailable; retaining legacy PIC/PIT\r\n") },
+                    }
                 }
             }
             Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT validation unavailable; retaining legacy PIC path\r\n") },
