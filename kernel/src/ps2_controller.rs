@@ -23,7 +23,6 @@ const CMD_TEST_AUX: u8 = 0xA9;
 
 const CONFIG_KEYBOARD_IRQ: u8 = 1 << 0;
 const CONFIG_AUX_IRQ: u8 = 1 << 1;
-const CONFIG_SYSTEM: u8 = 1 << 2;
 const CONFIG_KEYBOARD_DISABLED: u8 = 1 << 4;
 const CONFIG_AUX_DISABLED: u8 = 1 << 5;
 const CONFIG_TRANSLATION: u8 = 1 << 6;
@@ -65,7 +64,7 @@ pub unsafe fn initialize() -> Result<ControllerStatus, ControllerError> {
         command(CMD_READ_CONFIG)?;
         let mut config = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
         config &= !(CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ);
-        config |= CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED | CONFIG_SYSTEM | CONFIG_TRANSLATION;
+        config |= CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED | CONFIG_TRANSLATION;
         write_config(config)?;
 
         command(CMD_TEST_KEYBOARD)?;
@@ -77,8 +76,7 @@ pub unsafe fn initialize() -> Result<ControllerStatus, ControllerError> {
         // Some controllers do not implement an auxiliary port; report that
         // independently without making keyboard initialization fail.
         command(CMD_TEST_AUX)?;
-        let auxiliary_test = read_data()?;
-        let auxiliary_detected = auxiliary_test == 0x00;
+        let auxiliary_detected = matches!(read_data(), Ok(0x00));
 
         // Enable only the keyboard clock. IRQ bits remain cleared.
         command(CMD_ENABLE_KEYBOARD)?;
