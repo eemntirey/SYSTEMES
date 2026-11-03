@@ -760,13 +760,14 @@ pub unsafe fn initialize_apic_ioapic(
     unsafe {
         ioapic_write(io_base, high_reg, (lapic_id as u32) << 24);
         ioapic_write(io_base, low_reg, low);
-        ioapic_write(io_base, low_reg, low & !(1 << 16));
         let programmed_low = ioapic_read(io_base, low_reg);
         let programmed_high = ioapic_read(io_base, high_reg);
-        if programmed_low & 0x1FFFF != (low & !(1 << 16)) & 0x1FFFF
-            || programmed_high >> 24 != lapic_id as u32 {
+        if (programmed_low & 0x1FFFF) != (low & 0x1FFFF)
+            || (programmed_high >> 24) != lapic_id as u32 {
             return Err(ApicInitError::IoApicProgrammingFailed);
         }
+        // Unmask only after the destination and masked vector were read back.
+        ioapic_write(io_base, low_reg, low & !(1 << 16));
     }
     LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
     APIC_ACTIVE.store(true, Ordering::Release);
