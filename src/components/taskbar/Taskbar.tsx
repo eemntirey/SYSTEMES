@@ -82,7 +82,7 @@ export const Taskbar: React.FC = () => {
   const volumeIcon = isMuted || volume === 0 ? 'volume-x' : 'volume'
 
   return (
-    <div className="taskbar-w11" role="toolbar" aria-label="Barre des tâches">
+    <div className="taskbar-w11 obsidian-taskbar" role="toolbar" aria-label="Barre des tâches">
       {/* ===== Centre : Démarrer, Recherche, Task View, Widgets, Copilot, apps ===== */}
       <div className={`taskbar-center${taskbarAlignment === 'left' ? ' align-left' : ''}`}>
         {/* Démarrer */}
