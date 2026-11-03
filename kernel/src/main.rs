@@ -256,6 +256,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks\\r\\n"); }
         unsafe { debug_write(b"SYSTEMES_TEST: IOAPIC delivered PIT IRQ0 through Local APIC EOI\\r\\n"); }
     }
+    #[cfg(feature = "qemu-apic-spurious-test")]
+    {
+        let before = systemes_kernel::interrupts::apic_spurious_count();
+        systemes_kernel::interrupts::systemes_irq_dispatch(0xFF);
+        if systemes_kernel::interrupts::apic_spurious_count() != before + 1 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC spurious vector accounting failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI\\r\\n"); }
+    }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
         unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 2 through IST2\r\n"); }
