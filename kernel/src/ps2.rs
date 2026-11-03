@@ -131,7 +131,7 @@ mod tests {
         let mut decoder = KeyboardDecoder::default();
         assert_eq!(decoder.feed(0xE0), None);
         assert_eq!(decoder.feed(0x75), Some(KeyEvent::Scancode { code: 0x75, pressed: true, extended: true }));
-        assert_eq!(decoder.feed(0xF0), Some(KeyEvent::Scancode { code: 0x70, pressed: false, extended: false }));
+        assert_eq!(decoder.feed(0xF5), Some(KeyEvent::Scancode { code: 0x75, pressed: false, extended: false }));
     }
 
     #[test]
