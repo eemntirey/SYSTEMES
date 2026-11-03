@@ -622,6 +622,11 @@ pub fn verify_ist_configuration() -> bool {
         && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
 }
 
+unsafe fn io_wait() {
+    // SAFETY: Port 0x80 is the conventional legacy I/O delay port.
+    unsafe { asm!("out 0x80, al", in("al") 0u8, options(nomem, nostack, preserves_flags)); }
+}
+
 /// Read the current legacy PIC interrupt masks.
 pub fn legacy_pic_masks() -> (u8, u8) {
     unsafe {
@@ -639,22 +644,35 @@ pub unsafe fn initialize_pic_pit() {
     unsafe { asm!("cli", options(nomem, nostack)); }
     unsafe {
         asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x11u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x11u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x20u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x28u8, options(nomem, nostack));
+        io_wait();
         // ICW3: slave is connected to master IRQ2; slave identity is 2.
         asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x04u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x02u8, options(nomem, nostack));
+        io_wait();
         // ICW4: 8086 mode.
         asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0x01u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0x01u8, options(nomem, nostack));
+        io_wait();
         // Mask every line except the PIT timer on IRQ0.
         asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0xFEu8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0xFFu8, options(nomem, nostack));
+        io_wait();
         // PIT channel 0, low/high byte, mode 3 (square wave), binary counter.
         asm!("out dx, al", in("dx") PIT_COMMAND, in("al") 0x36u8, options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIT_CHANNEL0, in("al") (PIT_DIVISOR as u8), options(nomem, nostack));
+        io_wait();
         asm!("out dx, al", in("dx") PIT_CHANNEL0, in("al") ((PIT_DIVISOR >> 8) as u8), options(nomem, nostack));
+        io_wait();
     }
     TIMER_TICKS.store(0, Ordering::Release);
 }
