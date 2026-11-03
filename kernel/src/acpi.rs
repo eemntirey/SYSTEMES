@@ -199,6 +199,7 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
      if root_header.get(0..4) != Some(root_signature) { return Err(AcpiError::InvalidSdtSignature); }
      let root_length = read_u32(root_header, 4)? as usize;
      if root_length < SDT_HEADER_SIZE || root_length > MAX_TABLE_LENGTH
+         || root_address.checked_add(root_length as u64).filter(|end| *end <= IDENTITY_MAP_LIMIT).is_none()
          || (root_length - SDT_HEADER_SIZE) % entry_width != 0 {
          return Err(AcpiError::InvalidTableLength);
      }
@@ -215,7 +216,8 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
          let header = unsafe { core::slice::from_raw_parts(address as *const u8, SDT_HEADER_SIZE) };
          if header.get(0..4) != Some(&b"APIC"[..]) { continue; }
          let length = read_u32(header, 4)? as usize;
-         if !(SDT_HEADER_SIZE + 8..=MAX_TABLE_LENGTH).contains(&length) {
+         if !(SDT_HEADER_SIZE + 8..=MAX_TABLE_LENGTH).contains(&length)
+             || address.checked_add(length as u64).filter(|end| *end <= IDENTITY_MAP_LIMIT).is_none() {
              return Err(AcpiError::InvalidTableLength);
          }
          // SAFETY: The MADT header provides its bounded complete length.
