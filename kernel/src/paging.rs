@@ -15,6 +15,8 @@ const FRAME_COUNT: usize = 2 + ENTRIES;
 const EFER_MSR: u32 = 0xC000_0080;
 const EFER_NXE: u64 = 1 << 11;
 const CPUID_NX: u32 = 1 << 20;
+const CPUID_PAT: u32 = 1 << 16;
+const IA32_PAT_MSR: u32 = 0x277;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PagingError {
@@ -27,6 +29,7 @@ pub enum PagingError {
     WriteExecuteViolation,
     PermissionMismatch,
     WriteProtectUnavailable,
+    PatUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +213,13 @@ pub unsafe fn map_mmio_uncached(
     const PWT: u64 = 1 << 3;
     const PCD: u64 = 1 << 4;
     if length == 0 { return Err(PagingError::InvalidRegion); }
+    if unsafe { __cpuid(1) }.edx & CPUID_PAT == 0 { return Err(PagingError::PatUnsupported); }
+    let pat_low: u32;
+    let pat_high: u32;
+    unsafe { core::arch::asm!("rdmsr", in("ecx") IA32_PAT_MSR, out("eax") pat_low, out("edx") pat_high, options(nomem, nostack)); }
+    let pat = ((pat_high as u64) << 32) | pat_low as u64;
+    // PWT|PCD selects PAT entry 3. Refuse to map MMIO if firmware changed it from UC.
+    if (pat >> 24) & 0xFF != 0 { return Err(PagingError::PatUnsupported); }
     let page_start = physical_address & !(PAGE_SIZE - 1);
     let end = physical_address.checked_add(length).ok_or(PagingError::InvalidRegion)?;
     let page_end = end.checked_add(PAGE_SIZE - 1).ok_or(PagingError::InvalidRegion)? & !(PAGE_SIZE - 1);
