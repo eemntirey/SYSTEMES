@@ -22,6 +22,7 @@ const CMD_TEST_KEYBOARD: u8 = 0xAB;
 const CMD_TEST_AUX: u8 = 0xA9;
 
 const CONFIG_KEYBOARD_IRQ: u8 = 1 << 0;
+const CONFIG_SYSTEM: u8 = 1 << 2;
 const CONFIG_AUX_IRQ: u8 = 1 << 1;
 const CONFIG_KEYBOARD_DISABLED: u8 = 1 << 4;
 const CONFIG_AUX_DISABLED: u8 = 1 << 5;
@@ -156,8 +157,8 @@ unsafe fn flush_output() {
             if read_status() & STATUS_OUTPUT_FULL == 0 {
                 break;
             }
-            let discarded: u8;
-            asm!("in al, dx", in("dx") DATA_PORT, out("al") discarded, options(nomem, nostack, preserves_flags));
+            let _discarded: u8;
+            asm!("in al, dx", in("dx") DATA_PORT, out("al") _discarded, options(nomem, nostack, preserves_flags));
         }
     }
 }
