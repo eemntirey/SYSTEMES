@@ -115,7 +115,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\\r\\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: TSS loaded (TR=0x18), RSP0 and IST1/IST2/IST3 stacks configured\\r\\n") };
+    if !systemes_kernel::interrupts::verify_ist_configuration() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TSS stacks or IDT IST routing invalid\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\\r\\n") };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
     // SAFETY: UEFI identity mappings remain active while the new page tables are built.
