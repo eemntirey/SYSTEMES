@@ -25,6 +25,10 @@ const PIT_INPUT_HZ: u32 = 1_193_182;
 const PIT_FREQUENCY_HZ: u32 = 100;
 const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / PIT_FREQUENCY_HZ) as u16;
 static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
+static IRQ_COUNTS: [AtomicU64; IRQ_COUNT] = [const { AtomicU64::new(0) }; IRQ_COUNT];
+static APIC_SPURIOUS_COUNT: AtomicU64 = AtomicU64::new(0);
+static PIC_SPURIOUS_7_COUNT: AtomicU64 = AtomicU64::new(0);
+static PIC_SPURIOUS_15_COUNT: AtomicU64 = AtomicU64::new(0);
 static APIC_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LOCAL_APIC_BASE: AtomicUsize = AtomicUsize::new(0);
 const IA32_APIC_BASE_MSR: u32 = 0x1B;
@@ -854,28 +858,99 @@ pub fn timer_ticks() -> u64 {
     TIMER_TICKS.load(Ordering::Acquire)
 }
 
+/// Number of delivered hardware interrupts for a legacy IRQ line (0..15).
+pub fn irq_count(irq: u8) -> Option<u64> {
+    IRQ_COUNTS.get(irq as usize).map(|count| count.load(Ordering::Acquire))
+}
+
+/// Number of Local APIC spurious-vector deliveries (vector 0xFF).
+pub fn apic_spurious_count() -> u64 {
+    APIC_SPURIOUS_COUNT.load(Ordering::Acquire)
+}
+
+pub fn pic_spurious_counts() -> (u64, u64) {
+    (PIC_SPURIOUS_7_COUNT.load(Ordering::Acquire), PIC_SPURIOUS_15_COUNT.load(Ordering::Acquire))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PicEoi {
+    None,
+    MasterOnly,
+    SlaveThenMaster,
+}
+
+const fn pic_eoi_policy(irq: usize, in_service: bool) -> PicEoi {
+    match irq {
+        7 if !in_service => PicEoi::None,
+        15 if !in_service => PicEoi::MasterOnly,
+        8..=15 => PicEoi::SlaveThenMaster,
+        _ => PicEoi::MasterOnly,
+    }
+}
+
+unsafe fn read_pic_isr(command_port: u16) -> u8 {
+    unsafe {
+        asm!("out dx, al", in("dx") command_port, in("al") 0x0Bu8, options(nomem, nostack));
+        let value: u8;
+        asm!("in al, dx", in("dx") command_port, out("al") value, options(nomem, nostack));
+        value
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_irq_dispatch(vector: u64) {
+    // The Local APIC spurious vector is special: the CPU does not set ISR for it,
+    // therefore an EOI must never be sent.
+    if vector == APIC_SPURIOUS_VECTOR as u64 {
+        APIC_SPURIOUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if !(IRQ_VECTOR_BASE as u64..(ACTIVE_VECTOR_COUNT as u64)).contains(&vector) {
         return;
     }
-    if vector == IRQ_VECTOR_BASE as u64 {
+
+    let irq = vector as usize - IRQ_VECTOR_BASE;
+    if irq == 0 {
         TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
     }
+
     if APIC_ACTIVE.load(Ordering::Acquire) {
+        IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
         let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
         if !base.is_null() {
             // SAFETY: The UC-mapped Local APIC page is published before STI.
             unsafe { lapic_write(base, 0xB0, 0); }
         }
-    } else {
-        let irq = vector as usize - IRQ_VECTOR_BASE;
-        unsafe {
-            if irq >= 8 {
-                asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
-            }
-            asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+        return;
+    }
+
+    // 8259A IRQ7/IRQ15 may be spurious. Read the relevant In-Service Register
+    // before deciding which PICs, if any, require an EOI.
+    if irq == 7 || irq == 15 {
+        let command = if irq == 7 { PIC_MASTER_COMMAND } else { PIC_SLAVE_COMMAND };
+        let isr = unsafe { read_pic_isr(command) };
+        let in_service = isr & (1 << 7) != 0;
+        if !in_service && irq == 7 {
+            PIC_SPURIOUS_7_COUNT.fetch_add(1, Ordering::Relaxed);
+        } else if !in_service && irq == 15 {
+            PIC_SPURIOUS_15_COUNT.fetch_add(1, Ordering::Relaxed);
         }
+        match pic_eoi_policy(irq, in_service) {
+            PicEoi::None => return,
+            PicEoi::MasterOnly => {
+                unsafe { asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack)); }
+                return;
+            }
+            PicEoi::SlaveThenMaster => {}
+        }
+    }
+    IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
+
+    unsafe {
+        if irq >= 8 {
+            asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
+        }
+        asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
     }
 }
 
@@ -1148,6 +1223,25 @@ mod tests {
         let nmi = IdtEntry::interrupt_gate(0x2000, 2);
         let machine_check = IdtEntry::interrupt_gate(0x3000, 3);
         assert_eq!((double_fault.ist, nmi.ist, machine_check.ist), (1, 2, 3));
+    }
+
+    #[test]
+    fn pic_spurious_irq7_sends_no_eoi() {
+        assert_eq!(pic_eoi_policy(7, false), PicEoi::None);
+        assert_eq!(pic_eoi_policy(7, true), PicEoi::MasterOnly);
+    }
+
+    #[test]
+    fn pic_spurious_irq15_sends_master_eoi_only() {
+        assert_eq!(pic_eoi_policy(15, false), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(15, true), PicEoi::SlaveThenMaster);
+    }
+
+    #[test]
+    fn ordinary_pic_irqs_keep_their_expected_eoi_path() {
+        assert_eq!(pic_eoi_policy(0, true), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(1, true), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(12, true), PicEoi::SlaveThenMaster);
     }
 
     #[test]
