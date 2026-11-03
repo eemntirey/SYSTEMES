@@ -59,6 +59,15 @@ struct DescriptorTablePointer {
     base: u64,
 }
 
+const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
+    let low = (limit as u64 & 0xFFFF)
+        | ((base & 0x00FF_FFFF) << 16)
+        | (0x89u64 << 40)
+        | ((((limit as u64) >> 16) & 0x0F) << 48)
+        | (((base >> 24) & 0xFF) << 56);
+    [low, base >> 32]
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct IdtEntry {
@@ -429,16 +438,14 @@ pub unsafe fn initialize() {
     }
 
     let tss_base = tss as u64;
-    let tss_limit = (core::mem::size_of::<TaskStateSegment>() - 1) as u64;
-    let tss_low = (tss_limit & 0xFFFF)
-        | ((tss_base & 0x00FF_FFFF) << 16)
-        | (0x89u64 << 40)
-        | (((tss_limit >> 16) & 0x0F) << 48)
-        | (((tss_base >> 24) & 0xFF) << 56);
+    let [tss_low, tss_high] = encode_tss_descriptor(
+        tss_base,
+        (core::mem::size_of::<TaskStateSegment>() - 1) as u32,
+    );
     let gdt = addr_of_mut!(GDT).cast::<u64>();
     unsafe {
         gdt.add(3).write(tss_low);
-        gdt.add(4).write(tss_base >> 32);
+        gdt.add(4).write(tss_high);
     }
     let gdt_pointer = DescriptorTablePointer {
         limit: (core::mem::size_of::<[u64; 5]>() - 1) as u16,
@@ -561,6 +568,15 @@ mod tests {
         assert_eq!(entry.ist, 3);
         assert_eq!(entry.attributes, EXCEPTION_GATE_ATTRIBUTES);
         assert_eq!(reserved, 0);
+    }
+
+    #[test]
+    fn encodes_a_present_available_64_bit_tss_descriptor() {
+        let [low, high] = encode_tss_descriptor(0x1234_5678_9ABC_DEF0, 103);
+        assert_eq!(high, 0x1234_5678);
+        assert_eq!(low & 0xFFFF, 103);
+        assert_eq!((low >> 40) & 0xFF, 0x89);
+        assert_eq!((low >> 56) & 0xFF, 0x9A);
     }
 
     #[test]
