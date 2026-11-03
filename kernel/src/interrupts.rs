@@ -647,6 +647,7 @@ pub enum ApicInitError {
     CpuApicUnsupported, X2ApicUnsupported, InvalidPhysicalAddress,
     MmioMappingFailed, InvalidIoApicVersion, Irq0GsiNotCovered,
     InvalidInterruptOverride,
+    IoApicProgrammingFailed,
 }
 
 unsafe fn read_msr(msr: u32) -> u64 {
@@ -760,6 +761,12 @@ pub unsafe fn initialize_apic_ioapic(
         ioapic_write(io_base, high_reg, (lapic_id as u32) << 24);
         ioapic_write(io_base, low_reg, low);
         ioapic_write(io_base, low_reg, low & !(1 << 16));
+        let programmed_low = ioapic_read(io_base, low_reg);
+        let programmed_high = ioapic_read(io_base, high_reg);
+        if programmed_low & 0x1FFFF != (low & !(1 << 16)) & 0x1FFFF
+            || programmed_high >> 24 != lapic_id as u32 {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
     }
     LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
     APIC_ACTIVE.store(true, Ordering::Release);
