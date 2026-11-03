@@ -11,6 +11,7 @@ qemu-nx-execute-test = []
 qemu-rx-write-test = []
 qemu-ist-nmi-test = []
 qemu-ist-machine-check-test = []
+qemu-pit-timer-test = []
 
 [lib]
 path = "src/lib.rs"
