@@ -7,7 +7,6 @@ use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
-const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const TSS_SELECTOR: u16 = 0x18;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
