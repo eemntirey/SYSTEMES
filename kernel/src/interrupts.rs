@@ -544,7 +544,7 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         let rsp: u64;
         // SAFETY: The dispatcher runs at CPL0 after the CPU has applied the IDT IST2 switch.
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = addr_of!(NMI_STACK.0) as *const u8 as u64;
+        let start = unsafe { addr_of!(NMI_STACK.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
@@ -559,7 +559,7 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         let rsp: u64;
         // SAFETY: The dispatcher runs at CPL0 after the CPU has applied the IDT IST3 switch.
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = addr_of!(MACHINE_CHECK_STACK.0) as *const u8 as u64;
+        let start = unsafe { addr_of!(MACHINE_CHECK_STACK.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
