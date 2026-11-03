@@ -214,7 +214,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     // Keep all IRQ lines masked except PIT IRQ0 until the timer is fully programmed.
     unsafe { systemes_kernel::interrupts::initialize_pic_pit() };
-    if systemes_kernel::interrupts::legacy_pic_masks() != (0xFE, 0xFF) {
+    if !apic_initialized && systemes_kernel::interrupts::legacy_pic_masks() != (0xFE, 0xFF) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC masks are not IRQ0-only\\r\\n"); }
         halt();
     }
