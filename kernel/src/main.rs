@@ -224,6 +224,14 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked\\r\\n"); }
     unsafe { debug_write(b"SYSTEMES: PIT channel 0 programmed at 100 Hz\\r\\n"); }
+    if apic_initialized {
+        unsafe { systemes_kernel::interrupts::mask_legacy_pic() };
+        if systemes_kernel::interrupts::legacy_pic_masks() != (0xFF, 0xFF) {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC not fully masked in APIC mode\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
