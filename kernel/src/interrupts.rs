@@ -33,6 +33,7 @@ const APIC_ENABLE: u64 = 1 << 11;
 const APIC_X2_ENABLE: u64 = 1 << 10;
 const CPUID_APIC: u32 = 1 << 9;
 const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
+const APIC_TIMER_VECTOR: u8 = IRQ_VECTOR_BASE as u8;
 const IOAPIC_REG_VERSION: u8 = 0x01;
 const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
 
