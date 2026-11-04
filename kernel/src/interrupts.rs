@@ -654,6 +654,7 @@ pub enum ApicInitError {
     CpuApicUnsupported, X2ApicUnsupported, InvalidPhysicalAddress,
     MmioMappingFailed, InvalidIoApicVersion, Irq0GsiNotCovered,
     InvalidInterruptOverride,
+    IoApicGsiNotCovered,
     IoApicProgrammingFailed,
 }
 
@@ -839,7 +840,7 @@ unsafe fn prepare_ioapic_route(
         }
         return Ok((base as usize, low_reg, low));
     }
-    Err(ApicInitError::Irq0GsiNotCovered)
+    Err(ApicInitError::IoApicGsiNotCovered)
 }
 
 /// Program IRQ1 and IRQ12 redirection entries while keeping both masked.
@@ -858,12 +859,10 @@ pub unsafe fn prepare_ps2_ioapic_routes(
         unsafe { prepare_ioapic_route(madt, allocator, page_table_root, keyboard_gsi, 33, lapic_id) }?;
     let (mouse_base, mouse_low_reg, mut mouse_low) =
         unsafe { prepare_ioapic_route(madt, allocator, page_table_root, mouse_gsi, 44, lapic_id) }?;
-    for flags in [keyboard_flags, mouse_flags] {
-        let polarity = flags & 0x3;
-        let trigger = (flags >> 2) & 0x3;
-        if polarity == 3 { if flags == keyboard_flags { keyboard_low |= 1 << 13; } else { mouse_low |= 1 << 13; } }
-        if trigger == 3 { if flags == keyboard_flags { keyboard_low |= 1 << 15; } else { mouse_low |= 1 << 15; } }
-    }
+    if keyboard_flags & 0x3 == 3 { keyboard_low |= 1 << 13; }
+    if (keyboard_flags >> 2) & 0x3 == 3 { keyboard_low |= 1 << 15; }
+    if mouse_flags & 0x3 == 3 { mouse_low |= 1 << 13; }
+    if (mouse_flags >> 2) & 0x3 == 3 { mouse_low |= 1 << 15; }
     unsafe {
         ioapic_write(keyboard_base as *mut u8, keyboard_low_reg, keyboard_low);
         ioapic_write(mouse_base as *mut u8, mouse_low_reg, mouse_low);
