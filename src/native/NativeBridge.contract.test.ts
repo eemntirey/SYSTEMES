@@ -28,8 +28,6 @@ describe('Native IPC contract parity', () => {
 
   it('keeps every typed application operation inside the client allowlist', () => {
     expect(facadeMethods.length).toBeGreaterThan(0);
-    expect([...new Set(facadeMethods)].sort()).toEqual(
-      [...new Set(facadeMethods.filter((method) => clientMethods.includes(method)))].sort(),
-    );
+    expect(facadeMethods.every((method) => clientMethods.includes(method))).toBe(true);
   });
 });
