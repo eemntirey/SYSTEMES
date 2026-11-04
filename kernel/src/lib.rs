@@ -7,6 +7,7 @@
 
 pub mod acpi;
 pub mod interrupts;
+pub mod input;
 pub mod memory;
 pub mod paging;
 pub mod ps2;
