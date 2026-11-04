@@ -40,8 +40,10 @@ const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
 const APIC_TIMER_VECTOR: u8 = IRQ_VECTOR_BASE as u8;
 const IOAPIC_REG_VERSION: u8 = 0x01;
 const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
-static PS2_IRQ1_ROUTE: AtomicUsize = AtomicUsize::new(0);
-static PS2_IRQ12_ROUTE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ1_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ1_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
 
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
@@ -879,17 +881,23 @@ pub unsafe fn prepare_ps2_ioapic_routes(
             return Err(ApicInitError::IoApicProgrammingFailed);
         }
     }
-    PS2_IRQ1_ROUTE.store(keyboard_base | ((keyboard_low_reg as usize) << 1) | 1, Ordering::Release);
-    PS2_IRQ12_ROUTE.store(mouse_base | ((mouse_low_reg as usize) << 1) | 1, Ordering::Release);
+    PS2_IRQ1_IOAPIC_BASE.store(keyboard_base, Ordering::Release);
+    PS2_IRQ1_LOW_REGISTER.store(keyboard_low_reg as usize, Ordering::Release);
+    PS2_IRQ12_IOAPIC_BASE.store(mouse_base, Ordering::Release);
+    PS2_IRQ12_LOW_REGISTER.store(mouse_low_reg as usize, Ordering::Release);
     Ok(())
 }
 
 /// Unmask the already-verified keyboard and auxiliary IOAPIC entries.
 pub unsafe fn enable_ps2_ioapic_routes() -> Result<(), ApicInitError> {
-    for route in [PS2_IRQ1_ROUTE.load(Ordering::Acquire), PS2_IRQ12_ROUTE.load(Ordering::Acquire)] {
-        if route == 0 { return Err(ApicInitError::IoApicProgrammingFailed); }
-        let base = (route & !0x1FF) as *mut u8;
-        let low_reg = ((route >> 1) & 0xFF) as u8;
+    let routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    for (base, register) in routes {
+        if base == 0 { return Err(ApicInitError::IoApicProgrammingFailed); }
+        let base = base as *mut u8;
+        let low_reg = register as u8;
         let low = unsafe { ioapic_read(base, low_reg) };
         unsafe { ioapic_write(base, low_reg, low & !(1 << 16)); }
         if unsafe { ioapic_read(base, low_reg) } & (1 << 16) != 0 {
@@ -897,6 +905,22 @@ pub unsafe fn enable_ps2_ioapic_routes() -> Result<(), ApicInitError> {
         }
     }
     Ok(())
+}
+
+/// Re-mask both PS/2 routes if controller activation fails after route setup.
+pub unsafe fn mask_ps2_ioapic_routes() {
+    let routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    for (base, register) in routes {
+        if base != 0 {
+            let base = base as *mut u8;
+            let low_reg = register as u8;
+            let low = unsafe { ioapic_read(base, low_reg) };
+            unsafe { ioapic_write(base, low_reg, low | (1 << 16)); }
+        }
+    }
 }
 
 pub unsafe fn mask_legacy_pic() {
