@@ -38,10 +38,10 @@ def wait_for_text(path, expected, timeout):
                 content = log.read()
         except FileNotFoundError:
             content = ""
-        if "SYSTEMES_KERNEL_FAIL:" in content:
-            raise RuntimeError("Kernel reported failure before QMP injection")
         if expected in content:
             return
+        if "SYSTEMES_KERNEL_FAIL:" in content:
+            raise RuntimeError("Kernel reported failure before the expected QEMU marker")
         time.sleep(0.1)
     raise TimeoutError(f"Timed out waiting for kernel marker: {expected}")
 
