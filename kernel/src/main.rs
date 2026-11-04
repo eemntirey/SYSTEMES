@@ -235,7 +235,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     let ps2_ready = match unsafe { systemes_kernel::ps2_controller::initialize() } {
         Ok(status) if status.keyboard_interface_ready && status.irq_lines_disabled && status.set1_translation_enabled => {
             unsafe { debug_write(b"SYSTEMES: PS/2 8042 initialized with IRQ1/IRQ12 disabled\\r\\n"); }
-            status.auxiliary_interface_detected
+            true
         }
         Ok(_) => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 controller violated safe IRQ/configuration policy\\r\\n"); halt(); } }
         Err(_) => { unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable; continuing without PS/2 input\\r\\n"); } false }
