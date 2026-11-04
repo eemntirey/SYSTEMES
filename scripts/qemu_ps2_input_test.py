@@ -75,11 +75,20 @@ def main():
         command(stream, "qmp_capabilities")
         wait_for_text(args.debug_log, "SYSTEMES_TEST: PS2_INPUT_READY", 15)
 
-        # QMP send-key emits a Set-1 make/break sequence for the emulated PS/2 keyboard.
-        command(stream, "send-key", {
-            "keys": [{"type": "qcode", "data": "a"}],
-            "hold-time": 120,
-        })
+        # Send explicit key-down/key-up events through QEMU's input layer.
+        # This exercises the emulated keyboard device rather than a host-side
+        # terminal shortcut, and gives the kernel a complete make/break pair.
+        command(stream, "input-send-event", {"events": [
+            {"type": "key", "data": {
+                "down": True, "key": {"type": "qcode", "data": "a"},
+            }},
+        ]})
+        time.sleep(0.12)
+        command(stream, "input-send-event", {"events": [
+            {"type": "key", "data": {
+                "down": False, "key": {"type": "qcode", "data": "a"},
+            }},
+        ]})
 
         # Move the PS/2 mouse while pressing left, then release it in a second packet.
         command(stream, "input-send-event", {"events": [
