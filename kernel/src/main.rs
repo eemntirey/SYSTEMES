@@ -243,7 +243,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     if apic_initialized && ps2_ready {
         match unsafe { systemes_kernel::interrupts::prepare_ps2_ioapic_routes(
             &systemes_kernel::acpi::discover_madt(boot.acpi_rsdp_address).unwrap_or_else(|_| halt()),
-            &mut frame_allocator, page_table_root
+            &mut frame_allocator, page_table_root, auxiliary_ready
         ) } {
             Ok(()) => {
                 if unsafe { systemes_kernel::interrupts::enable_ps2_ioapic_routes(auxiliary_ready) }.is_ok()
