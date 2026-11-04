@@ -16,6 +16,7 @@ const CMD_READ_CONFIG: u8 = 0x20;
 const CMD_WRITE_CONFIG: u8 = 0x60;
 const CMD_DISABLE_KEYBOARD: u8 = 0xAD;
 const CMD_ENABLE_KEYBOARD: u8 = 0xAE;
+const CMD_ENABLE_AUX: u8 = 0xA8;
 const CMD_DISABLE_AUX: u8 = 0xA7;
 const CMD_SELF_TEST: u8 = 0xAA;
 const CMD_TEST_KEYBOARD: u8 = 0xAB;
@@ -92,6 +93,23 @@ pub unsafe fn initialize() -> Result<ControllerStatus, ControllerError> {
             set1_translation_enabled: config & CONFIG_TRANSLATION != 0,
         })
     }
+}
+
+
+/// Enable both PS/2 interfaces and IRQ generation after IOAPIC routes are installed.
+/// # Safety
+/// Caller must have verified and unmasked IOAPIC routes for ISA IRQ1 and IRQ12.
+pub unsafe fn enable_interrupts() -> Result<(), ControllerError> {
+    unsafe {
+        command(CMD_ENABLE_KEYBOARD)?;
+        command(CMD_ENABLE_AUX)?;
+        command(CMD_READ_CONFIG)?;
+        let mut config = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
+        config &= !(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED);
+        config |= CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ | CONFIG_TRANSLATION;
+        write_config(config)?;
+    }
+    Ok(())
 }
 
 unsafe fn command(value: u8) -> Result<(), ControllerError> {
