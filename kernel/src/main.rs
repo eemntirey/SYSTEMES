@@ -382,6 +382,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 break;
             }
             if elapsed >= 5000 {
+                if systemes_kernel::interrupts::irq_count(1).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_NOT_OBSERVED\\r\\n"); }
+                }
+                if systemes_kernel::interrupts::irq_count(12).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_NOT_OBSERVED\\r\\n"); }
+                }
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input event timeout\\r\\n"); }
                 halt();
             }
