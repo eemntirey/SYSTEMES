@@ -187,6 +187,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     let mut apic_initialized = false;
+    let mut discovered_madt = None;
     if boot.acpi_rsdp_address != 0 {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
         // SAFETY: The RSDP address is supplied by UEFI and the active identity
@@ -196,6 +197,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
                 } else {
+                    discovered_madt = Some(madt);
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
                     match unsafe { systemes_kernel::interrupts::initialize_apic_ioapic(&madt, &mut frame_allocator, page_table_root) } {
                         Ok(()) => {
@@ -242,7 +244,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     };
     if apic_initialized && ps2_ready {
         match unsafe { systemes_kernel::interrupts::prepare_ps2_ioapic_routes(
-            &systemes_kernel::acpi::discover_madt(boot.acpi_rsdp_address).unwrap_or_else(|_| halt()),
+            discovered_madt.as_ref().unwrap_or_else(|| halt()),
             &mut frame_allocator, page_table_root, auxiliary_ready
         ) } {
             Ok(()) => {
