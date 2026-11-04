@@ -8,10 +8,10 @@ const extractQuotedMethods = (source: string, pattern: RegExp): string[] =>
 
 describe('Native IPC contract parity', () => {
   const clientMethods = [...ALLOWED_NATIVE_METHODS];
-  const serverMethods = extractQuotedMethods(nativeServerSource, /case\\s+"([^"]+)"\\s*:/g);
+  const serverMethods = extractQuotedMethods(nativeServerSource, /case\s+"([^"]+)"\s*:/g);
   const facadeMethods = extractQuotedMethods(
     typedFacadeSource,
-    /request(?:<[\\s\\S]*?>)?\\(\\s*'([^']+)'/gs,
+    /request(?:<[\s\S]*?>)?\(\s*'([^']+)'/gs,
   );
 
   it('keeps every client-allowed operation implemented by the native server, with no extras', () => {
