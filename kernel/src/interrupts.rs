@@ -837,8 +837,9 @@ unsafe fn prepare_ioapic_route(
         let high_reg = low_reg.checked_add(1).ok_or(ApicInitError::InvalidIoApicVersion)?;
         let low = vector as u32 | (1 << 16);
         unsafe {
-            ioapic_write(base, high_reg, (lapic_id as u32) << 24);
+            // Mask the old route first; only then change its destination.
             ioapic_write(base, low_reg, low);
+            ioapic_write(base, high_reg, (lapic_id as u32) << 24);
             let read_low = ioapic_read(base, low_reg);
             let read_high = ioapic_read(base, high_reg);
             if (read_low & 0x1FFFF) != low || (read_high >> 24) != lapic_id as u32 {
