@@ -232,13 +232,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         unsafe { debug_write(b"SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC\\r\\n"); }
     }
-    let ps2_ready = match unsafe { systemes_kernel::ps2_controller::initialize() } {
+    let (ps2_ready, auxiliary_ready) = match unsafe { systemes_kernel::ps2_controller::initialize() } {
         Ok(status) if status.keyboard_interface_ready && status.irq_lines_disabled && status.set1_translation_enabled => {
             unsafe { debug_write(b"SYSTEMES: PS/2 8042 initialized with IRQ1/IRQ12 disabled\\r\\n"); }
-            true
+            (true, status.auxiliary_interface_detected)
         }
         Ok(_) => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 controller violated safe IRQ/configuration policy\\r\\n"); halt(); } }
-        Err(_) => { unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable; continuing without PS/2 input\\r\\n"); } false }
+        Err(_) => { unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable; continuing without PS/2 input\\r\\n"); } (false, false) }
     };
     if apic_initialized && ps2_ready {
         match unsafe { systemes_kernel::interrupts::prepare_ps2_ioapic_routes(
@@ -246,9 +246,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             &mut frame_allocator, page_table_root
         ) } {
             Ok(()) => {
-                if unsafe { systemes_kernel::interrupts::enable_ps2_ioapic_routes() }.is_ok()
-                    && unsafe { systemes_kernel::ps2_controller::enable_interrupts() }.is_ok() {
-                    unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC\\r\\n"); }
+                if unsafe { systemes_kernel::interrupts::enable_ps2_ioapic_routes(auxiliary_ready) }.is_ok()
+                    && unsafe { systemes_kernel::ps2_controller::enable_interrupts(auxiliary_ready) }.is_ok() {
+                    if auxiliary_ready {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC\\r\\n"); }
+                    } else {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard route enabled; IRQ12 kept masked (no auxiliary device)\\r\\n"); }
+                    }
                 } else {
                     unsafe { systemes_kernel::interrupts::mask_ps2_ioapic_routes(); }
                     unsafe { debug_write(b"SYSTEMES: PS/2 IRQ activation failed; IOAPIC routes re-masked\\r\\n"); }
