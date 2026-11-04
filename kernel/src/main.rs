@@ -187,6 +187,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     let mut apic_initialized = false;
+    let mut discovered_madt = None;
     if boot.acpi_rsdp_address != 0 {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
         // SAFETY: The RSDP address is supplied by UEFI and the active identity
@@ -196,6 +197,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
                 } else {
+                    discovered_madt = Some(madt);
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
                     match unsafe { systemes_kernel::interrupts::initialize_apic_ioapic(&madt, &mut frame_allocator, page_table_root) } {
                         Ok(()) => {
@@ -232,17 +234,38 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         unsafe { debug_write(b"SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC\\r\\n"); }
     }
-    match unsafe { systemes_kernel::ps2_controller::initialize() } {
+    let (ps2_ready, auxiliary_ready) = match unsafe { systemes_kernel::ps2_controller::initialize() } {
         Ok(status) if status.keyboard_interface_ready && status.irq_lines_disabled && status.set1_translation_enabled => {
-            unsafe { debug_write(b"SYSTEMES: PS/2 8042 keyboard interface initialized; IRQ1/IRQ12 remain disabled\\r\\n"); }
-            if status.auxiliary_interface_detected {
-                unsafe { debug_write(b"SYSTEMES: PS/2 auxiliary interface self-test passed; interface remains disabled\\r\\n"); }
-            } else {
-                unsafe { debug_write(b"SYSTEMES: PS/2 auxiliary interface unavailable; keyboard path retained\\r\\n"); }
-            }
+            unsafe { debug_write(b"SYSTEMES: PS/2 8042 initialized with IRQ1/IRQ12 disabled\\r\\n"); }
+            (true, status.auxiliary_interface_detected)
         }
-        Ok(_) => unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 controller violated safe IRQ/configuration policy\\r\\n"); halt(); },
-        Err(_) => unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable or timed out; continuing without PS/2 input\\r\\n"); },
+        Ok(_) => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 controller violated safe IRQ/configuration policy\\r\\n"); halt(); } }
+        Err(_) => { unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable; continuing without PS/2 input\\r\\n"); } (false, false) }
+    };
+    if apic_initialized && ps2_ready {
+        match unsafe { systemes_kernel::interrupts::prepare_ps2_ioapic_routes(
+            discovered_madt.as_ref().unwrap_or_else(|| halt()),
+            &mut frame_allocator, page_table_root, auxiliary_ready
+        ) } {
+            Ok(()) => {
+                if unsafe { systemes_kernel::interrupts::enable_ps2_ioapic_routes(auxiliary_ready) }.is_ok()
+                    && unsafe { systemes_kernel::ps2_controller::enable_interrupts(auxiliary_ready) }.is_ok() {
+                    if auxiliary_ready {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC\\r\\n"); }
+                    } else {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard route enabled; IRQ12 kept masked (no auxiliary device)\\r\\n"); }
+                    }
+                } else {
+                    unsafe { systemes_kernel::interrupts::mask_ps2_ioapic_routes(); }
+                    unsafe { debug_write(b"SYSTEMES: PS/2 IRQ activation failed; IOAPIC routes re-masked\\r\\n"); }
+                }
+            }
+            Err(_) => unsafe { debug_write(b"SYSTEMES: PS/2 IOAPIC routes unavailable; input IRQs remain disabled\\r\\n"); }
+        }
+    } else if !apic_initialized {
+        unsafe { debug_write(b"SYSTEMES: PS/2 IRQs kept disabled because xAPIC/IOAPIC is unavailable\\r\\n"); }
+    } else if !ps2_ready {
+        unsafe { debug_write(b"SYSTEMES: PS/2 controller unavailable; IRQs remain disabled\\r\\n"); }
     }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }

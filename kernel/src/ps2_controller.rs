@@ -16,6 +16,7 @@ const CMD_READ_CONFIG: u8 = 0x20;
 const CMD_WRITE_CONFIG: u8 = 0x60;
 const CMD_DISABLE_KEYBOARD: u8 = 0xAD;
 const CMD_ENABLE_KEYBOARD: u8 = 0xAE;
+const CMD_ENABLE_AUX: u8 = 0xA8;
 const CMD_DISABLE_AUX: u8 = 0xA7;
 const CMD_SELF_TEST: u8 = 0xAA;
 const CMD_TEST_KEYBOARD: u8 = 0xAB;
@@ -92,6 +93,50 @@ pub unsafe fn initialize() -> Result<ControllerStatus, ControllerError> {
             set1_translation_enabled: config & CONFIG_TRANSLATION != 0,
         })
     }
+}
+
+
+/// Enable both PS/2 interfaces and IRQ generation after IOAPIC routes are installed.
+/// # Safety
+/// Caller must have verified and unmasked IOAPIC routes for ISA IRQ1 and IRQ12.
+pub unsafe fn enable_interrupts(auxiliary_ready: bool) -> Result<(), ControllerError> {
+    unsafe {
+        command(CMD_ENABLE_KEYBOARD)?;
+        if auxiliary_ready {
+            command(CMD_ENABLE_AUX)?;
+        } else {
+            command(CMD_DISABLE_AUX)?;
+        }
+        command(CMD_READ_CONFIG)?;
+        let mut config = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
+        config = irq_enabled_config(config, auxiliary_ready);
+        write_config(config)?;
+        command(CMD_READ_CONFIG)?;
+        let verified = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
+        let expected_irq_bits = CONFIG_KEYBOARD_IRQ
+            | if auxiliary_ready { CONFIG_AUX_IRQ } else { 0 };
+        let expected_disabled_bits = if auxiliary_ready { 0 } else { CONFIG_AUX_DISABLED };
+        if verified & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ) != expected_irq_bits
+            || verified & CONFIG_KEYBOARD_DISABLED != 0
+            || verified & CONFIG_AUX_DISABLED != expected_disabled_bits
+            || verified & CONFIG_TRANSLATION == 0 {
+            return Err(ControllerError::ConfigWriteFailed);
+        }
+    }
+    Ok(())
+}
+
+fn irq_enabled_config(mut config: u8, auxiliary_ready: bool) -> u8 {
+    config &= !CONFIG_KEYBOARD_DISABLED;
+    config |= CONFIG_KEYBOARD_IRQ | CONFIG_TRANSLATION;
+    if auxiliary_ready {
+        config &= !CONFIG_AUX_DISABLED;
+        config |= CONFIG_AUX_IRQ;
+    } else {
+        config |= CONFIG_AUX_DISABLED;
+        config &= !CONFIG_AUX_IRQ;
+    }
+    config
 }
 
 unsafe fn command(value: u8) -> Result<(), ControllerError> {
@@ -182,6 +227,22 @@ mod tests {
         assert_eq!(config & CONFIG_KEYBOARD_DISABLED, 0);
         assert_ne!(config & CONFIG_AUX_DISABLED, 0);
         assert_eq!(config & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ), 0);
+    }
+
+    #[test]
+    fn keyboard_irq_can_be_enabled_without_auxiliary_hardware() {
+        let config = irq_enabled_config(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED, false);
+        assert_ne!(config & CONFIG_KEYBOARD_IRQ, 0);
+        assert_eq!(config & CONFIG_AUX_IRQ, 0);
+        assert_eq!(config & CONFIG_KEYBOARD_DISABLED, 0);
+        assert_ne!(config & CONFIG_AUX_DISABLED, 0);
+    }
+
+    #[test]
+    fn both_irq_lines_enable_when_auxiliary_hardware_is_detected() {
+        let config = irq_enabled_config(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED, true);
+        assert_eq!(config & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ), CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ);
+        assert_eq!(config & (CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED), 0);
     }
 
     #[test]

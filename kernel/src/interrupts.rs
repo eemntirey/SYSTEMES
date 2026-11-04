@@ -40,6 +40,10 @@ const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
 const APIC_TIMER_VECTOR: u8 = IRQ_VECTOR_BASE as u8;
 const IOAPIC_REG_VERSION: u8 = 0x01;
 const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
+static PS2_IRQ1_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ1_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
 
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
@@ -652,6 +656,7 @@ pub enum ApicInitError {
     CpuApicUnsupported, X2ApicUnsupported, InvalidPhysicalAddress,
     MmioMappingFailed, InvalidIoApicVersion, Irq0GsiNotCovered,
     InvalidInterruptOverride,
+    IoApicGsiNotCovered,
     IoApicProgrammingFailed,
 }
 
@@ -777,6 +782,161 @@ pub unsafe fn initialize_apic_ioapic(
     LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
     APIC_ACTIVE.store(true, Ordering::Release);
     Ok(())
+}
+
+
+/// Resolve an ISA IRQ through MADT source overrides and validate ACPI polarity/trigger flags.
+fn isa_irq_route(madt: &MadtInfo, source: u8) -> Result<(u32, u16), ApicInitError> {
+    let mut gsi = source as u32;
+    let mut flags = 0u16;
+    let mut found = false;
+    for index in 0..madt.override_count {
+        let iso = madt.overrides[index];
+        if iso.bus == 0 && iso.source == source {
+            if found || iso.flags & !0x000F != 0 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            let polarity = iso.flags & 0x3;
+            let trigger = (iso.flags >> 2) & 0x3;
+            if polarity == 2 || trigger == 2 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            gsi = iso.gsi;
+            flags = iso.flags;
+            found = true;
+        }
+    }
+    Ok((gsi, flags))
+}
+
+unsafe fn prepare_ioapic_route(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+    gsi: u32,
+    vector: u8,
+    lapic_id: u8,
+) -> Result<(usize, u8, u32), ApicInitError> {
+    for index in 0..madt.io_apic_count {
+        let io = madt.io_apics[index];
+        if io.address == 0 || io.address & 0xFFF != 0
+            || io.address as u64 >= crate::paging::IDENTITY_MAP_BYTES {
+            return Err(ApicInitError::InvalidPhysicalAddress);
+        }
+        let base = unsafe {
+            crate::paging::map_mmio_uncached(allocator, page_table_root, io.address as u64, 4096)
+        }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+        let version = unsafe { ioapic_read(base, IOAPIC_REG_VERSION) };
+        let max_redirection = (version >> 16) & 0xFF;
+        if max_redirection > 119 { return Err(ApicInitError::InvalidIoApicVersion); }
+        let last_gsi = io.gsi_base.checked_add(max_redirection).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        if gsi < io.gsi_base || gsi > last_gsi { continue; }
+        let redir_index = gsi - io.gsi_base;
+        let low_reg = IOAPIC_REG_REDIR_BASE.checked_add((redir_index * 2) as u8)
+            .ok_or(ApicInitError::InvalidIoApicVersion)?;
+        let high_reg = low_reg.checked_add(1).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        let low = vector as u32 | (1 << 16);
+        unsafe {
+            // Mask the old route first; only then change its destination.
+            ioapic_write(base, low_reg, low);
+            ioapic_write(base, high_reg, (lapic_id as u32) << 24);
+            let read_low = ioapic_read(base, low_reg);
+            let read_high = ioapic_read(base, high_reg);
+            if (read_low & 0x1FFFF) != low || (read_high >> 24) != lapic_id as u32 {
+                return Err(ApicInitError::IoApicProgrammingFailed);
+            }
+        }
+        return Ok((base as usize, low_reg, low));
+    }
+    Err(ApicInitError::IoApicGsiNotCovered)
+}
+
+/// Program IRQ1 and IRQ12 redirection entries while keeping both masked.
+pub unsafe fn prepare_ps2_ioapic_routes(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+    auxiliary_ready: bool,
+) -> Result<(), ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let lapic = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if lapic.is_null() { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let lapic_id = (unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24) as u8;
+    let (keyboard_gsi, keyboard_flags) = isa_irq_route(madt, 1)?;
+    let (keyboard_base, keyboard_low_reg, mut keyboard_low) =
+        unsafe { prepare_ioapic_route(madt, allocator, page_table_root, keyboard_gsi, 33, lapic_id) }?;
+    if keyboard_flags & 0x3 == 3 { keyboard_low |= 1 << 13; }
+    if (keyboard_flags >> 2) & 0x3 == 3 { keyboard_low |= 1 << 15; }
+    unsafe {
+        ioapic_write(keyboard_base as *mut u8, keyboard_low_reg, keyboard_low);
+        if (ioapic_read(keyboard_base as *mut u8, keyboard_low_reg) & 0x1FFFF) != keyboard_low {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
+    }
+    PS2_IRQ1_IOAPIC_BASE.store(keyboard_base, Ordering::Release);
+    PS2_IRQ1_LOW_REGISTER.store(keyboard_low_reg as usize, Ordering::Release);
+
+    if auxiliary_ready {
+        let (mouse_gsi, mouse_flags) = isa_irq_route(madt, 12)?;
+        if keyboard_gsi == mouse_gsi {
+            return Err(ApicInitError::InvalidInterruptOverride);
+        }
+        let (mouse_base, mouse_low_reg, mut mouse_low) =
+            unsafe { prepare_ioapic_route(madt, allocator, page_table_root, mouse_gsi, 44, lapic_id) }?;
+        if mouse_flags & 0x3 == 3 { mouse_low |= 1 << 13; }
+        if (mouse_flags >> 2) & 0x3 == 3 { mouse_low |= 1 << 15; }
+        unsafe {
+            ioapic_write(mouse_base as *mut u8, mouse_low_reg, mouse_low);
+            if (ioapic_read(mouse_base as *mut u8, mouse_low_reg) & 0x1FFFF) != mouse_low {
+                return Err(ApicInitError::IoApicProgrammingFailed);
+            }
+        }
+        PS2_IRQ12_IOAPIC_BASE.store(mouse_base, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(mouse_low_reg as usize, Ordering::Release);
+    } else {
+        PS2_IRQ12_IOAPIC_BASE.store(0, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(0, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// Unmask the already-verified keyboard and auxiliary IOAPIC entries.
+pub unsafe fn enable_ps2_ioapic_routes(auxiliary_ready: bool) -> Result<(), ApicInitError> {
+    let mut routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    if !auxiliary_ready {
+        routes[1] = (0, 0);
+    }
+    for (base, register) in routes {
+        if base == 0 && register == 0 { continue; }
+        if base == 0 { return Err(ApicInitError::IoApicProgrammingFailed); }
+        let base = base as *mut u8;
+        let low_reg = register as u8;
+        let low = unsafe { ioapic_read(base, low_reg) };
+        unsafe { ioapic_write(base, low_reg, low & !(1 << 16)); }
+        if unsafe { ioapic_read(base, low_reg) } & (1 << 16) != 0 {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
+    }
+    Ok(())
+}
+
+/// Re-mask both PS/2 routes if controller activation fails after route setup.
+pub unsafe fn mask_ps2_ioapic_routes() {
+    let routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    for (base, register) in routes {
+        if base != 0 {
+            let base = base as *mut u8;
+            let low_reg = register as u8;
+            let low = unsafe { ioapic_read(base, low_reg) };
+            unsafe { ioapic_write(base, low_reg, low | (1 << 16)); }
+        }
+    }
 }
 
 pub unsafe fn mask_legacy_pic() {
@@ -915,6 +1075,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
     }
 
     if APIC_ACTIVE.load(Ordering::Acquire) {
+        if irq == 1 || irq == 12 { crate::ps2_irq::handle_irq(irq as u8); }
         IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
         let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
         if !base.is_null() {
@@ -1167,6 +1328,37 @@ unsafe fn debug_hex(value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn madt_with_override(source: u8, gsi: u32, flags: u16) -> MadtInfo {
+        let mut madt = MadtInfo {
+            local_apic_address: 0xFEE0_0000,
+            flags: 1,
+            local_apics: [crate::acpi::LocalApic::default(); 64],
+            local_apic_count: 0,
+            io_apics: [crate::acpi::IoApic::default(); 8],
+            io_apic_count: 0,
+            overrides: [crate::acpi::InterruptOverride::default(); 16],
+            override_count: 1,
+        };
+        madt.overrides[0] = crate::acpi::InterruptOverride { bus: 0, source, gsi, flags };
+        madt
+    }
+
+    #[test]
+    fn resolves_keyboard_and_mouse_gsis_from_madt_overrides() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x0F), 1), Ok((9, 0x0F)));
+        assert_eq!(isa_irq_route(&madt_with_override(12, 20, 0x05), 12), Ok((20, 0x05)));
+    }
+
+    #[test]
+    fn rejects_reserved_and_duplicate_madt_override_flags() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x10), 1), Err(ApicInitError::InvalidInterruptOverride));
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x02), 1), Err(ApicInitError::InvalidInterruptOverride));
+        let mut duplicate = madt_with_override(1, 9, 0);
+        duplicate.overrides[1] = crate::acpi::InterruptOverride { bus: 0, source: 1, gsi: 10, flags: 0 };
+        duplicate.override_count = 2;
+        assert_eq!(isa_irq_route(&duplicate, 1), Err(ApicInitError::InvalidInterruptOverride));
+    }
 
     #[test]
     fn legacy_pic_vectors_follow_the_remapped_8259_layout() {
