@@ -267,6 +267,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     } else if !ps2_ready {
         unsafe { debug_write(b"SYSTEMES: PS/2 controller unavailable; IRQs remain disabled\\r\\n"); }
     }
+    if ps2_ready {
+        // Device-level reporting is distinct from enabling the 8042 controller
+        // clocks and IRQ bits. Require ACKs before allowing PS/2 IRQ delivery.
+        if unsafe { systemes_kernel::ps2_controller::initialize_devices(auxiliary_ready) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 device reporting initialization failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: PS/2 keyboard scanning and mouse reporting enabled\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
