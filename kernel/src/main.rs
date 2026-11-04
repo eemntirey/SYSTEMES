@@ -258,7 +258,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     } else if !apic_initialized {
         unsafe { debug_write(b"SYSTEMES: PS/2 IRQs kept disabled because xAPIC/IOAPIC is unavailable\\r\\n"); }
     } else if !ps2_ready {
-        unsafe { debug_write(b"SYSTEMES: PS/2 auxiliary interface not detected; IRQs remain disabled\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES: PS/2 controller unavailable; IRQs remain disabled\\r\\n"); }
     }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
