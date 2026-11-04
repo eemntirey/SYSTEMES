@@ -856,36 +856,47 @@ pub unsafe fn prepare_ps2_ioapic_routes(
     madt: &MadtInfo,
     allocator: &mut PhysicalFrameAllocator,
     page_table_root: u64,
+    auxiliary_ready: bool,
 ) -> Result<(), ApicInitError> {
     if !APIC_ACTIVE.load(Ordering::Acquire) { return Err(ApicInitError::InvalidPhysicalAddress); }
     let lapic = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
     if lapic.is_null() { return Err(ApicInitError::InvalidPhysicalAddress); }
     let lapic_id = (unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24) as u8;
     let (keyboard_gsi, keyboard_flags) = isa_irq_route(madt, 1)?;
-    let (mouse_gsi, mouse_flags) = isa_irq_route(madt, 12)?;
-    if keyboard_gsi == mouse_gsi {
-        return Err(ApicInitError::InvalidInterruptOverride);
-    }
     let (keyboard_base, keyboard_low_reg, mut keyboard_low) =
         unsafe { prepare_ioapic_route(madt, allocator, page_table_root, keyboard_gsi, 33, lapic_id) }?;
-    let (mouse_base, mouse_low_reg, mut mouse_low) =
-        unsafe { prepare_ioapic_route(madt, allocator, page_table_root, mouse_gsi, 44, lapic_id) }?;
     if keyboard_flags & 0x3 == 3 { keyboard_low |= 1 << 13; }
     if (keyboard_flags >> 2) & 0x3 == 3 { keyboard_low |= 1 << 15; }
-    if mouse_flags & 0x3 == 3 { mouse_low |= 1 << 13; }
-    if (mouse_flags >> 2) & 0x3 == 3 { mouse_low |= 1 << 15; }
     unsafe {
         ioapic_write(keyboard_base as *mut u8, keyboard_low_reg, keyboard_low);
-        ioapic_write(mouse_base as *mut u8, mouse_low_reg, mouse_low);
-        if (ioapic_read(keyboard_base as *mut u8, keyboard_low_reg) & 0x1FFFF) != keyboard_low
-            || (ioapic_read(mouse_base as *mut u8, mouse_low_reg) & 0x1FFFF) != mouse_low {
+        if (ioapic_read(keyboard_base as *mut u8, keyboard_low_reg) & 0x1FFFF) != keyboard_low {
             return Err(ApicInitError::IoApicProgrammingFailed);
         }
     }
     PS2_IRQ1_IOAPIC_BASE.store(keyboard_base, Ordering::Release);
     PS2_IRQ1_LOW_REGISTER.store(keyboard_low_reg as usize, Ordering::Release);
-    PS2_IRQ12_IOAPIC_BASE.store(mouse_base, Ordering::Release);
-    PS2_IRQ12_LOW_REGISTER.store(mouse_low_reg as usize, Ordering::Release);
+
+    if auxiliary_ready {
+        let (mouse_gsi, mouse_flags) = isa_irq_route(madt, 12)?;
+        if keyboard_gsi == mouse_gsi {
+            return Err(ApicInitError::InvalidInterruptOverride);
+        }
+        let (mouse_base, mouse_low_reg, mut mouse_low) =
+            unsafe { prepare_ioapic_route(madt, allocator, page_table_root, mouse_gsi, 44, lapic_id) }?;
+        if mouse_flags & 0x3 == 3 { mouse_low |= 1 << 13; }
+        if (mouse_flags >> 2) & 0x3 == 3 { mouse_low |= 1 << 15; }
+        unsafe {
+            ioapic_write(mouse_base as *mut u8, mouse_low_reg, mouse_low);
+            if (ioapic_read(mouse_base as *mut u8, mouse_low_reg) & 0x1FFFF) != mouse_low {
+                return Err(ApicInitError::IoApicProgrammingFailed);
+            }
+        }
+        PS2_IRQ12_IOAPIC_BASE.store(mouse_base, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(mouse_low_reg as usize, Ordering::Release);
+    } else {
+        PS2_IRQ12_IOAPIC_BASE.store(0, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(0, Ordering::Release);
+    }
     Ok(())
 }
 
