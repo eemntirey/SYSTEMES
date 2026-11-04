@@ -250,7 +250,8 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     && unsafe { systemes_kernel::ps2_controller::enable_interrupts() }.is_ok() {
                     unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC\\r\\n"); }
                 } else {
-                    unsafe { debug_write(b"SYSTEMES: PS/2 IRQ activation failed; input remains unavailable\\r\\n"); }
+                    unsafe { systemes_kernel::interrupts::mask_ps2_ioapic_routes(); }
+                    unsafe { debug_write(b"SYSTEMES: PS/2 IRQ activation failed; IOAPIC routes re-masked\\r\\n"); }
                 }
             }
             Err(_) => unsafe { debug_write(b"SYSTEMES: PS/2 IOAPIC routes unavailable; input IRQs remain disabled\\r\\n"); }
