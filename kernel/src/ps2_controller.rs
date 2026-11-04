@@ -108,6 +108,13 @@ pub unsafe fn enable_interrupts() -> Result<(), ControllerError> {
         config &= !(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED);
         config |= CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ | CONFIG_TRANSLATION;
         write_config(config)?;
+        command(CMD_READ_CONFIG)?;
+        let verified = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
+        if verified & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ) != (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ)
+            || verified & (CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED) != 0
+            || verified & CONFIG_TRANSLATION == 0 {
+            return Err(ControllerError::ConfigWriteFailed);
+        }
     }
     Ok(())
 }
