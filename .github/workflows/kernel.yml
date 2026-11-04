@@ -107,6 +107,7 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked' build/uefi/debug.log
           grep -q 'SYSTEMES: PIT channel 0 programmed at 100 Hz' build/uefi/debug.log
+          grep -q 'SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC' build/uefi/debug.log
           grep -q 'SYSTEMES: hardware interrupts enabled' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
