@@ -372,7 +372,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 && systemes_kernel::input::mouse_event_count() >= 2 {
                 break;
             }
-            if elapsed >= 500 {
+            if elapsed >= 5000 {
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input event timeout\\r\\n"); }
                 halt();
             }
