@@ -109,15 +109,7 @@ pub unsafe fn enable_interrupts(auxiliary_ready: bool) -> Result<(), ControllerE
         }
         command(CMD_READ_CONFIG)?;
         let mut config = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
-        config &= !CONFIG_KEYBOARD_DISABLED;
-        config |= CONFIG_KEYBOARD_IRQ | CONFIG_TRANSLATION;
-        if auxiliary_ready {
-            config &= !CONFIG_AUX_DISABLED;
-            config |= CONFIG_AUX_IRQ;
-        } else {
-            config |= CONFIG_AUX_DISABLED;
-            config &= !CONFIG_AUX_IRQ;
-        }
+        config = irq_enabled_config(config, auxiliary_ready);
         write_config(config)?;
         command(CMD_READ_CONFIG)?;
         let verified = read_data().map_err(|_| ControllerError::ConfigReadFailed)?;
@@ -132,6 +124,19 @@ pub unsafe fn enable_interrupts(auxiliary_ready: bool) -> Result<(), ControllerE
         }
     }
     Ok(())
+}
+
+fn irq_enabled_config(mut config: u8, auxiliary_ready: bool) -> u8 {
+    config &= !CONFIG_KEYBOARD_DISABLED;
+    config |= CONFIG_KEYBOARD_IRQ | CONFIG_TRANSLATION;
+    if auxiliary_ready {
+        config &= !CONFIG_AUX_DISABLED;
+        config |= CONFIG_AUX_IRQ;
+    } else {
+        config |= CONFIG_AUX_DISABLED;
+        config &= !CONFIG_AUX_IRQ;
+    }
+    config
 }
 
 unsafe fn command(value: u8) -> Result<(), ControllerError> {
@@ -222,6 +227,22 @@ mod tests {
         assert_eq!(config & CONFIG_KEYBOARD_DISABLED, 0);
         assert_ne!(config & CONFIG_AUX_DISABLED, 0);
         assert_eq!(config & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ), 0);
+    }
+
+    #[test]
+    fn keyboard_irq_can_be_enabled_without_auxiliary_hardware() {
+        let config = irq_enabled_config(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED, false);
+        assert_ne!(config & CONFIG_KEYBOARD_IRQ, 0);
+        assert_eq!(config & CONFIG_AUX_IRQ, 0);
+        assert_eq!(config & CONFIG_KEYBOARD_DISABLED, 0);
+        assert_ne!(config & CONFIG_AUX_DISABLED, 0);
+    }
+
+    #[test]
+    fn both_irq_lines_enable_when_auxiliary_hardware_is_detected() {
+        let config = irq_enabled_config(CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED, true);
+        assert_eq!(config & (CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ), CONFIG_KEYBOARD_IRQ | CONFIG_AUX_IRQ);
+        assert_eq!(config & (CONFIG_KEYBOARD_DISABLED | CONFIG_AUX_DISABLED), 0);
     }
 
     #[test]
