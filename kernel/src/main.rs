@@ -357,7 +357,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
         halt();
     }
-    halt();
+    systemes_kernel::input::run_event_loop();
 }
 
 #[panic_handler]
