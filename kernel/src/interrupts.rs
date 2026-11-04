@@ -787,16 +787,21 @@ pub unsafe fn initialize_apic_ioapic(
 fn isa_irq_route(madt: &MadtInfo, source: u8) -> Result<(u32, u16), ApicInitError> {
     let mut gsi = source as u32;
     let mut flags = 0u16;
+    let mut found = false;
     for index in 0..madt.override_count {
         let iso = madt.overrides[index];
         if iso.bus == 0 && iso.source == source {
-            if iso.flags & !0x000F != 0 { return Err(ApicInitError::InvalidInterruptOverride); }
+            if found || iso.flags & !0x000F != 0 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
             let polarity = iso.flags & 0x3;
             let trigger = (iso.flags >> 2) & 0x3;
-            if polarity == 2 || trigger == 2 { return Err(ApicInitError::InvalidInterruptOverride); }
+            if polarity == 2 || trigger == 2 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
             gsi = iso.gsi;
             flags = iso.flags;
-            break;
+            found = true;
         }
     }
     Ok((gsi, flags))
@@ -855,6 +860,9 @@ pub unsafe fn prepare_ps2_ioapic_routes(
     let lapic_id = (unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24) as u8;
     let (keyboard_gsi, keyboard_flags) = isa_irq_route(madt, 1)?;
     let (mouse_gsi, mouse_flags) = isa_irq_route(madt, 12)?;
+    if keyboard_gsi == mouse_gsi {
+        return Err(ApicInitError::InvalidInterruptOverride);
+    }
     let (keyboard_base, keyboard_low_reg, mut keyboard_low) =
         unsafe { prepare_ioapic_route(madt, allocator, page_table_root, keyboard_gsi, 33, lapic_id) }?;
     let (mouse_base, mouse_low_reg, mut mouse_low) =
@@ -1280,6 +1288,37 @@ unsafe fn debug_hex(value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn madt_with_override(source: u8, gsi: u32, flags: u16) -> MadtInfo {
+        let mut madt = MadtInfo {
+            local_apic_address: 0xFEE0_0000,
+            flags: 1,
+            local_apics: [crate::acpi::LocalApic::default(); 64],
+            local_apic_count: 0,
+            io_apics: [crate::acpi::IoApic::default(); 8],
+            io_apic_count: 0,
+            overrides: [crate::acpi::InterruptOverride::default(); 16],
+            override_count: 1,
+        };
+        madt.overrides[0] = crate::acpi::InterruptOverride { bus: 0, source, gsi, flags };
+        madt
+    }
+
+    #[test]
+    fn resolves_keyboard_and_mouse_gsis_from_madt_overrides() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x0F), 1), Ok((9, 0x0F)));
+        assert_eq!(isa_irq_route(&madt_with_override(12, 20, 0x05), 12), Ok((20, 0x05)));
+    }
+
+    #[test]
+    fn rejects_reserved_and_duplicate_madt_override_flags() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x10), 1), Err(ApicInitError::InvalidInterruptOverride));
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x02), 1), Err(ApicInitError::InvalidInterruptOverride));
+        let mut duplicate = madt_with_override(1, 9, 0);
+        duplicate.overrides[1] = crate::acpi::InterruptOverride { bus: 0, source: 1, gsi: 10, flags: 0 };
+        duplicate.override_count = 2;
+        assert_eq!(isa_irq_route(&duplicate, 1), Err(ApicInitError::InvalidInterruptOverride));
+    }
 
     #[test]
     fn legacy_pic_vectors_follow_the_remapped_8259_layout() {
