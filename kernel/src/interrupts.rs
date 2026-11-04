@@ -890,12 +890,16 @@ pub unsafe fn prepare_ps2_ioapic_routes(
 }
 
 /// Unmask the already-verified keyboard and auxiliary IOAPIC entries.
-pub unsafe fn enable_ps2_ioapic_routes() -> Result<(), ApicInitError> {
-    let routes = [
+pub unsafe fn enable_ps2_ioapic_routes(auxiliary_ready: bool) -> Result<(), ApicInitError> {
+    let mut routes = [
         (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
         (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
     ];
+    if !auxiliary_ready {
+        routes[1] = (0, 0);
+    }
     for (base, register) in routes {
+        if base == 0 && register == 0 { continue; }
         if base == 0 { return Err(ApicInitError::IoApicProgrammingFailed); }
         let base = base as *mut u8;
         let low_reg = register as u8;
