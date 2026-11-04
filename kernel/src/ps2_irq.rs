@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_packet_state_resets_and_queues_signed_motion() {
+    fn mouse_packet_state_resets_queues_motion_and_discards_overflow() {
         while ps2::pop_mouse_event().is_some() {}
         MOUSE_INDEX.store(0, Ordering::Release);
         push_mouse(0x19);
@@ -108,12 +108,7 @@ mod tests {
         push_mouse(0x03);
         assert_eq!(MOUSE_INDEX.load(Ordering::Acquire), 0);
         assert_eq!(ps2::pop_mouse_event(), Some(MouseEvent { dx: -2, dy: -3, buttons: 1 }));
-    }
 
-    #[test]
-    fn mouse_overflow_packet_is_discarded() {
-        while ps2::pop_mouse_event().is_some() {}
-        MOUSE_INDEX.store(0, Ordering::Release);
         push_mouse(0xC9);
         push_mouse(0x7F);
         push_mouse(0x7F);
