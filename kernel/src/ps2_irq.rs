@@ -52,6 +52,7 @@ fn push_mouse(byte: u8) {
     }
     MOUSE_INDEX.store(0, Ordering::Release);
     let flags = MOUSE_PACKET[0].load(Ordering::Relaxed);
+    if flags & 0xC0 != 0 { return; }
     let x = MOUSE_PACKET[1].load(Ordering::Relaxed) as i16;
     let y = MOUSE_PACKET[2].load(Ordering::Relaxed) as i16;
     let dx = if flags & 0x10 != 0 { x - 256 } else { x };
@@ -86,20 +87,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keyboard_prefix_state_is_consumed_once() {
+    fn keyboard_prefix_state_is_consumed_once_and_queues_extended_make() {
+        while ps2::pop_key_event().is_some() {}
         KEY_EXTENDED.store(false, Ordering::Release);
         push_key(0xE0);
         assert!(KEY_EXTENDED.load(Ordering::Acquire));
         push_key(0x48);
         assert!(!KEY_EXTENDED.load(Ordering::Acquire));
+        assert_eq!(ps2::pop_key_event(), Some(KeyEvent::Scancode {
+            code: 0x48, pressed: true, extended: true
+        }));
     }
 
     #[test]
-    fn mouse_packet_state_resets_after_three_bytes() {
+    fn mouse_packet_state_resets_and_queues_signed_motion() {
+        while ps2::pop_mouse_event().is_some() {}
         MOUSE_INDEX.store(0, Ordering::Release);
-        push_mouse(0x09);
-        push_mouse(4);
-        push_mouse(2);
+        push_mouse(0x19);
+        push_mouse(0xFE);
+        push_mouse(0x03);
         assert_eq!(MOUSE_INDEX.load(Ordering::Acquire), 0);
+        assert_eq!(ps2::pop_mouse_event(), Some(MouseEvent { dx: -2, dy: -3, buttons: 1 }));
+    }
+
+    #[test]
+    fn mouse_overflow_packet_is_discarded() {
+        while ps2::pop_mouse_event().is_some() {}
+        MOUSE_INDEX.store(0, Ordering::Release);
+        push_mouse(0xC9);
+        push_mouse(0x7F);
+        push_mouse(0x7F);
+        assert_eq!(ps2::pop_mouse_event(), None);
     }
 }
