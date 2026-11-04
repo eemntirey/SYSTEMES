@@ -18,7 +18,7 @@ describe('Native IPC contract parity', () => {
   const facadeSource = readRepositoryFile('src/services/NativeBridge.ts');
   const facadeMethods = extractQuotedMethods(
     facadeSource,
-    /request(?:<[^;]*?>)?\(\s*'([^']+)'/gs,
+    /request(?:<[\\s\\S]*?>)?\(\s*'([^']+)'/gs,
   );
 
   it('keeps every client-allowed operation implemented by the native server, with no extras', () => {
