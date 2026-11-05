@@ -1,4 +1,5 @@
 import React from 'react'
+import './styles/obsidian-desktop.css'
 import { OSProvider, useOS } from './context/OSContext'
 import { Desktop } from './components/desktop/Desktop'
 import { Window } from './components/window/Window'
@@ -79,7 +80,7 @@ const WindowsDesktopContent: React.FC = () => {
   }
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0 }}>
+    <div className="obsidian-shell" style={{ position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0 }}>
       {/* Desktop & Window Container */}
       <Desktop>
         {windows.map(win => (
