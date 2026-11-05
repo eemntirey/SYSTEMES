@@ -608,10 +608,10 @@ systemes_irq_common:
     push r14
     push r15
     mov rdi, qword ptr [rsp + 120]
-    mov r12, rsp
+    mov rsi, rsp
     and rsp, -16
     call systemes_irq_dispatch
-    mov rsp, r12
+    mov rsp, rax
     pop r15
     pop r14
     pop r13
