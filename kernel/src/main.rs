@@ -5,6 +5,47 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
+#[cfg(feature = "qemu-scheduler-test")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "qemu-scheduler-test")]
+use systemes_kernel::scheduler::{SpinMutex, TaskId};
+
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_WORK_A: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_WORK_B: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_BLOCKED_RESUMES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_SHARED_COUNT: SpinMutex<usize> = SpinMutex::new(0);
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_worker_a() -> ! {
+    loop {
+        SCHEDULER_WORK_A.fetch_add(1, Ordering::Relaxed);
+        *SCHEDULER_SHARED_COUNT.lock() += 1;
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_worker_b() -> ! {
+    loop {
+        SCHEDULER_WORK_B.fetch_add(1, Ordering::Relaxed);
+        *SCHEDULER_SHARED_COUNT.lock() += 1;
+        let _ = systemes_kernel::scheduler::wake(TaskId(3));
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_blocked_worker() -> ! {
+    loop {
+        systemes_kernel::scheduler::block_current();
+        SCHEDULER_BLOCKED_RESUMES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 unsafe extern "C" {
     static __text_start: u8;
     static __text_end: u8;
