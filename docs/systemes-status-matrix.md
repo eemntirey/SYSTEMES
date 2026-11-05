@@ -3,10 +3,9 @@
 Cette matrice remplace les annonces de statut non vérifiées. Elle est établie à
 partir de :
 
-- des références git réelles (`git log`, `git ls-remote`, arbres comparés) ;
+- les références de branches, commits, comparaisons et PR lues sur GitHub ;
 - des workflows CI présents dans `.github/workflows/` ;
-- des exécutions locales reproductibles en WSL2 + QEMU/OVMF + OVMF 4M,
-  documentées dans les docs de phase ;
+- les workflows GitHub Actions et les preuves QEMU publiées ; les exécutions locales décrites dans les documents de phase ne sont pas revalidées par cet audit distant ;
 - du badge public du workflow `kernel.yml` pour la branche K2.7.
 
 ## Légende
@@ -24,9 +23,9 @@ partir de :
 | Élément | Valeur vérifiée |
 | --- | --- |
 | `main` | `0b732fd` — K3.1.2 « Cycle de vie natif des applications » (#34), 275 commits |
-| PR #35 (K2.7) | tête `13a002f`, état **open**, **base `k2-apic-ioapic-irq-routing`** (et non `main`), `mergeable_state=unstable` ; 29 commits / 8 fichiers contre sa base, 134 commits d'avance sur `main` ; 10 checks noyau verts mais `Kilo Code Review` = `action_required` et statut combiné `pending` |
+| PR #35 (K2.7) | tête `13a002f`, état **open**, base `k2-apic-ioapic-irq-routing` ; CI du HEAD exact vérifiée : 9/9 jobs noyau et 1/1 job PS/2 réussis ; aucune fusion effectuée |
 | Chaîne de PR noyau | #16 → #17 → #18 → #19 → #20 → #21 → #35 : PR empilées ; #16 vise `main`, chaque suivante vise la branche de la précédente ; #17 à #21 sont des **drafts** |
-| Branche de cette PR | `feat/k2-8-fpu-simd-context` (commit `d03d43e`), base de PR = `feat/k2-7-preemptive-kernel-scheduler` (branche de #35) |
+| PR #36 (K2.8) | tête `6d23123`, draft, base `feat/k2-7-preemptive-kernel-scheduler` (branche de #35) ; workflows noyau et PS/2 déclenchés et encore en cours au moment du contrôle |
 | Noyau dans `main` | K2.1 allocateur de frames, K2.2 GDT/IDT/exceptions, K2.3 paging noyau, `main` étant aussi la base de #16 |
 | Noyau sur la branche K2.7 | + K2.4 W^X/NX, K2.5 TSS/IST, K2.6 ACPI/APIC/IOAPIC/PS/2, K2.7 scheduler |
 | CI | `ci.yml` (typecheck/tests/build web + hôte natif Windows), `kernel.yml` (contrat noyau, boot UEFI QEMU, matrice de 8 scénarios matériels après cette PR) |
@@ -69,8 +68,8 @@ autorisation explicite n'a pas été donnée.
 | K2.6.2 — xAPIC/IOAPIC, routage IRQ0/PIT | EN COURS | scénario `qemu-pit-timer-test` ; PR #21 (draft) |
 | K2.6.3 — IRQ spurious et dispatch matériel | EN COURS | scénario `qemu-apic-spurious-test` ; dans la chaîne #19–#35 |
 | K2.6.4 — PS/2 8042, décodeurs, IRQ1/IRQ12, E2E QMP | EN COURS | `kernel-ps2-input.yml`, PR #28/#30/#33 fusionnées dans la branche ; pas dans `main` |
-| K2.7 — scheduler préemptif mono-cœur | EN COURS | PR #35 open, base `k2-apic-ioapic-irq-routing` ; 10 checks verts, `Kilo Code Review` = `action_required`, statut combiné `pending` |
-| K2.8 — contexte FPU/SIMD par tâche | EN COURS | cette PR ; QEMU/OVMF local vert + contrôle négatif |
+| K2.7 — scheduler préemptif mono-cœur | EN COURS | PR #35 open, base `k2-apic-ioapic-irq-routing` ; 9/9 jobs noyau + 1/1 job PS/2 verts sur le HEAD exact ; dépendance APIC non fusionnée |
+| K2.8 — contexte FPU/SIMD par tâche | EN COURS | PR #36 draft, HEAD `6d23123`, CI déclenchée ; résultats à attendre sur le HEAD exact |
 | K2.9 — calibration du timer Local APIC | À DÉVELOPPER | la valeur `250 000` est provisoire (documentée en K2.7) |
 | SMP, démarrage des AP, IPI, synchronisation inter-processeur | À DÉVELOPPER | aucun code |
 | Heap noyau (allocateur dynamique) | À DÉVELOPPER | seules les frames physiques existent |
@@ -198,12 +197,13 @@ chargeur d'applications n'existe.
 ## Blocages et vérifications restantes
 
 1. **Chaîne de PR noyau non fusionnée** : #16 → #17 → #18 → #19 → #20 → #21 →
-   #35. Les #17 à #21 sont des drafts ; #35 est ouverte mais son check
-   `Kilo Code Review` est en `action_required` et le statut combiné est
-   `pending`. Aucune fusion n'est donc possible sans intervention humaine et
-   autorisation explicite.
-2. **CI de cette PR** : à confirmer par les workflows déclenchés sur le commit
-   exact `d03d43e` (contrat noyau, boot standard et scénario FPU).
+   #35 → #36. Les #17 à #21 sont des drafts ; #35 est ouverte avec ses 9 jobs
+   noyau et son job PS/2 réussis sur le HEAD exact. La chaîne reste non fusionnée
+   et toute fusion dépend des branches précédentes, des protections GitHub et
+   d'une autorisation explicite.
+2. **CI de K2.8 (#36)** : workflows déclenchés sur le HEAD exact `6d23123`
+   (workflow noyau et workflow PS/2) ; attendre leur conclusion avant toute
+   décision d'intégration.
 3. **Matériel physique** : jamais testé. UEFI/OVMF en QEMU n'est pas une preuve
    de compatibilité matérielle réelle (ACPI, APIC, PS/2, GOP varient).
 4. **Windows n'est pas encore supprimé de l'écosystème** : le bureau et les
