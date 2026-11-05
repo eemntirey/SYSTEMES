@@ -95,6 +95,8 @@ export const ALLOWED_NATIVE_METHODS = new Set([
   'process/launch',
   'files/network-locations',
   'files/properties/read',
+  'files/shares/read',
+  'files/drives/read',
 ])
 
 const MAX_PENDING_REQUESTS = 32
@@ -119,6 +121,8 @@ const METHOD_TIMEOUT_MS: Record<string, number> = {
   'process/launch': 30_000,
   'files/network-locations': 15_000,
   'files/properties/read': 10_000,
+  'files/shares/read': 15_000,
+  'files/drives/read': 15_000,
   'processes/read': 20_000,
   'storage/volumes': 20_000,
   'apps/installed': 25_000,

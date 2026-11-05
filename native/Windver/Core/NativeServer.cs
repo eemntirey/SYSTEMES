@@ -220,6 +220,12 @@ namespace Systemes.Native.Core
                         case "files/properties/read":
                             result = FileSystemNative.ReadFileProperties(args["path"]?.Value<string>() ?? "");
                             break;
+                        case "files/shares/read":
+                            result = FileSystemNative.ReadShares();
+                            break;
+                        case "files/drives/read":
+                            result = FileSystemNative.ReadDrives();
+                            break;
                         default:
                             throw new NotSupportedException($"Unknown native method: {method}");
                     }

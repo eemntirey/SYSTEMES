@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.VisualBasic.FileIO;
 using System.Diagnostics;
+using System.Management;
 
 namespace Systemes.Native.Core
 {
@@ -474,6 +475,56 @@ namespace Systemes.Native.Core
                 extension = isDirectory ? null : info.Extension.TrimStart('.'),
                 note = "Propriétés réellement lues depuis Windows ; lecture seule, aucune modification."
             };
+        }
+
+        public static object ReadShares()
+        {
+            var shares = new List<object>();
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT Name, Path, Type, Description FROM Win32_Share");
+                foreach (ManagementObject item in searcher.Get())
+                {
+                    shares.Add(new
+                    {
+                        name = item["Name"]?.ToString() ?? "",
+                        path = item["Path"]?.ToString() ?? "",
+                        type = Convert.ToInt32(item["Type"] ?? 0),
+                        description = item["Description"]?.ToString() ?? "",
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return new { error = ex.Message, shares = shares.ToArray(), note = "Lecture des partages réseau indisponible." };
+            }
+            return new { shares = shares.ToArray(), count = shares.Count, note = "Partages réseau réellement lus depuis WMI Win32_Share ; lecture seule." };
+        }
+
+        public static object ReadDrives()
+        {
+            var drives = new List<object>();
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT DeviceID, VolumeName, FileSystem, Size, FreeSpace, DriveType FROM Win32_LogicalDisk");
+                foreach (ManagementObject item in searcher.Get())
+                {
+                    drives.Add(new
+                    {
+                        deviceId = item["DeviceID"]?.ToString() ?? "",
+                        volumeName = item["VolumeName"]?.ToString() ?? "",
+                        fileSystem = item["FileSystem"]?.ToString() ?? "",
+                        sizeBytes = Convert.ToInt64(item["Size"] ?? 0),
+                        freeSpaceBytes = Convert.ToInt64(item["FreeSpace"] ?? 0),
+                        driveType = Convert.ToInt32(item["DriveType"] ?? 0),
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return new { error = ex.Message, drives = drives.ToArray(), note = "Lecture des lecteurs logiques indisponible." };
+            }
+            return new { drives = drives.ToArray(), count = drives.Count, note = "Lecteurs logiques réellement lus depuis WMI Win32_LogicalDisk ; lecture seule." };
         }
     }
 }
