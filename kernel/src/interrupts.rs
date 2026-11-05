@@ -38,6 +38,8 @@ const APIC_X2_ENABLE: u64 = 1 << 10;
 const CPUID_APIC: u32 = 1 << 9;
 const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
 const APIC_TIMER_VECTOR: u8 = IRQ_VECTOR_BASE as u8;
+const LOCAL_SCHEDULER_TIMER_VECTOR: u8 = 0x40;
+static LOCAL_TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 const IOAPIC_REG_VERSION: u8 = 0x01;
 const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
 static PS2_IRQ1_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
@@ -192,6 +194,7 @@ unsafe extern "C" {
     fn systemes_irq14();
     fn systemes_irq15();
     fn systemes_apic_spurious();
+    fn systemes_lapic_timer();
 }
 
 global_asm!(r#"
@@ -550,6 +553,13 @@ systemes_apic_spurious:
     push 255
     jmp systemes_irq_common
 
+.global systemes_lapic_timer
+.type systemes_lapic_timer, @function
+systemes_lapic_timer:
+    push 0
+    push 64
+    jmp systemes_irq_common
+
 .global systemes_exception_common
 .type systemes_exception_common, @function
 systemes_exception_common:
@@ -571,6 +581,7 @@ systemes_exception_common:
     push r15
     mov rdi, qword ptr [rsp + 120]
     mov rsi, qword ptr [rsp + 128]
+    mov rdx, rsp
     and rsp, -16
     call systemes_exception_dispatch
 .Lsystemes_exception_halt:
@@ -598,10 +609,10 @@ systemes_irq_common:
     push r14
     push r15
     mov rdi, qword ptr [rsp + 120]
-    mov r12, rsp
+    mov rsi, rsp
     and rsp, -16
     call systemes_irq_dispatch
-    mov rsp, r12
+    mov rsp, rax
     pop r15
     pop r14
     pop r13
@@ -1003,6 +1014,38 @@ pub unsafe fn initialize_pic_pit() {
     TIMER_TICKS.store(0, Ordering::Release);
 }
 
+/// Configure a periodic Local APIC timer for preemptive task scheduling.
+/// The bootstrap count is provisional; clock calibration is a later phase.
+pub unsafe fn initialize_local_apic_timer(initial_count: u32) -> Result<(), ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) || initial_count == 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    unsafe {
+        lapic_write(base, 0x3E0, 0x3); // Divide by 16.
+        lapic_write(base, 0x320, LOCAL_SCHEDULER_TIMER_VECTOR as u32 | (1 << 17));
+        lapic_write(base, 0x380, initial_count);
+    }
+    LOCAL_TIMER_TICKS.store(0, Ordering::Release);
+    Ok(())
+}
+
+/// Stop the Local APIC scheduler timer.
+pub unsafe fn stop_local_apic_timer() {
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if !base.is_null() {
+        unsafe { lapic_write(base, 0x320, (1 << 16) | LOCAL_SCHEDULER_TIMER_VECTOR as u32); }
+    }
+}
+
+/// Number of Local APIC scheduler timer interrupts since initialization.
+pub fn local_timer_ticks() -> u64 {
+    LOCAL_TIMER_TICKS.load(Ordering::Acquire)
+}
+
 /// Enable maskable hardware interrupts after the IDT, PIC and PIT are ready.
 pub unsafe fn enable_hardware_interrupts() {
     unsafe { asm!("sti", options(nomem, nostack)); }
@@ -1058,15 +1101,24 @@ unsafe fn read_pic_isr(command_port: u16) -> u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_irq_dispatch(vector: u64) {
+pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize {
     // The Local APIC spurious vector is special: the CPU does not set ISR for it,
     // therefore an EOI must never be sent.
     if vector == APIC_SPURIOUS_VECTOR as u64 {
         APIC_SPURIOUS_COUNT.fetch_add(1, Ordering::Relaxed);
-        return;
+        return saved_rsp;
+    }
+    if vector == LOCAL_SCHEDULER_TIMER_VECTOR as u64 {
+        LOCAL_TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
+        let next_rsp = crate::scheduler::on_timer(saved_rsp);
+        let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+        if !base.is_null() {
+            unsafe { lapic_write(base, 0xB0, 0); }
+        }
+        return next_rsp;
     }
     if !(IRQ_VECTOR_BASE as u64..(ACTIVE_VECTOR_COUNT as u64)).contains(&vector) {
-        return;
+        return saved_rsp;
     }
 
     let irq = vector as usize - IRQ_VECTOR_BASE;
@@ -1082,7 +1134,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
             // SAFETY: The UC-mapped Local APIC page is published before STI.
             unsafe { lapic_write(base, 0xB0, 0); }
         }
-        return;
+        return saved_rsp;
     }
 
     // 8259A IRQ7/IRQ15 may be spurious. Read the relevant In-Service Register
@@ -1097,10 +1149,10 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
             PIC_SPURIOUS_15_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         match pic_eoi_policy(irq, in_service) {
-            PicEoi::None => return,
+            PicEoi::None => return saved_rsp,
             PicEoi::MasterOnly => {
                 unsafe { asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack)); }
-                return;
+                return saved_rsp;
             }
             PicEoi::SlaveThenMaster => {}
         }
@@ -1113,6 +1165,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64) {
         }
         asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
     }
+    saved_rsp
 }
 
 /// Validate all sixteen remapped legacy PIC IRQ gates before enabling interrupts.
@@ -1134,7 +1187,17 @@ pub fn verify_irq_gates() -> bool {
             return false;
         }
     }
-    true
+    let timer = unsafe { &*idt.add(LOCAL_SCHEDULER_TIMER_VECTOR as usize) };
+    let timer_selector = unsafe { addr_of!(timer.selector).read_unaligned() };
+    let timer_attributes = unsafe { addr_of!(timer.attributes).read_unaligned() };
+    let timer_low = unsafe { addr_of!(timer.offset_low).read_unaligned() };
+    let timer_middle = unsafe { addr_of!(timer.offset_middle).read_unaligned() };
+    let timer_high = unsafe { addr_of!(timer.offset_high).read_unaligned() };
+    let timer_handler = timer_low as u64 | ((timer_middle as u64) << 16) | ((timer_high as u64) << 32);
+    timer_selector == KERNEL_CODE_SELECTOR
+        && timer_attributes == EXCEPTION_GATE_ATTRIBUTES
+        && timer_handler != 0
+        && timer.ist == 0
 }
 
 /// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
@@ -1245,8 +1308,15 @@ pub unsafe fn initialize() {
         unsafe { idt.add(IRQ_VECTOR_BASE + irq).write(IdtEntry::interrupt_gate(*handler as u64, 0)) };
     }
 
-    // The Local APIC spurious vector is architecturally 0xFF; it must have a gate.
-    unsafe { idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)) };
+    // Local APIC scheduler timer and spurious vectors have dedicated gates.
+    unsafe {
+        idt.add(LOCAL_SCHEDULER_TIMER_VECTOR as usize).write(
+            IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64, 0)
+        );
+        idt.add(0xFF).write(
+            IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)
+        );
+    }
 
     let idt_pointer = DescriptorTablePointer {
         limit: (256 * core::mem::size_of::<IdtEntry>() - 1) as u16,
@@ -1263,7 +1333,7 @@ pub unsafe fn initialize() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> ! {
+pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64, frame: *const u64) -> ! {
     #[cfg(feature = "qemu-ist-nmi-test")]
     if vector == 2 {
         let rsp: u64;
@@ -1299,6 +1369,12 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         debug_hex(vector);
         debug_write(b" error=0x");
         debug_hex(error_code);
+        debug_write(b" rip=0x");
+        debug_hex(core::ptr::read(frame.add(17)));
+        debug_write(b" cs=0x");
+        debug_hex(core::ptr::read(frame.add(18)));
+        debug_write(b" rflags=0x");
+        debug_hex(core::ptr::read(frame.add(19)));
         debug_write(b"\r\n");
         asm!("cli", options(nomem, nostack));
         loop {

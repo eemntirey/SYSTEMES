@@ -5,6 +5,50 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
+#[cfg(feature = "qemu-scheduler-test")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "qemu-scheduler-test")]
+use systemes_kernel::scheduler::{SpinMutex, TaskId};
+
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_WORK_A: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_WORK_B: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_BLOCKED_RESUMES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-scheduler-test")]
+static SCHEDULER_SHARED_COUNT: SpinMutex<usize> = SpinMutex::new(0);
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_worker_a() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler task A entered\\r\\n"); }
+    loop {
+        SCHEDULER_WORK_A.fetch_add(1, Ordering::Relaxed);
+        *SCHEDULER_SHARED_COUNT.lock() += 1;
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_worker_b() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler task B entered\\r\\n"); }
+    loop {
+        SCHEDULER_WORK_B.fetch_add(1, Ordering::Relaxed);
+        *SCHEDULER_SHARED_COUNT.lock() += 1;
+        let _ = systemes_kernel::scheduler::wake(TaskId(3));
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "qemu-scheduler-test")]
+extern "C" fn scheduler_blocked_worker() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler blocked task entered\\r\\n"); }
+    loop {
+        systemes_kernel::scheduler::block_current();
+        SCHEDULER_BLOCKED_RESUMES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 unsafe extern "C" {
     static __text_start: u8;
     static __text_end: u8;
@@ -276,10 +320,71 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         unsafe { debug_write(b"SYSTEMES: PS/2 keyboard scanning and mouse reporting enabled\\r\\n"); }
     }
+    #[cfg(feature = "qemu-scheduler-test")]
+    let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 3] = [
+        scheduler_worker_a,
+        scheduler_worker_b,
+        scheduler_blocked_worker,
+    ];
+    #[cfg(not(feature = "qemu-scheduler-test"))]
+    let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 0] = [];
+
+    if systemes_kernel::scheduler::initialize(&scheduler_entries).is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler initialization failed\\r\\n"); }
+        halt();
+    }
+    if !systemes_kernel::scheduler::validate_initial_contexts() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: synthetic task IRETQ frame invalid\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: synthetic task IRETQ frames validated\\r\\n"); }
+    if apic_initialized {
+        if unsafe { systemes_kernel::interrupts::initialize_local_apic_timer(250_000) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC scheduler timer initialization failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: Local APIC periodic scheduler timer configured\\r\\n"); }
+    } else {
+        #[cfg(feature = "qemu-scheduler-test")]
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler test requires active Local APIC\\r\\n"); }
+            halt();
+        }
+        #[cfg(not(feature = "qemu-scheduler-test"))]
+        unsafe { debug_write(b"SYSTEMES: Local APIC timer unavailable; scheduler remains idle\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
-    unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    unsafe { debug_write(b"SYSTEMES_KERNEL_OK\\r\\n") };
+    #[cfg(feature = "qemu-scheduler-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for preemptive task progress\\r\\n"); }
+        while SCHEDULER_WORK_A.load(Ordering::Acquire) < 100
+            || SCHEDULER_WORK_B.load(Ordering::Acquire) < 100
+            || SCHEDULER_BLOCKED_RESUMES.load(Ordering::Acquire) < 1
+            || *SCHEDULER_SHARED_COUNT.lock() < 100
+            || systemes_kernel::interrupts::local_timer_ticks() < 8
+        {
+            if systemes_kernel::interrupts::local_timer_ticks() > 2000 {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler progress timeout\\r\\n"); }
+                halt();
+            }
+            core::hint::spin_loop();
+        }
+        let switches_a = systemes_kernel::scheduler::switch_count(TaskId(1)).unwrap_or(0);
+        let switches_b = systemes_kernel::scheduler::switch_count(TaskId(2)).unwrap_or(0);
+        let switches_blocked = systemes_kernel::scheduler::switch_count(TaskId(3)).unwrap_or(0);
+        if switches_a == 0 || switches_b == 0 || switches_blocked == 0 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler context switch counters invalid\\r\\n"); }
+            halt();
+        }
+        unsafe { systemes_kernel::interrupts::stop_local_apic_timer(); }
+        unsafe { systemes_kernel::interrupts::disable_hardware_interrupts(); }
+        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preemption switched three independent tasks\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified\\r\\n"); }
+        halt();
+    }
     #[cfg(feature = "qemu-pit-timer-test")]
     {
         if !apic_initialized || !systemes_kernel::interrupts::apic_active() {
@@ -303,7 +408,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     #[cfg(feature = "qemu-apic-spurious-test")]
     {
         let before = systemes_kernel::interrupts::apic_spurious_count();
-        systemes_kernel::interrupts::systemes_irq_dispatch(0xFF);
+        let _ = systemes_kernel::interrupts::systemes_irq_dispatch(0xFF, 0);
         if systemes_kernel::interrupts::apic_spurious_count() != before + 1 {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC spurious vector accounting failed\\r\\n"); }
             halt();

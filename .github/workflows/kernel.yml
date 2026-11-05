@@ -166,6 +166,12 @@ jobs:
             expected_vector: NONE
             expected_error: NONE
             expected_test: 'SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI'
+
+          - label: Local APIC preemptive scheduler and blocked task wakeup
+            feature: qemu-scheduler-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: Local APIC preemption switched three independent tasks'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -226,6 +232,10 @@ jobs:
             exit 1
           fi
           cat build/uefi/debug.log
+          fault_rip="$(sed -n 's/.* rip=0x\([0-9A-Fa-f]\{16\}\).*/0x\1/p' build/uefi/debug.log | tail -n 1)"
+          if [ -n "$fault_rip" ]; then
+            addr2line -f -C -e kernel/target/x86_64-unknown-none/release/systemes-kernel "$fault_rip" || true
+          fi
           grep -q 'SYSTEMES_UEFI_ENTRY_REACHED' build/uefi/debug.log
           grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: CPU NX capability detected and EFER.NXE enabled' build/uefi/debug.log
@@ -233,6 +243,10 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
+          if [ "${{ matrix.feature }}" = "qemu-scheduler-test" ]; then
+            grep -q 'SYSTEMES: Local APIC periodic scheduler timer configured' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified' build/uefi/debug.log
+          fi
           if [ "${{ matrix.feature }}" = "qemu-pit-timer-test" ]; then
             grep -q 'SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed' build/uefi/debug.log
             grep -q 'SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC' build/uefi/debug.log
