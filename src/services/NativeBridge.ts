@@ -16,6 +16,39 @@ export type WindowsSettingsPage =
   | 'windows-update' | 'windows-update-hours' | 'windows-update-optional'
   | 'windows-insider' | 'about' | 'pen-touch' | 'mobile-devices' | 'advanced-system' | 'device-manager';
 
+export type NativeCapabilityState = 'ready' | 'unsupported' | 'unavailable' | 'permission-required';
+
+export interface NativeCapability {
+  id: string;
+  state: NativeCapabilityState;
+  reason: string;
+  requiresAdministratorForSomeOperations: boolean;
+}
+
+export interface NativeCapabilities {
+  platform: string;
+  osVersion: string;
+  osBuild: number;
+  architecture: string;
+  isAdministrator: boolean;
+  capabilities: NativeCapability[];
+  checkedAtUtc: string;
+}
+
+export interface NativePermissions {
+  userName: string;
+  machineName: string;
+  isAdministrator: boolean;
+  isAuthenticated: boolean;
+  isSystem: boolean;
+  isGuest: boolean;
+  uacEnabled: boolean | null;
+  consentPromptBehaviorAdmin: number | null;
+  secureDesktopEnabled: boolean | null;
+  source: string;
+  note: string;
+}
+
 type NativeReply<T = unknown> = {
   id?: string;
   result?: T;
@@ -29,6 +62,18 @@ const request = async <T>(method: string, params: Record<string, unknown> = {}):
 };
 
 export const NativeBridge = {
+  async readNativeCapabilities() {
+    const response = await request<NativeCapabilities>('system/capabilities');
+    if (!response.result) throw new Error('Windows n’a retourné aucun inventaire de capacités natives.');
+    return response.result;
+  },
+
+  async readNativePermissions() {
+    const response = await request<NativePermissions>('system/permissions/read');
+    if (!response.result) throw new Error('Windows n’a retourné aucun état de permissions.');
+    return response.result;
+  },
+
   async readHardware() {
     const response = await request('hardware/read');
     return response.result;
