@@ -186,6 +186,8 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
     }
 
+    let mut apic_initialized = false;
+    let mut discovered_madt = None;
     if boot.acpi_rsdp_address != 0 {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
         // SAFETY: The RSDP address is supplied by UEFI and the active identity
@@ -195,7 +197,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
                 } else {
+                    discovered_madt = Some(madt);
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
+                    match unsafe { systemes_kernel::interrupts::initialize_apic_ioapic(&madt, &mut frame_allocator, page_table_root) } {
+                        Ok(()) => {
+                            apic_initialized = true;
+                            unsafe { debug_write(b"SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed\r\n") };
+                        }
+                        Err(_) => unsafe { debug_write(b"SYSTEMES: APIC initialization unavailable; retaining legacy PIC/PIT\r\n") },
+                    }
                 }
             }
             Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT validation unavailable; retaining legacy PIC path\r\n") },
@@ -206,7 +216,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     // Keep all IRQ lines masked except PIT IRQ0 until the timer is fully programmed.
     unsafe { systemes_kernel::interrupts::initialize_pic_pit() };
-    if systemes_kernel::interrupts::legacy_pic_masks() != (0xFE, 0xFF) {
+    if !apic_initialized && systemes_kernel::interrupts::legacy_pic_masks() != (0xFE, 0xFF) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC masks are not IRQ0-only\\r\\n"); }
         halt();
     }
@@ -216,13 +226,67 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked\\r\\n"); }
     unsafe { debug_write(b"SYSTEMES: PIT channel 0 programmed at 100 Hz\\r\\n"); }
+    if apic_initialized {
+        unsafe { systemes_kernel::interrupts::mask_legacy_pic() };
+        if systemes_kernel::interrupts::legacy_pic_masks() != (0xFF, 0xFF) {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC not fully masked in APIC mode\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC\\r\\n"); }
+    }
+    let (ps2_ready, auxiliary_ready) = match unsafe { systemes_kernel::ps2_controller::initialize() } {
+        Ok(status) if status.keyboard_interface_ready && status.irq_lines_disabled && status.set1_translation_enabled => {
+            unsafe { debug_write(b"SYSTEMES: PS/2 8042 initialized with IRQ1/IRQ12 disabled\\r\\n"); }
+            (true, status.auxiliary_interface_detected)
+        }
+        Ok(_) => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 controller violated safe IRQ/configuration policy\\r\\n"); halt(); } }
+        Err(_) => { unsafe { debug_write(b"SYSTEMES: PS/2 8042 unavailable; continuing without PS/2 input\\r\\n"); } (false, false) }
+    };
+    if apic_initialized && ps2_ready {
+        match unsafe { systemes_kernel::interrupts::prepare_ps2_ioapic_routes(
+            discovered_madt.as_ref().unwrap_or_else(|| halt()),
+            &mut frame_allocator, page_table_root, auxiliary_ready
+        ) } {
+            Ok(()) => {
+                if unsafe { systemes_kernel::interrupts::enable_ps2_ioapic_routes(auxiliary_ready) }.is_ok()
+                    && unsafe { systemes_kernel::ps2_controller::enable_interrupts(auxiliary_ready) }.is_ok() {
+                    if auxiliary_ready {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC\\r\\n"); }
+                    } else {
+                        unsafe { debug_write(b"SYSTEMES: PS/2 IRQ1 keyboard route enabled; IRQ12 kept masked (no auxiliary device)\\r\\n"); }
+                    }
+                } else {
+                    unsafe { systemes_kernel::interrupts::mask_ps2_ioapic_routes(); }
+                    unsafe { debug_write(b"SYSTEMES: PS/2 IRQ activation failed; IOAPIC routes re-masked\\r\\n"); }
+                }
+            }
+            Err(_) => unsafe { debug_write(b"SYSTEMES: PS/2 IOAPIC routes unavailable; input IRQs remain disabled\\r\\n"); }
+        }
+    } else if !apic_initialized {
+        unsafe { debug_write(b"SYSTEMES: PS/2 IRQs kept disabled because xAPIC/IOAPIC is unavailable\\r\\n"); }
+    } else if !ps2_ready {
+        unsafe { debug_write(b"SYSTEMES: PS/2 controller unavailable; IRQs remain disabled\\r\\n"); }
+    }
+    if ps2_ready {
+        // Device-level reporting is distinct from enabling the 8042 controller
+        // clocks and IRQ bits. Require ACKs before allowing PS/2 IRQ delivery.
+        if unsafe { systemes_kernel::ps2_controller::initialize_devices(auxiliary_ready) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 device reporting initialization failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: PS/2 keyboard scanning and mouse reporting enabled\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
     #[cfg(feature = "qemu-pit-timer-test")]
     {
-        unsafe { debug_write(b"SYSTEMES_TEST: waiting for three PIT IRQ0 ticks\\r\\n"); }
+        if !apic_initialized || !systemes_kernel::interrupts::apic_active() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC route not active for PIT test\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for three IOAPIC-routed PIT IRQ0 ticks\\r\\n"); }
         while systemes_kernel::interrupts::timer_ticks() < 3 {
             // SAFETY: STI is active and PIT IRQ0 is the only unmasked PIC line.
             unsafe { asm!("hlt", options(nomem, nostack)); }
@@ -234,6 +298,17 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
         unsafe { debug_write(b"SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: IOAPIC delivered PIT IRQ0 through Local APIC EOI\\r\\n"); }
+    }
+    #[cfg(feature = "qemu-apic-spurious-test")]
+    {
+        let before = systemes_kernel::interrupts::apic_spurious_count();
+        systemes_kernel::interrupts::systemes_irq_dispatch(0xFF);
+        if systemes_kernel::interrupts::apic_spurious_count() != before + 1 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC spurious vector accounting failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI\\r\\n"); }
     }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
@@ -291,7 +366,49 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
         halt();
     }
-    halt();
+    #[cfg(feature = "qemu-ps2-input-test")]
+    {
+        if !apic_initialized || !systemes_kernel::interrupts::apic_active() || !ps2_ready || !auxiliary_ready {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input integration prerequisites unavailable\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS2_INPUT_READY\\r\\n"); }
+        let start_ticks = systemes_kernel::interrupts::timer_ticks();
+        loop {
+            systemes_kernel::input::poll_events();
+            let elapsed = systemes_kernel::interrupts::timer_ticks().wrapping_sub(start_ticks);
+            if systemes_kernel::input::key_event_count() >= 2
+                && systemes_kernel::input::mouse_event_count() >= 2 {
+                break;
+            }
+            if elapsed >= 5000 {
+                if systemes_kernel::interrupts::irq_count(1).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_NOT_OBSERVED\\r\\n"); }
+                }
+                if systemes_kernel::interrupts::irq_count(12).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_NOT_OBSERVED\\r\\n"); }
+                }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input event timeout\\r\\n"); }
+                halt();
+            }
+            unsafe { asm!("pause", options(nomem, nostack, preserves_flags)); }
+        }
+        let mouse = systemes_kernel::input::mouse_state();
+        if systemes_kernel::input::key_is_pressed(0x1E, false)
+            || mouse.x == 0 || mouse.y == 0 || mouse.buttons != 0 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input state mismatch\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 keyboard make/break consumed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 mouse motion and button release consumed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 IRQ input end-to-end verified\\r\\n"); }
+        halt();
+    }
+    systemes_kernel::input::run_event_loop();
 }
 
 #[panic_handler]

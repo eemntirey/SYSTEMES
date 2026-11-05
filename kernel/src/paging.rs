@@ -15,6 +15,8 @@ const FRAME_COUNT: usize = 2 + ENTRIES;
 const EFER_MSR: u32 = 0xC000_0080;
 const EFER_NXE: u64 = 1 << 11;
 const CPUID_NX: u32 = 1 << 20;
+const CPUID_PAT: u32 = 1 << 16;
+const IA32_PAT_MSR: u32 = 0x277;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PagingError {
@@ -27,6 +29,7 @@ pub enum PagingError {
     WriteExecuteViolation,
     PermissionMismatch,
     WriteProtectUnavailable,
+    PatUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,6 +200,44 @@ pub unsafe fn protect_regions(
         }
     }
     Ok(())
+}
+
+/// Identity-map an MMIO range using the architectural PAT UC slot (PWT|PCD).
+/// The reset IA32_PAT entry 3 is UC; the mapping is writable, NX and uncached.
+pub unsafe fn map_mmio_uncached(
+    allocator: &mut PhysicalFrameAllocator,
+    root: u64,
+    physical_address: u64,
+    length: u64,
+) -> Result<*mut u8, PagingError> {
+    const PWT: u64 = 1 << 3;
+    const PCD: u64 = 1 << 4;
+    if length == 0 { return Err(PagingError::InvalidRegion); }
+    if unsafe { __cpuid(1) }.edx & CPUID_PAT == 0 { return Err(PagingError::PatUnsupported); }
+    let pat_low: u32;
+    let pat_high: u32;
+    unsafe { core::arch::asm!("rdmsr", in("ecx") IA32_PAT_MSR, out("eax") pat_low, out("edx") pat_high, options(nomem, nostack)); }
+    let pat = ((pat_high as u64) << 32) | pat_low as u64;
+    // PWT|PCD selects PAT entry 3. Refuse to map MMIO if firmware changed it from UC.
+    if (pat >> 24) & 0xFF != 0 { return Err(PagingError::PatUnsupported); }
+    let page_start = physical_address & !(PAGE_SIZE - 1);
+    let end = physical_address.checked_add(length).ok_or(PagingError::InvalidRegion)?;
+    let page_end = end.checked_add(PAGE_SIZE - 1).ok_or(PagingError::InvalidRegion)? & !(PAGE_SIZE - 1);
+    if page_start >= IDENTITY_MAP_BYTES || page_end > IDENTITY_MAP_BYTES || page_end <= page_start {
+        return Err(PagingError::InvalidRegion);
+    }
+    let mut address = page_start;
+    while address < page_end {
+        // SAFETY: The caller supplies the active kernel-owned identity map and allocator.
+        let table = unsafe { ensure_4k_table(allocator, root, address)? };
+        let index = ((address >> 12) & 0x1ff) as usize;
+        // Replace the inherited WB identity leaf with a writable, NX, UC mapping.
+        unsafe { table.add(index).write((address & ADDRESS_MASK) | PRESENT | WRITABLE | NX | PWT | PCD); }
+        // SAFETY: Invalidate stale translations and paging-structure cache entries.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
+        address += PAGE_SIZE;
+    }
+    Ok(physical_address as *mut u8)
 }
 
 /// Verify that each requested 4 KiB leaf maps the same physical page with exact W/NX bits.

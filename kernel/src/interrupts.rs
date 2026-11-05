@@ -5,7 +5,8 @@
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use crate::{acpi::MadtInfo, memory::PhysicalFrameAllocator};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const TSS_SELECTOR: u16 = 0x18;
@@ -24,6 +25,26 @@ const PIT_INPUT_HZ: u32 = 1_193_182;
 const PIT_FREQUENCY_HZ: u32 = 100;
 const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / PIT_FREQUENCY_HZ) as u16;
 static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
+static IRQ_COUNTS: [AtomicU64; IRQ_COUNT] = [const { AtomicU64::new(0) }; IRQ_COUNT];
+static APIC_SPURIOUS_COUNT: AtomicU64 = AtomicU64::new(0);
+static PIC_SPURIOUS_7_COUNT: AtomicU64 = AtomicU64::new(0);
+static PIC_SPURIOUS_15_COUNT: AtomicU64 = AtomicU64::new(0);
+static APIC_ACTIVE: AtomicBool = AtomicBool::new(false);
+static LOCAL_APIC_BASE: AtomicUsize = AtomicUsize::new(0);
+const IA32_APIC_BASE_MSR: u32 = 0x1B;
+const APIC_BASE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+const APIC_ENABLE: u64 = 1 << 11;
+const APIC_X2_ENABLE: u64 = 1 << 10;
+const CPUID_APIC: u32 = 1 << 9;
+const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
+const APIC_TIMER_VECTOR: u8 = IRQ_VECTOR_BASE as u8;
+const IOAPIC_REG_VERSION: u8 = 0x01;
+const IOAPIC_REG_REDIR_BASE: u8 = 0x10;
+static PS2_IRQ1_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ1_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_IOAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static PS2_IRQ12_LOW_REGISTER: AtomicUsize = AtomicUsize::new(0);
+
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
 static mut GDT: [u64; 5] = [
@@ -170,6 +191,7 @@ unsafe extern "C" {
     fn systemes_irq13();
     fn systemes_irq14();
     fn systemes_irq15();
+    fn systemes_apic_spurious();
 }
 
 global_asm!(r#"
@@ -521,6 +543,13 @@ systemes_irq15:
     push 47
     jmp systemes_irq_common
 
+.global systemes_apic_spurious
+.type systemes_apic_spurious, @function
+systemes_apic_spurious:
+    push 0
+    push 255
+    jmp systemes_irq_common
+
 .global systemes_exception_common
 .type systemes_exception_common, @function
 systemes_exception_common:
@@ -622,6 +651,303 @@ pub fn verify_ist_configuration() -> bool {
         && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApicInitError {
+    CpuApicUnsupported, X2ApicUnsupported, InvalidPhysicalAddress,
+    MmioMappingFailed, InvalidIoApicVersion, Irq0GsiNotCovered,
+    InvalidInterruptOverride,
+    IoApicGsiNotCovered,
+    IoApicProgrammingFailed,
+}
+
+unsafe fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    unsafe { asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high, options(nomem, nostack)); }
+    ((high as u64) << 32) | low as u64
+}
+
+unsafe fn write_msr(msr: u32, value: u64) {
+    unsafe { asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32, options(nomem, nostack)); }
+}
+
+unsafe fn lapic_write(base: *mut u8, offset: usize, value: u32) {
+    unsafe { core::ptr::write_volatile(base.add(offset) as *mut u32, value); }
+}
+
+unsafe fn ioapic_read(base: *mut u8, register: u8) -> u32 {
+    unsafe {
+        core::ptr::write_volatile(base as *mut u32, register as u32);
+        core::ptr::read_volatile(base.add(0x10) as *const u32)
+    }
+}
+
+unsafe fn ioapic_write(base: *mut u8, register: u8, value: u32) {
+    unsafe {
+        core::ptr::write_volatile(base as *mut u32, register as u32);
+        core::ptr::write_volatile(base.add(0x10) as *mut u32, value);
+    }
+}
+
+/// Activate xAPIC and route ISA PIT IRQ0 through the matching MADT IOAPIC GSI.
+pub unsafe fn initialize_apic_ioapic(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+) -> Result<(), ApicInitError> {
+    if unsafe { core::arch::x86_64::__cpuid(1) }.edx & CPUID_APIC == 0 {
+        return Err(ApicInitError::CpuApicUnsupported);
+    }
+    if madt.io_apic_count == 0 || madt.local_apic_count == 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    let mut apic_base = unsafe { read_msr(IA32_APIC_BASE_MSR) };
+    if apic_base & APIC_X2_ENABLE != 0 { return Err(ApicInitError::X2ApicUnsupported); }
+    if madt.local_apic_address == 0 || madt.local_apic_address & 0xFFF != 0
+        || madt.local_apic_address & !APIC_BASE_MASK != 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    apic_base = (apic_base & !(APIC_BASE_MASK | APIC_X2_ENABLE))
+        | (madt.local_apic_address & APIC_BASE_MASK) | APIC_ENABLE;
+    unsafe { write_msr(IA32_APIC_BASE_MSR, apic_base); }
+
+    let lapic = unsafe {
+        crate::paging::map_mmio_uncached(allocator, page_table_root, madt.local_apic_address, 4096)
+    }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+    let lapic_id = unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24;
+    if lapic_id > 255 { return Err(ApicInitError::InvalidPhysicalAddress); }
+    unsafe {
+        lapic_write(lapic, 0x80, 0);
+        for offset in [0x320usize, 0x330, 0x340, 0x350, 0x360, 0x370] {
+            lapic_write(lapic, offset, 1 << 16);
+        }
+        lapic_write(lapic, 0xF0, (1 << 8) | APIC_SPURIOUS_VECTOR);
+        lapic_write(lapic, 0xB0, 0);
+    }
+
+    let mut irq0_gsi = 0u32;
+    let mut iso_flags = 0u16;
+    for index in 0..madt.override_count {
+        let iso = madt.overrides[index];
+        if iso.bus == 0 && iso.source == 0 {
+            if iso.flags & 0x3 == 2 || (iso.flags >> 2) & 0x3 == 2 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            irq0_gsi = iso.gsi;
+            iso_flags = iso.flags;
+            break;
+        }
+    }
+
+    let mut selected: Option<(*mut u8, u32)> = None;
+    for index in 0..madt.io_apic_count {
+        let io = madt.io_apics[index];
+        if io.address == 0 || io.address & 0xFFF != 0
+            || io.address as u64 >= crate::paging::IDENTITY_MAP_BYTES {
+            return Err(ApicInitError::InvalidPhysicalAddress);
+        }
+        let base = unsafe {
+            crate::paging::map_mmio_uncached(allocator, page_table_root, io.address as u64, 4096)
+        }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+        let version = unsafe { ioapic_read(base, IOAPIC_REG_VERSION) };
+        let max_redirection = (version >> 16) & 0xFF;
+        if max_redirection == 0 || max_redirection > 119 {
+            return Err(ApicInitError::InvalidIoApicVersion);
+        }
+        let last_gsi = io.gsi_base.checked_add(max_redirection).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        if irq0_gsi >= io.gsi_base && irq0_gsi <= last_gsi {
+            selected = Some((base, irq0_gsi - io.gsi_base));
+            break;
+        }
+    }
+    let (io_base, redir_index) = selected.ok_or(ApicInitError::Irq0GsiNotCovered)?;
+    let low_reg = IOAPIC_REG_REDIR_BASE.checked_add((redir_index * 2) as u8)
+        .ok_or(ApicInitError::InvalidIoApicVersion)?;
+    let high_reg = low_reg.checked_add(1).ok_or(ApicInitError::InvalidIoApicVersion)?;
+    let mut low = APIC_TIMER_VECTOR as u32 | (1 << 16);
+    if iso_flags & 0x3 == 3 { low |= 1 << 13; }
+    if (iso_flags >> 2) & 0x3 == 3 { low |= 1 << 15; }
+    unsafe {
+        ioapic_write(io_base, high_reg, (lapic_id as u32) << 24);
+        ioapic_write(io_base, low_reg, low);
+        let programmed_low = ioapic_read(io_base, low_reg);
+        let programmed_high = ioapic_read(io_base, high_reg);
+        if (programmed_low & 0x1FFFF) != (low & 0x1FFFF)
+            || (programmed_high >> 24) != lapic_id as u32 {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
+        // Unmask only after the destination and masked vector were read back.
+        ioapic_write(io_base, low_reg, low & !(1 << 16));
+    }
+    LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
+    APIC_ACTIVE.store(true, Ordering::Release);
+    Ok(())
+}
+
+
+/// Resolve an ISA IRQ through MADT source overrides and validate ACPI polarity/trigger flags.
+fn isa_irq_route(madt: &MadtInfo, source: u8) -> Result<(u32, u16), ApicInitError> {
+    let mut gsi = source as u32;
+    let mut flags = 0u16;
+    let mut found = false;
+    for index in 0..madt.override_count {
+        let iso = madt.overrides[index];
+        if iso.bus == 0 && iso.source == source {
+            if found || iso.flags & !0x000F != 0 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            let polarity = iso.flags & 0x3;
+            let trigger = (iso.flags >> 2) & 0x3;
+            if polarity == 2 || trigger == 2 {
+                return Err(ApicInitError::InvalidInterruptOverride);
+            }
+            gsi = iso.gsi;
+            flags = iso.flags;
+            found = true;
+        }
+    }
+    Ok((gsi, flags))
+}
+
+unsafe fn prepare_ioapic_route(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+    gsi: u32,
+    vector: u8,
+    lapic_id: u8,
+) -> Result<(usize, u8, u32), ApicInitError> {
+    for index in 0..madt.io_apic_count {
+        let io = madt.io_apics[index];
+        if io.address == 0 || io.address & 0xFFF != 0
+            || io.address as u64 >= crate::paging::IDENTITY_MAP_BYTES {
+            return Err(ApicInitError::InvalidPhysicalAddress);
+        }
+        let base = unsafe {
+            crate::paging::map_mmio_uncached(allocator, page_table_root, io.address as u64, 4096)
+        }.map_err(|_| ApicInitError::MmioMappingFailed)?;
+        let version = unsafe { ioapic_read(base, IOAPIC_REG_VERSION) };
+        let max_redirection = (version >> 16) & 0xFF;
+        if max_redirection > 119 { return Err(ApicInitError::InvalidIoApicVersion); }
+        let last_gsi = io.gsi_base.checked_add(max_redirection).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        if gsi < io.gsi_base || gsi > last_gsi { continue; }
+        let redir_index = gsi - io.gsi_base;
+        let low_reg = IOAPIC_REG_REDIR_BASE.checked_add((redir_index * 2) as u8)
+            .ok_or(ApicInitError::InvalidIoApicVersion)?;
+        let high_reg = low_reg.checked_add(1).ok_or(ApicInitError::InvalidIoApicVersion)?;
+        let low = vector as u32 | (1 << 16);
+        unsafe {
+            // Mask the old route first; only then change its destination.
+            ioapic_write(base, low_reg, low);
+            ioapic_write(base, high_reg, (lapic_id as u32) << 24);
+            let read_low = ioapic_read(base, low_reg);
+            let read_high = ioapic_read(base, high_reg);
+            if (read_low & 0x1FFFF) != low || (read_high >> 24) != lapic_id as u32 {
+                return Err(ApicInitError::IoApicProgrammingFailed);
+            }
+        }
+        return Ok((base as usize, low_reg, low));
+    }
+    Err(ApicInitError::IoApicGsiNotCovered)
+}
+
+/// Program IRQ1 and IRQ12 redirection entries while keeping both masked.
+pub unsafe fn prepare_ps2_ioapic_routes(
+    madt: &MadtInfo,
+    allocator: &mut PhysicalFrameAllocator,
+    page_table_root: u64,
+    auxiliary_ready: bool,
+) -> Result<(), ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let lapic = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if lapic.is_null() { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let lapic_id = (unsafe { core::ptr::read_volatile(lapic.add(0x20) as *const u32) } >> 24) as u8;
+    let (keyboard_gsi, keyboard_flags) = isa_irq_route(madt, 1)?;
+    let (keyboard_base, keyboard_low_reg, mut keyboard_low) =
+        unsafe { prepare_ioapic_route(madt, allocator, page_table_root, keyboard_gsi, 33, lapic_id) }?;
+    if keyboard_flags & 0x3 == 3 { keyboard_low |= 1 << 13; }
+    if (keyboard_flags >> 2) & 0x3 == 3 { keyboard_low |= 1 << 15; }
+    unsafe {
+        ioapic_write(keyboard_base as *mut u8, keyboard_low_reg, keyboard_low);
+        if (ioapic_read(keyboard_base as *mut u8, keyboard_low_reg) & 0x1FFFF) != keyboard_low {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
+    }
+    PS2_IRQ1_IOAPIC_BASE.store(keyboard_base, Ordering::Release);
+    PS2_IRQ1_LOW_REGISTER.store(keyboard_low_reg as usize, Ordering::Release);
+
+    if auxiliary_ready {
+        let (mouse_gsi, mouse_flags) = isa_irq_route(madt, 12)?;
+        if keyboard_gsi == mouse_gsi {
+            return Err(ApicInitError::InvalidInterruptOverride);
+        }
+        let (mouse_base, mouse_low_reg, mut mouse_low) =
+            unsafe { prepare_ioapic_route(madt, allocator, page_table_root, mouse_gsi, 44, lapic_id) }?;
+        if mouse_flags & 0x3 == 3 { mouse_low |= 1 << 13; }
+        if (mouse_flags >> 2) & 0x3 == 3 { mouse_low |= 1 << 15; }
+        unsafe {
+            ioapic_write(mouse_base as *mut u8, mouse_low_reg, mouse_low);
+            if (ioapic_read(mouse_base as *mut u8, mouse_low_reg) & 0x1FFFF) != mouse_low {
+                return Err(ApicInitError::IoApicProgrammingFailed);
+            }
+        }
+        PS2_IRQ12_IOAPIC_BASE.store(mouse_base, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(mouse_low_reg as usize, Ordering::Release);
+    } else {
+        PS2_IRQ12_IOAPIC_BASE.store(0, Ordering::Release);
+        PS2_IRQ12_LOW_REGISTER.store(0, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// Unmask the already-verified keyboard and auxiliary IOAPIC entries.
+pub unsafe fn enable_ps2_ioapic_routes(auxiliary_ready: bool) -> Result<(), ApicInitError> {
+    let mut routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    if !auxiliary_ready {
+        routes[1] = (0, 0);
+    }
+    for (base, register) in routes {
+        if base == 0 && register == 0 { continue; }
+        if base == 0 { return Err(ApicInitError::IoApicProgrammingFailed); }
+        let base = base as *mut u8;
+        let low_reg = register as u8;
+        let low = unsafe { ioapic_read(base, low_reg) };
+        unsafe { ioapic_write(base, low_reg, low & !(1 << 16)); }
+        if unsafe { ioapic_read(base, low_reg) } & (1 << 16) != 0 {
+            return Err(ApicInitError::IoApicProgrammingFailed);
+        }
+    }
+    Ok(())
+}
+
+/// Re-mask both PS/2 routes if controller activation fails after route setup.
+pub unsafe fn mask_ps2_ioapic_routes() {
+    let routes = [
+        (PS2_IRQ1_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ1_LOW_REGISTER.load(Ordering::Acquire)),
+        (PS2_IRQ12_IOAPIC_BASE.load(Ordering::Acquire), PS2_IRQ12_LOW_REGISTER.load(Ordering::Acquire)),
+    ];
+    for (base, register) in routes {
+        if base != 0 {
+            let base = base as *mut u8;
+            let low_reg = register as u8;
+            let low = unsafe { ioapic_read(base, low_reg) };
+            unsafe { ioapic_write(base, low_reg, low | (1 << 16)); }
+        }
+    }
+}
+
+pub unsafe fn mask_legacy_pic() {
+    unsafe {
+        asm!("out dx, al", in("dx") PIC_MASTER_DATA, in("al") 0xFFu8, options(nomem, nostack));
+        asm!("out dx, al", in("dx") PIC_SLAVE_DATA, in("al") 0xFFu8, options(nomem, nostack));
+    }
+}
+
+pub fn apic_active() -> bool { APIC_ACTIVE.load(Ordering::Acquire) }
+
 unsafe fn io_wait() {
     // SAFETY: Port 0x80 is the conventional legacy I/O delay port.
     unsafe { asm!("out 0x80, al", in("al") 0u8, options(nomem, nostack, preserves_flags)); }
@@ -692,15 +1018,95 @@ pub fn timer_ticks() -> u64 {
     TIMER_TICKS.load(Ordering::Acquire)
 }
 
+/// Number of delivered hardware interrupts for a legacy IRQ line (0..15).
+pub fn irq_count(irq: u8) -> Option<u64> {
+    IRQ_COUNTS.get(irq as usize).map(|count| count.load(Ordering::Acquire))
+}
+
+/// Number of Local APIC spurious-vector deliveries (vector 0xFF).
+pub fn apic_spurious_count() -> u64 {
+    APIC_SPURIOUS_COUNT.load(Ordering::Acquire)
+}
+
+pub fn pic_spurious_counts() -> (u64, u64) {
+    (PIC_SPURIOUS_7_COUNT.load(Ordering::Acquire), PIC_SPURIOUS_15_COUNT.load(Ordering::Acquire))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PicEoi {
+    None,
+    MasterOnly,
+    SlaveThenMaster,
+}
+
+const fn pic_eoi_policy(irq: usize, in_service: bool) -> PicEoi {
+    match irq {
+        7 if !in_service => PicEoi::None,
+        15 if !in_service => PicEoi::MasterOnly,
+        8..=15 => PicEoi::SlaveThenMaster,
+        _ => PicEoi::MasterOnly,
+    }
+}
+
+unsafe fn read_pic_isr(command_port: u16) -> u8 {
+    unsafe {
+        asm!("out dx, al", in("dx") command_port, in("al") 0x0Bu8, options(nomem, nostack));
+        let value: u8;
+        asm!("in al, dx", in("dx") command_port, out("al") value, options(nomem, nostack));
+        value
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_irq_dispatch(vector: u64) {
+    // The Local APIC spurious vector is special: the CPU does not set ISR for it,
+    // therefore an EOI must never be sent.
+    if vector == APIC_SPURIOUS_VECTOR as u64 {
+        APIC_SPURIOUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if !(IRQ_VECTOR_BASE as u64..(ACTIVE_VECTOR_COUNT as u64)).contains(&vector) {
         return;
     }
-    if vector == IRQ_VECTOR_BASE as u64 {
+
+    let irq = vector as usize - IRQ_VECTOR_BASE;
+    if irq == 0 {
         TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
     }
-    let irq = vector as usize - IRQ_VECTOR_BASE;
+
+    if APIC_ACTIVE.load(Ordering::Acquire) {
+        if irq == 1 || irq == 12 { crate::ps2_irq::handle_irq(irq as u8); }
+        IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
+        let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+        if !base.is_null() {
+            // SAFETY: The UC-mapped Local APIC page is published before STI.
+            unsafe { lapic_write(base, 0xB0, 0); }
+        }
+        return;
+    }
+
+    // 8259A IRQ7/IRQ15 may be spurious. Read the relevant In-Service Register
+    // before deciding which PICs, if any, require an EOI.
+    if irq == 7 || irq == 15 {
+        let command = if irq == 7 { PIC_MASTER_COMMAND } else { PIC_SLAVE_COMMAND };
+        let isr = unsafe { read_pic_isr(command) };
+        let in_service = isr & (1 << 7) != 0;
+        if !in_service && irq == 7 {
+            PIC_SPURIOUS_7_COUNT.fetch_add(1, Ordering::Relaxed);
+        } else if !in_service && irq == 15 {
+            PIC_SPURIOUS_15_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        match pic_eoi_policy(irq, in_service) {
+            PicEoi::None => return,
+            PicEoi::MasterOnly => {
+                unsafe { asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack)); }
+                return;
+            }
+            PicEoi::SlaveThenMaster => {}
+        }
+    }
+    IRQ_COUNTS[irq].fetch_add(1, Ordering::Relaxed);
+
     unsafe {
         if irq >= 8 {
             asm!("out dx, al", in("dx") PIC_SLAVE_COMMAND, in("al") 0x20u8, options(nomem, nostack));
@@ -839,8 +1245,11 @@ pub unsafe fn initialize() {
         unsafe { idt.add(IRQ_VECTOR_BASE + irq).write(IdtEntry::interrupt_gate(*handler as u64, 0)) };
     }
 
+    // The Local APIC spurious vector is architecturally 0xFF; it must have a gate.
+    unsafe { idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)) };
+
     let idt_pointer = DescriptorTablePointer {
-        limit: (ACTIVE_VECTOR_COUNT * core::mem::size_of::<IdtEntry>() - 1) as u16,
+        limit: (256 * core::mem::size_of::<IdtEntry>() - 1) as u16,
         base: idt as u64,
     };
     // SAFETY: IDT is static storage and all exception entries have been initialized.
@@ -920,6 +1329,37 @@ unsafe fn debug_hex(value: u64) {
 mod tests {
     use super::*;
 
+    fn madt_with_override(source: u8, gsi: u32, flags: u16) -> MadtInfo {
+        let mut madt = MadtInfo {
+            local_apic_address: 0xFEE0_0000,
+            flags: 1,
+            local_apics: [crate::acpi::LocalApic::default(); 64],
+            local_apic_count: 0,
+            io_apics: [crate::acpi::IoApic::default(); 8],
+            io_apic_count: 0,
+            overrides: [crate::acpi::InterruptOverride::default(); 16],
+            override_count: 1,
+        };
+        madt.overrides[0] = crate::acpi::InterruptOverride { bus: 0, source, gsi, flags };
+        madt
+    }
+
+    #[test]
+    fn resolves_keyboard_and_mouse_gsis_from_madt_overrides() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x0F), 1), Ok((9, 0x0F)));
+        assert_eq!(isa_irq_route(&madt_with_override(12, 20, 0x05), 12), Ok((20, 0x05)));
+    }
+
+    #[test]
+    fn rejects_reserved_and_duplicate_madt_override_flags() {
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x10), 1), Err(ApicInitError::InvalidInterruptOverride));
+        assert_eq!(isa_irq_route(&madt_with_override(1, 9, 0x02), 1), Err(ApicInitError::InvalidInterruptOverride));
+        let mut duplicate = madt_with_override(1, 9, 0);
+        duplicate.overrides[1] = crate::acpi::InterruptOverride { bus: 0, source: 1, gsi: 10, flags: 0 };
+        duplicate.override_count = 2;
+        assert_eq!(isa_irq_route(&duplicate, 1), Err(ApicInitError::InvalidInterruptOverride));
+    }
+
     #[test]
     fn legacy_pic_vectors_follow_the_remapped_8259_layout() {
         assert_eq!(IRQ_VECTOR_BASE, 32);
@@ -975,6 +1415,25 @@ mod tests {
         let nmi = IdtEntry::interrupt_gate(0x2000, 2);
         let machine_check = IdtEntry::interrupt_gate(0x3000, 3);
         assert_eq!((double_fault.ist, nmi.ist, machine_check.ist), (1, 2, 3));
+    }
+
+    #[test]
+    fn pic_spurious_irq7_sends_no_eoi() {
+        assert_eq!(pic_eoi_policy(7, false), PicEoi::None);
+        assert_eq!(pic_eoi_policy(7, true), PicEoi::MasterOnly);
+    }
+
+    #[test]
+    fn pic_spurious_irq15_sends_master_eoi_only() {
+        assert_eq!(pic_eoi_policy(15, false), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(15, true), PicEoi::SlaveThenMaster);
+    }
+
+    #[test]
+    fn ordinary_pic_irqs_keep_their_expected_eoi_path() {
+        assert_eq!(pic_eoi_policy(0, true), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(1, true), PicEoi::MasterOnly);
+        assert_eq!(pic_eoi_policy(12, true), PicEoi::SlaveThenMaster);
     }
 
     #[test]

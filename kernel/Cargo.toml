@@ -12,6 +12,8 @@ qemu-rx-write-test = []
 qemu-ist-nmi-test = []
 qemu-ist-machine-check-test = []
 qemu-pit-timer-test = []
+qemu-apic-spurious-test = []
+qemu-ps2-input-test = []
 
 [lib]
 path = "src/lib.rs"

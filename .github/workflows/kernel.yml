@@ -107,6 +107,7 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked' build/uefi/debug.log
           grep -q 'SYSTEMES: PIT channel 0 programmed at 100 Hz' build/uefi/debug.log
+          grep -q 'SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC' build/uefi/debug.log
           grep -q 'SYSTEMES: hardware interrupts enabled' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
@@ -160,6 +161,11 @@ jobs:
             expected_vector: NONE
             expected_error: NONE
             expected_test: 'SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks'
+          - label: Local APIC spurious vector handling
+            feature: qemu-apic-spurious-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -227,6 +233,11 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
+          if [ "${{ matrix.feature }}" = "qemu-pit-timer-test" ]; then
+            grep -q 'SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed' build/uefi/debug.log
+            grep -q 'SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: IOAPIC delivered PIT IRQ0 through Local APIC EOI' build/uefi/debug.log
+          fi
           if [ "${{ matrix.expected_vector }}" != "NONE" ]; then
             grep -q "SYSTEMES_EXCEPTION: vector=0x${{ matrix.expected_vector }} error=0x${{ matrix.expected_error }}" build/uefi/debug.log
           fi
