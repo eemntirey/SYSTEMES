@@ -63,7 +63,9 @@ export class NativeApplicationLifecycle {
 
   private publish(snapshot: NativeLifecycleSnapshot): NativeLifecycleSnapshot {
     this.snapshot = snapshot;
-    for (const listener of this.listeners) listener(snapshot);
+    for (const listener of this.listeners) {
+      try { listener(snapshot); } catch { /* UI subscribers must not break lifecycle checks. */ }
+    }
     return snapshot;
   }
 
