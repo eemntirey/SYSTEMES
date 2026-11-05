@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
 
 namespace Systemes.Native.Core
 {
