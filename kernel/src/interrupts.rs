@@ -194,6 +194,7 @@ unsafe extern "C" {
     fn systemes_irq14();
     fn systemes_irq15();
     fn systemes_apic_spurious();
+    fn systemes_lapic_timer();
 }
 
 global_asm!(r#"
