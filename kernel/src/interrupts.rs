@@ -1100,7 +1100,7 @@ unsafe fn read_pic_isr(command_port: u16) -> u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_irq_dispatch(vector: u64) {
+pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize {
     // The Local APIC spurious vector is special: the CPU does not set ISR for it,
     // therefore an EOI must never be sent.
     if vector == APIC_SPURIOUS_VECTOR as u64 {
