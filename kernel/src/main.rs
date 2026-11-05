@@ -93,6 +93,31 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\\r\\n") };
+    // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
+    unsafe { systemes_kernel::interrupts::initialize() };
+    unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
+    // SAFETY: UEFI identity mappings remain active while the new page tables are built.
+    let page_table_root = match unsafe {
+        systemes_kernel::paging::build_identity_map(&mut frame_allocator)
+    } {
+        Ok(root) => root,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: page-table allocation failed\\r\\n") };
+            halt();
+        }
+    };
+    // SAFETY: The new PML4 identity-maps the kernel, stack, descriptors, handoff data
+    // and framebuffer in the lower 512 GiB before CR3 is switched.
+    unsafe { asm!("mov cr3, {}", in(reg) page_table_root, options(nostack, preserves_flags)) };
+    let active_cr3: u64;
+    // SAFETY: Reading CR3 is valid in ring 0 on x86_64.
+    unsafe { asm!("mov {}, cr3", out(reg) active_cr3, options(nomem, nostack, preserves_flags)) };
+    if (active_cr3 & 0x000F_FFFF_FFFF_F000) != page_table_root {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR3 verification failed\\r\\n") };
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
             0 => 0x00_20_C0_70u32, // GOP PixelRedGreenBlueReserved8BitPerColor
@@ -122,6 +147,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-exception-test")]
+    {
+        // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
+        unsafe { asm!("int3", options(nomem, nostack)) };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
+        halt();
+    }
     halt();
 }
 
