@@ -16,10 +16,18 @@ The binary has been loaded by the GNU-EFI loader and executed after
 memory-map metadata, discovers the GOP framebuffer and ACPI RSDP, paints a small
 framebuffer marker, and emits `SYSTEMES_KERNEL_OK`.
 
-The kernel still inherits the firmware's active address space and CPU execution
-environment. It does **not** yet own page tables, GDT/IDT, exception handlers,
-interrupt routing, a physical-page allocator, a scheduler, drivers, or user mode.
-It is a minimal boot-stage kernel, not a general-purpose OS.
+The kernel now owns four-level identity page tables, W^X section mappings,
+GDT/IDT exception and IRQ gates, TSS/IST stacks, a physical-frame allocator,
+ACPI/MADT discovery, xAPIC/IOAPIC routing, and PS/2 input paths. K2.7 adds the
+first single-core preemptive scheduler using a periodic Local APIC timer,
+per-task kernel stacks, saved interrupt contexts, round-robin task selection,
+blocked-task wake-up, and an IRQ-safe mutex.
+
+This remains an early autonomous kernel, not yet a general-purpose OS. Tasks
+still execute in ring 0 and share one address space. SMP, calibrated timekeeping,
+FPU/SIMD context preservation, user mode, system calls, a VFS, storage drivers,
+and a complete device model remain future work. See
+[the K2.7 scheduler design](../docs/kernel-k2-7-preemptive-scheduler.md).
 
 ## Local checks
 
