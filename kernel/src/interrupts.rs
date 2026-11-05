@@ -1133,7 +1133,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize 
             // SAFETY: The UC-mapped Local APIC page is published before STI.
             unsafe { lapic_write(base, 0xB0, 0); }
         }
-        return;
+        return saved_rsp;
     }
 
     // 8259A IRQ7/IRQ15 may be spurious. Read the relevant In-Service Register
@@ -1148,10 +1148,10 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize 
             PIC_SPURIOUS_15_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         match pic_eoi_policy(irq, in_service) {
-            PicEoi::None => return,
+            PicEoi::None => return saved_rsp,
             PicEoi::MasterOnly => {
                 unsafe { asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack)); }
-                return;
+                return saved_rsp;
             }
             PicEoi::SlaveThenMaster => {}
         }
@@ -1164,6 +1164,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize 
         }
         asm!("out dx, al", in("dx") PIC_MASTER_COMMAND, in("al") 0x20u8, options(nomem, nostack));
     }
+    saved_rsp
 }
 
 /// Validate all sixteen remapped legacy PIC IRQ gates before enabling interrupts.
