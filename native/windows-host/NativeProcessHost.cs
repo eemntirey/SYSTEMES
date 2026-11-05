@@ -58,7 +58,7 @@ internal sealed class NativeProcessHost : IAsyncDisposable
         try
         {
             if (_process is not { HasExited: false })
-                throw new InvalidOperationException("Le moteur natif n'est pas démarré.");
+                throw new IOException("Le moteur natif SYSTEMES est indisponible ou a été arrêté.");
 
             await _process.StandardInput.WriteLineAsync(requestJson);
             await _process.StandardInput.FlushAsync(cancellationToken);
