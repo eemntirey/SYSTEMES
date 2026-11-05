@@ -68,6 +68,7 @@ export const StartMenu: React.FC = () => {
 
   return (
     <div
+      className="obsidian-start-menu"
       onClick={e => e.stopPropagation()}
       style={{
         position: 'fixed',
@@ -90,7 +91,7 @@ export const StartMenu: React.FC = () => {
       }}
     >
       {/* Top Search Input */}
-      <div style={{ padding: '24px 32px 14px 32px' }}>
+      <div className="obsidian-start-search" style={{ padding: '24px 32px 14px 32px' }}>
         <div
           style={{
             display: 'flex',
@@ -123,7 +124,7 @@ export const StartMenu: React.FC = () => {
       </div>
 
       {/* Main Body */}
-      <div style={{ flex: 1, padding: '0 32px', overflowY: 'auto' }}>
+      <div className="obsidian-start-body" style={{ flex: 1, padding: '0 32px', overflowY: 'auto' }}>
         {/* Pinned Section Header */}
         <div
           style={{
@@ -157,6 +158,7 @@ export const StartMenu: React.FC = () => {
 
         {/* Pinned Apps Grid */}
         <div
+          className="obsidian-start-app-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(6, 1fr)',
@@ -196,6 +198,7 @@ export const StartMenu: React.FC = () => {
 
         {/* Recommended Items Grid */}
         <div
+          className="obsidian-start-recommended"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(2, 1fr)',
@@ -205,6 +208,7 @@ export const StartMenu: React.FC = () => {
         >
           {recommendedFiles.map(rf => (
             <div
+              className="obsidian-start-file"
               key={rf.id}
               onClick={() => {
                 openWindow('notepad', { fileId: rf.id, filePath: rf.path, fileContent: rf.content || '' })
@@ -254,6 +258,7 @@ export const StartMenu: React.FC = () => {
 
       {/* User & Power Footer */}
       <div
+        className="obsidian-start-footer"
         style={{
           height: '66px',
           display: 'flex',
@@ -267,6 +272,7 @@ export const StartMenu: React.FC = () => {
       >
         {/* User Card */}
         <div
+          className="obsidian-start-user"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -326,6 +332,7 @@ export const StartMenu: React.FC = () => {
           {/* Power Options Dropdown */}
           {showPowerMenu && (
             <div
+              className="obsidian-start-power-menu"
               style={{
                 position: 'absolute',
                 bottom: '52px',

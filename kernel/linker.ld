@@ -17,5 +17,6 @@ SECTIONS
         *(COMMON)
         __bss_end = .;
     }
+    __kernel_image_end = .;
     /DISCARD/ : { *(.eh_frame .eh_frame_hdr .comment .note .note.*) }
 }
