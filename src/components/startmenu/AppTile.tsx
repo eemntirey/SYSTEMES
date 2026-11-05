@@ -10,6 +10,7 @@ export interface AppTileProps {
 export const AppTile: React.FC<AppTileProps> = ({ name, icon, onClick }) => {
   return (
     <div
+      className="obsidian-start-app-tile"
       onClick={onClick}
       style={{
         display: 'flex',
