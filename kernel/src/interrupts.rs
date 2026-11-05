@@ -1105,10 +1105,19 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize 
     // therefore an EOI must never be sent.
     if vector == APIC_SPURIOUS_VECTOR as u64 {
         APIC_SPURIOUS_COUNT.fetch_add(1, Ordering::Relaxed);
-        return;
+        return saved_rsp;
+    }
+    if vector == LOCAL_SCHEDULER_TIMER_VECTOR as u64 {
+        LOCAL_TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
+        let next_rsp = crate::scheduler::on_timer(saved_rsp);
+        let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+        if !base.is_null() {
+            unsafe { lapic_write(base, 0xB0, 0); }
+        }
+        return next_rsp;
     }
     if !(IRQ_VECTOR_BASE as u64..(ACTIVE_VECTOR_COUNT as u64)).contains(&vector) {
-        return;
+        return saved_rsp;
     }
 
     let irq = vector as usize - IRQ_VECTOR_BASE;
