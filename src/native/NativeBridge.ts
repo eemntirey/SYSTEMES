@@ -199,7 +199,6 @@ export class NativeBridge {
 
   async connect(): Promise<void> {
     const transport = this.transport()
-    this.setState('checking')
     if (!transport) {
       this.setState('unavailable')
       throw new NativeOperationError(
@@ -209,6 +208,7 @@ export class NativeBridge {
       )
     }
     if (!this.connected) {
+      this.setState('checking')
       transport.addEventListener('message', this.onMessage)
       this.connected = true
     }
@@ -238,7 +238,8 @@ export class NativeBridge {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Délai dépassé pour la requête native « ${method} » (${Math.round(timeoutMs / 1000)} s).`))
+        this.setState('error')
+        reject(new NativeOperationError(`Délai dépassé pour la requête native « ${method} » (${Math.round(timeoutMs / 1000)} s).`, 'timeout', true, method))
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timeout })
       try {
@@ -246,7 +247,8 @@ export class NativeBridge {
       } catch (error) {
         this.pending.delete(id)
         clearTimeout(timeout)
-        reject(error instanceof Error ? error : new Error(String(error)))
+        this.setState('error')
+        reject(error instanceof Error ? error : new NativeOperationError(String(error), 'io-error', true, method))
       }
     })
   }
