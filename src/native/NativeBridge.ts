@@ -1,10 +1,33 @@
 // Browser-safe compatibility facade for the SYSTEMES native host.
 // Native processes are owned by the WPF host, never spawned from renderer code.
 
+export type NativeErrorCode =
+  | 'permission-required' | 'unsupported' | 'host-unavailable' | 'timeout'
+  | 'not-found' | 'invalid-argument' | 'io-error' | 'native-error';
+
 export interface NativeResponse<T = unknown> {
   result?: T;
   error?: string;
+  errorCode?: NativeErrorCode;
+  retryable?: boolean;
+  operation?: string;
   id?: string;
+}
+
+export type NativeBridgeState = 'checking' | 'ready' | 'unavailable' | 'error';
+
+export class NativeOperationError extends Error {
+  readonly code: NativeErrorCode;
+  readonly retryable: boolean;
+  readonly operation?: string;
+
+  constructor(message: string, code: NativeErrorCode = 'native-error', retryable = false, operation?: string) {
+    super(message);
+    this.name = 'NativeOperationError';
+    this.code = code;
+    this.retryable = retryable;
+    this.operation = operation;
+  }
 }
 
 type WebViewMessage = {
@@ -22,6 +45,8 @@ declare global {
 /** Méthodes exposées par NativeServer.cs — toute autre méthode est refusée côté client. */
 export const ALLOWED_NATIVE_METHODS = new Set([
   'system/ping',
+  'system/capabilities',
+  'system/permissions/read',
   'terminal/execute',
   'security/read',
   'system/open-settings',
@@ -125,6 +150,24 @@ function assertValidParams(params: Record<string, unknown>): void {
 
 export class NativeBridge {
   private connected = false
+  private state: NativeBridgeState = 'checking'
+  private readonly stateListeners = new Set<(state: NativeBridgeState) => void>()
+
+  get connectionState(): NativeBridgeState {
+    return this.state
+  }
+
+  subscribe(listener: (state: NativeBridgeState) => void): () => void {
+    this.stateListeners.add(listener)
+    listener(this.state)
+    return () => this.stateListeners.delete(listener)
+  }
+
+  private setState(state: NativeBridgeState): void {
+    if (this.state === state) return
+    this.state = state
+    for (const listener of this.stateListeners) listener(state)
+  }
   private readonly pending = new Map<string, {
     resolve: (value: NativeResponse) => void
     reject: (reason: Error) => void
@@ -141,16 +184,29 @@ export class NativeBridge {
     this.pending.delete(response.id)
     clearTimeout(pending.timeout)
     if (typeof response.error === 'string' && response.error) {
-      pending.reject(new Error(response.error))
+      pending.reject(new NativeOperationError(
+        response.error,
+        response.errorCode ?? 'native-error',
+        response.retryable ?? false,
+        response.operation,
+      ))
     } else {
+      if (response.result && typeof response.result === 'object'
+        && (response.result as { status?: unknown }).status === 'ready') this.setState('ready')
       pending.resolve(response)
     }
   }
 
   async connect(): Promise<void> {
     const transport = this.transport()
+    this.setState('checking')
     if (!transport) {
-      throw new Error('SYSTEMES Native Host indisponible : démarrez SYSTEMES depuis son application Windows.')
+      this.setState('unavailable')
+      throw new NativeOperationError(
+        'SYSTEMES Native Host indisponible : démarrez SYSTEMES depuis son application Windows.',
+        'host-unavailable',
+        true,
+      )
     }
     if (!this.connected) {
       transport.addEventListener('message', this.onMessage)
@@ -201,6 +257,7 @@ export class NativeBridge {
       transport.removeEventListener('message', this.onMessage)
     }
     this.connected = false
+    this.setState('unavailable')
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
       pending.reject(new Error('Connexion au moteur natif interrompue.'))
