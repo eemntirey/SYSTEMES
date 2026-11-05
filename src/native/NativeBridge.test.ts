@@ -45,6 +45,43 @@ describe('NativeBridge WebView2 transport', () => {
     bridge.disconnect();
   });
 
+  it('publishes bridge readiness after a successful native handshake', async () => {
+    const bridge = new NativeBridge();
+    const states: string[] = [];
+    const unsubscribe = bridge.subscribe((state) => states.push(state));
+    const pending = bridge.send('system/ping');
+    await Promise.resolve();
+    const request = postMessage.mock.calls[0][0] as { id: string };
+    listeners[0]({ data: { id: request.id, result: { status: 'ready' } } } as MessageEvent);
+    await expect(pending).resolves.toMatchObject({ result: { status: 'ready' } });
+    expect(bridge.connectionState).toBe('ready');
+    expect(states).toContain('checking');
+    expect(states).toContain('ready');
+    unsubscribe();
+    bridge.disconnect();
+  });
+
+  it('preserves structured permission errors from the native engine', async () => {
+    const bridge = new NativeBridge();
+    const pending = bridge.send('files/write', { path: 'C:/protected/file.txt', content: 'x' });
+    await Promise.resolve();
+    const request = postMessage.mock.calls[0][0] as { id: string };
+    listeners[0]({ data: {
+      id: request.id,
+      error: 'Access denied',
+      errorCode: 'permission-required',
+      retryable: false,
+      operation: 'files/write',
+    } } as MessageEvent);
+    await expect(pending).rejects.toMatchObject({
+      name: 'NativeOperationError',
+      code: 'permission-required',
+      retryable: false,
+      operation: 'files/write',
+    });
+    bridge.disconnect();
+  });
+
   it('rejects a native protocol error', async () => {
     const bridge = new NativeBridge();
     const pending = bridge.send('files/list', { path: 'Z:/missing' });
