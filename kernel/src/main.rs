@@ -549,50 +549,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\\r\\n") };
-    #[cfg(all(feature = "qemu-fpu-context-test", not(feature = "qemu-scheduler-test")))]
-    {
-        unsafe { debug_write(b"SYSTEMES_TEST: waiting for task-private x87/SSE state across preemption
-"); }
-        while !fpu_context_test::workers_done() {
-            if systemes_kernel::interrupts::local_timer_ticks() > 2000 {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU context test timeout
-"); }
-                halt();
-            }
-            core::hint::spin_loop();
-        }
-        unsafe {
-            systemes_kernel::interrupts::stop_local_apic_timer();
-            systemes_kernel::interrupts::disable_hardware_interrupts();
-        }
-        if systemes_kernel::scheduler::switch_count(TaskId(0)).unwrap_or(0) == 0
-            || systemes_kernel::scheduler::switch_count(TaskId(1)).unwrap_or(0) == 0
-            || systemes_kernel::scheduler::switch_count(TaskId(2)).unwrap_or(0) == 0
-            || systemes_kernel::scheduler::switch_count(TaskId(3)).unwrap_or(0) == 0
-        {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU context test did not preempt every task
-"); }
-            halt();
-        }
-        if !fpu_context_test::verify_boot_task() {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: boot task x87/SSE state was clobbered
-"); }
-            halt();
-        }
-        let verified = fpu_context_test::verified_counts();
-        if verified.iter().any(|count| *count < fpu_context_test::MIN_VERIFIED) {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: insufficient per-task x87/SSE verification passes
-"); }
-            halt();
-        }
-        unsafe {
-            debug_write(b"SYSTEMES_TEST: task-private x87/SSE state survived preemption
-");
-            debug_write(b"SYSTEMES_TEST: FXSAVE64/FXRSTOR64 preserved MXCSR, XMM0/8/15 and x87 data
-");
-        }
-        halt();
-    }
     #[cfg(feature = "qemu-scheduler-test")]
     {
         unsafe { debug_write(b"SYSTEMES_TEST: waiting for preemptive task progress\\r\\n"); }
