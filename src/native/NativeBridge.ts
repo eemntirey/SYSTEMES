@@ -1,10 +1,33 @@
 // Browser-safe compatibility facade for the SYSTEMES native host.
 // Native processes are owned by the WPF host, never spawned from renderer code.
 
+export type NativeErrorCode =
+  | 'permission-required' | 'unsupported' | 'host-unavailable' | 'timeout'
+  | 'not-found' | 'invalid-argument' | 'io-error' | 'native-error';
+
 export interface NativeResponse<T = unknown> {
   result?: T;
   error?: string;
+  errorCode?: NativeErrorCode;
+  retryable?: boolean;
+  operation?: string;
   id?: string;
+}
+
+export type NativeBridgeState = 'checking' | 'ready' | 'unavailable' | 'error';
+
+export class NativeOperationError extends Error {
+  readonly code: NativeErrorCode;
+  readonly retryable: boolean;
+  readonly operation?: string;
+
+  constructor(message: string, code: NativeErrorCode = 'native-error', retryable = false, operation?: string) {
+    super(message);
+    this.name = 'NativeOperationError';
+    this.code = code;
+    this.retryable = retryable;
+    this.operation = operation;
+  }
 }
 
 type WebViewMessage = {

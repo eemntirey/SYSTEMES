@@ -126,6 +126,21 @@ public partial class MainWindow : Window
         }
     }
 
+    private static string ClassifyHostError(Exception exception)
+    {
+        if (exception is UnauthorizedAccessException || exception is System.Security.SecurityException)
+            return "permission-required";
+        if (exception is PlatformNotSupportedException || exception is NotSupportedException)
+            return "unsupported";
+        if (exception is TimeoutException)
+            return "timeout";
+        if (exception is FileNotFoundException || exception is DirectoryNotFoundException)
+            return "not-found";
+        if (exception is IOException)
+            return "host-unavailable";
+        return "native-error";
+    }
+
     private void ReportUiSmokeFailure(Exception exception)
     {
         var resultPath = Environment.GetEnvironmentVariable("SYSTEMES_UI_SMOKE_RESULT");
@@ -145,6 +160,7 @@ public partial class MainWindow : Window
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // Only the packaged SYSTEMES origin may invoke privileged native operations.
         if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source)
             || !string.Equals(source.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(source.Host, "systemes.local", StringComparison.OrdinalIgnoreCase))
@@ -165,7 +181,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            var error = JsonSerializer.Serialize(new { id = requestId, error = ex.Message });
+            var error = JsonSerializer.Serialize(new
+            {
+                id = requestId,
+                error = ex.Message,
+                errorCode = ClassifyHostError(ex),
+                retryable = ex is TimeoutException || ex is IOException
+            });
             DesktopView.CoreWebView2.PostWebMessageAsJson(error);
         }
     }

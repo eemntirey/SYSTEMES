@@ -1,4 +1,5 @@
 import React from 'react'
+import './styles/obsidian-desktop.css'
 import { OSProvider, useOS } from './context/OSContext'
 import { Desktop } from './components/desktop/Desktop'
 import { Window } from './components/window/Window'

@@ -126,6 +126,16 @@ namespace Systemes.Native.Core
                 args: args);
         }
 
+        private static object? GetIndexedProperty(object target, string property, params object[] indexes)
+        {
+            return target.GetType().InvokeMember(
+                property,
+                BindingFlags.GetProperty,
+                binder: null,
+                target: target,
+                args: indexes);
+        }
+
         private static object? GetProperty(object? target, string property)
         {
             if (target == null) return null;

@@ -129,7 +129,7 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
         const potentialH = resizeStartRef.current.winH - dy
         if (potentialH >= MIN_HEIGHT) {
           newH = potentialH
-          newY = resizeStartRef.current.winY + dy
+          newY = Math.max(MENU_BAR_HEIGHT, resizeStartRef.current.winY + dy)
         }
       }
 
@@ -166,6 +166,7 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ window: win, children 
     const x = livePosRef.current.x
     const y = livePosRef.current.y
     const w = liveSizeRef.current.width
+
     const mon = monitorAt(x + w / 2, y + 10, layout)
     const wa = mon.workArea
 
