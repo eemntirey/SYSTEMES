@@ -553,6 +553,13 @@ systemes_apic_spurious:
     push 255
     jmp systemes_irq_common
 
+.global systemes_lapic_timer
+.type systemes_lapic_timer, @function
+systemes_lapic_timer:
+    push 0
+    push 64
+    jmp systemes_irq_common
+
 .global systemes_exception_common
 .type systemes_exception_common, @function
 systemes_exception_common:
