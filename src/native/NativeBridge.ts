@@ -149,7 +149,6 @@ function assertValidParams(params: Record<string, unknown>): void {
 }
 
 export class NativeBridge {
-  private connected = false
   private connectedTransport: WebViewMessage | null = null
   private state: NativeBridgeState = 'checking'
   private readonly stateListeners = new Set<(state: NativeBridgeState) => void>()
@@ -215,7 +214,6 @@ export class NativeBridge {
       this.setState('checking')
       transport.addEventListener('message', this.onMessage)
       this.connectedTransport = transport
-      this.connected = true
     }
   }
 
@@ -264,7 +262,6 @@ export class NativeBridge {
   disconnect(): void {
     this.connectedTransport?.removeEventListener('message', this.onMessage)
     this.connectedTransport = null
-    this.connected = false
     this.setState('unavailable')
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
