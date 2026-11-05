@@ -166,6 +166,12 @@ jobs:
             expected_vector: NONE
             expected_error: NONE
             expected_test: 'SYSTEMES_TEST: APIC spurious vector 0xFF counted without EOI'
+
+          - label: Local APIC preemptive scheduler and blocked task wakeup
+            feature: qemu-scheduler-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: Local APIC preemption switched three independent tasks'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -233,6 +239,10 @@ jobs:
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
+          if [ "${{ matrix.feature }}" = "qemu-scheduler-test" ]; then
+            grep -q 'SYSTEMES: Local APIC periodic scheduler timer configured' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified' build/uefi/debug.log
+          fi
           if [ "${{ matrix.feature }}" = "qemu-pit-timer-test" ]; then
             grep -q 'SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed' build/uefi/debug.log
             grep -q 'SYSTEMES: legacy PIC fully masked; IRQ0 delivered through IOAPIC' build/uefi/debug.log
