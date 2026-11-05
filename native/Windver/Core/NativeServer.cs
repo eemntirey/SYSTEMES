@@ -27,6 +27,7 @@ namespace Systemes.Native.Core
                 }
 
                 JToken? id = null;
+                string? operation = null;
                 try
                 {
                     var request = JObject.Parse(line);
@@ -42,6 +43,7 @@ namespace Systemes.Native.Core
                     if (methodToken?.Type != JTokenType.String)
                         throw new ArgumentException("La méthode IPC doit être une chaîne de caractères.");
                     var method = methodToken.Value<string>() ?? "";
+                    operation = method;
                     if (string.IsNullOrWhiteSpace(method) || method.Length > MaxMethodCharacters)
                         throw new ArgumentException("La méthode IPC est vide ou dépasse 128 caractères.");
 
@@ -227,7 +229,7 @@ namespace Systemes.Native.Core
                         error = SafeMessage(ex),
                         errorCode,
                         retryable,
-                        operation = id == null ? null : "native-operation",
+                        operation,
                         id
                     }));
                     Console.Out.Flush();
