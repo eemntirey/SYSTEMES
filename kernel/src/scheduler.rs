@@ -12,9 +12,10 @@ pub const MAX_TASKS: usize = 8;
 const STACK_SIZE: usize = 16 * 1024;
 const TIMER_VECTOR: usize = 0x40;
 const KERNEL_CODE_SELECTOR: usize = 0x08;
+const KERNEL_DATA_SELECTOR: usize = 0x10;
 const INITIAL_RFLAGS: usize = 0x202;
 const SAVED_REGISTER_COUNT: usize = 15;
-const INTERRUPT_FRAME_WORDS: usize = SAVED_REGISTER_COUNT + 5;
+const INTERRUPT_FRAME_WORDS: usize = SAVED_REGISTER_COUNT + 7;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -90,6 +91,9 @@ fn build_initial_context(task: *mut Task, entry: TaskEntry) -> usize {
         frame.add(17).write(entry as usize);
         frame.add(18).write(KERNEL_CODE_SELECTOR);
         frame.add(19).write(INITIAL_RFLAGS);
+        // Long-mode IRETQ restores RSP and SS as part of its 5-qword frame.
+        frame.add(20).write(top - 8);
+        frame.add(21).write(KERNEL_DATA_SELECTOR);
         frame as usize
     }
 }
@@ -182,6 +186,8 @@ pub fn validate_initial_contexts() -> bool {
                 && frame.add(17).read() != 0
                 && frame.add(18).read() == KERNEL_CODE_SELECTOR
                 && frame.add(19).read() == INITIAL_RFLAGS
+                && frame.add(20).read() != 0
+                && frame.add(21).read() == KERNEL_DATA_SELECTOR
         };
         if !valid { return false; }
     }
