@@ -135,3 +135,5 @@ export class NativeApplicationLifecycle {
     return nativeBridge.connectionState;
   }
 }
+
+export const nativeApplicationLifecycle = new NativeApplicationLifecycle();
