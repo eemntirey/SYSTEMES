@@ -10,6 +10,7 @@ pub mod interrupts;
 pub mod input;
 pub mod memory;
 pub mod paging;
+pub mod scheduler;
 pub mod ps2;
 pub mod ps2_controller;
 pub mod ps2_irq;
