@@ -581,6 +581,7 @@ systemes_exception_common:
     push r15
     mov rdi, qword ptr [rsp + 120]
     mov rsi, qword ptr [rsp + 128]
+    mov rdx, rsp
     and rsp, -16
     call systemes_exception_dispatch
 .Lsystemes_exception_halt:
@@ -1332,7 +1333,7 @@ pub unsafe fn initialize() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> ! {
+pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64, frame: *const u64) -> ! {
     #[cfg(feature = "qemu-ist-nmi-test")]
     if vector == 2 {
         let rsp: u64;
@@ -1368,6 +1369,12 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         debug_hex(vector);
         debug_write(b" error=0x");
         debug_hex(error_code);
+        debug_write(b" rip=0x");
+        debug_hex(core::ptr::read(frame.add(17)));
+        debug_write(b" cs=0x");
+        debug_hex(core::ptr::read(frame.add(18)));
+        debug_write(b" rflags=0x");
+        debug_hex(core::ptr::read(frame.add(19)));
         debug_write(b"\r\n");
         asm!("cli", options(nomem, nostack));
         loop {
