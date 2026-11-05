@@ -41,8 +41,11 @@ pub struct TaskId(pub usize);
 
 pub type TaskEntry = extern "C" fn() -> !;
 
+#[repr(align(16))]
+struct TaskStack([u8; STACK_SIZE]);
+
 struct Task {
-    stack: [u8; STACK_SIZE],
+    stack: TaskStack,
     saved_rsp: AtomicUsize,
     state: AtomicU8,
     switches: AtomicUsize,
@@ -51,7 +54,7 @@ struct Task {
 impl Task {
     const fn new() -> Self {
         Self {
-            stack: [0; STACK_SIZE],
+            stack: TaskStack([0; STACK_SIZE]),
             saved_rsp: AtomicUsize::new(0),
             state: AtomicU8::new(TaskState::Empty as u8),
             switches: AtomicUsize::new(0),
@@ -73,7 +76,7 @@ unsafe fn task_ptr(index: usize) -> *mut Task {
 fn build_initial_context(task: *mut Task, entry: TaskEntry) -> usize {
     // SAFETY: The task is exclusively initialized before the scheduler is enabled.
     unsafe {
-        let stack = core::ptr::addr_of_mut!((*task).stack).cast::<u8>();
+        let stack = core::ptr::addr_of_mut!((*task).stack.0).cast::<u8>();
         let top = stack.add(STACK_SIZE) as usize;
         let fake_return = (top - 8) as *mut usize;
         fake_return.write(task_returned as usize);
@@ -233,11 +236,15 @@ impl<T> SpinMutex<T> {
     }
 
     pub fn lock(&self) -> SpinMutexGuard<'_, T> {
-        let flags: usize;
-        // SAFETY: Reading RFLAGS and disabling maskable interrupts is valid at CPL0.
-        unsafe {
-            core::arch::asm!("pushfq", "pop {}", "cli", out(reg) flags, options(nomem));
-        }
+        #[cfg(not(test))]
+        let flags: usize = {
+            let value: usize;
+            // SAFETY: RFLAGS is read and maskable interrupts are disabled at CPL0.
+            unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) value, options(nomem)); }
+            value
+        };
+        #[cfg(test)]
+        let flags: usize = 0;
         while self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             core::hint::spin_loop();
         }
@@ -268,8 +275,9 @@ impl<T> DerefMut for SpinMutexGuard<'_, T> {
 impl<T> Drop for SpinMutexGuard<'_, T> {
     fn drop(&mut self) {
         self.mutex.locked.store(false, Ordering::Release);
+        #[cfg(not(test))]
         if self.restore_interrupts {
-            // SAFETY: Restore the caller's prior interrupt-enable state after unlock.
+            // SAFETY: Restore the prior interrupt-enable state after unlock.
             unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
         }
     }
