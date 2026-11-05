@@ -348,7 +348,35 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
-    unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    unsafe { debug_write(b"SYSTEMES_KERNEL_OK\\r\\n") };
+    #[cfg(feature = "qemu-scheduler-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for preemptive task progress\\r\\n"); }
+        while SCHEDULER_WORK_A.load(Ordering::Acquire) < 100
+            || SCHEDULER_WORK_B.load(Ordering::Acquire) < 100
+            || SCHEDULER_BLOCKED_RESUMES.load(Ordering::Acquire) < 1
+            || *SCHEDULER_SHARED_COUNT.lock() < 100
+            || systemes_kernel::interrupts::local_timer_ticks() < 8
+        {
+            if systemes_kernel::interrupts::local_timer_ticks() > 2000 {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler progress timeout\\r\\n"); }
+                halt();
+            }
+            core::hint::spin_loop();
+        }
+        let switches_a = systemes_kernel::scheduler::switch_count(TaskId(1)).unwrap_or(0);
+        let switches_b = systemes_kernel::scheduler::switch_count(TaskId(2)).unwrap_or(0);
+        let switches_blocked = systemes_kernel::scheduler::switch_count(TaskId(3)).unwrap_or(0);
+        if switches_a == 0 || switches_b == 0 || switches_blocked == 0 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler context switch counters invalid\\r\\n"); }
+            halt();
+        }
+        unsafe { systemes_kernel::interrupts::stop_local_apic_timer(); }
+        unsafe { systemes_kernel::interrupts::disable_hardware_interrupts(); }
+        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preemption switched three independent tasks\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified\\r\\n"); }
+        halt();
+    }
     #[cfg(feature = "qemu-pit-timer-test")]
     {
         if !apic_initialized || !systemes_kernel::interrupts::apic_active() {
