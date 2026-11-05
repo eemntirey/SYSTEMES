@@ -195,6 +195,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
 
   return (
     <div
+      className="obsidian-desktop"
       ref={desktopRef}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -243,6 +244,7 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
 
       {/* Desktop Icons Grid — minimal macOS style */}
       <div
+        className="desktop-icons-grid"
         style={{
           position: 'absolute',
           top: `${MENU_BAR_HEIGHT + 20}px`,
