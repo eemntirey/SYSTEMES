@@ -27,7 +27,7 @@ namespace Systemes.Native.Core
             var powershellPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.System),
                 "WindowsPowerShell", "v1.0", "powershell.exe");
-            var hasWifiAdapter = false;
+            bool? hasWifiAdapter = null;
             try
             {
                 hasWifiAdapter = NetworkInterface.GetAllNetworkInterfaces()
@@ -35,6 +35,7 @@ namespace Systemes.Native.Core
             }
             catch
             {
+                hasWifiAdapter = null;
                 // A failed inventory is reported as unavailable, never as an invented adapter.
             }
 
@@ -72,8 +73,8 @@ namespace Systemes.Native.Core
                 new
                 {
                     id = "wifi",
-                    state = hasWifiAdapter ? "ready" : "unsupported",
-                    reason = hasWifiAdapter ? "Un adaptateur Wi-Fi a été détecté." : "Aucun adaptateur Wi-Fi n’a été détecté ou l’inventaire est indisponible.",
+                    state = hasWifiAdapter == true ? "ready" : hasWifiAdapter == false ? "unsupported" : "unavailable",
+                    reason = hasWifiAdapter == true ? "Un adaptateur Wi-Fi a été détecté." : hasWifiAdapter == false ? "Aucun adaptateur Wi-Fi n’a été détecté." : "L’inventaire des adaptateurs Wi-Fi est indisponible.",
                     requiresAdministratorForSomeOperations = true
                 },
                 new
