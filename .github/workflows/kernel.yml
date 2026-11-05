@@ -29,9 +29,9 @@ jobs:
         with:
           targets: x86_64-unknown-none
       - name: Run host-side contract tests
-        run: cargo test --manifest-path kernel/Cargo.toml
+        run: cargo test --all-features --manifest-path kernel/Cargo.toml
       - name: Check no_std x86_64 target
-        run: cargo check --manifest-path kernel/Cargo.toml --target x86_64-unknown-none
+        run: cargo check --all-features --manifest-path kernel/Cargo.toml --target x86_64-unknown-none
 
   uefi-qemu-boot:
     name: Build UEFI loader and boot kernel in QEMU/OVMF
@@ -49,13 +49,19 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
+          kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
+          test -n "$kernel_end"
+          kernel_image_bytes=$((kernel_end - 0x00200000))
+          test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
+          echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
+          echo "Kernel image reservation: ${kernel_image_bytes} bytes (including .bss)"
       - name: Build GNU-EFI loader
         run: |
-          gcc -g -O0 -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
+          gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
           ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
           objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
           test -s build/uefi/BOOTX64.EFI
@@ -97,6 +103,9 @@ jobs:
           grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: kernel entry reached' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
+          grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
+          grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
+          grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
       - name: Upload boot evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -6,17 +6,20 @@ on:
       - main
       - AttaqueComplet
       - phase3-native-windows-settings
+      - Phase2-Parametres-Natifs
+      - Phase3-Services-Windows
       - feat/systemes-modernisation-apps
       - Osreell
   pull_request:
     branches:
       - main
+      - Phase2-Parametres-Natifs
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -43,6 +46,7 @@ jobs:
   windows-native-host:
     name: Windows native host build
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,6 +98,8 @@ jobs:
             $testDir = Join-Path $testRoot "created-dir"
             $requests = @(
               @{ id = "phase2-ping"; method = "system/ping"; params = @{} },
+              @{ id = "phase2-capabilities"; method = "system/capabilities"; params = @{} },
+              @{ id = "phase2-permissions"; method = "system/permissions/read"; params = @{} },
               @{ id = "phase-settings-invalid"; method = "system/open-settings"; params = @{ page = "arbitrary-command" } },
               @{ id = "phase-power-read"; method = "system/power/read"; params = @{} },
               @{ id = "phase-power-invalid-set"; method = "system/power/set"; params = @{ guid = "not-a-guid" } },
@@ -157,6 +163,12 @@ jobs:
             }
 
             if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
+            $capabilities = $responses["phase2-capabilities"].result
+            if ($capabilities.platform -ne "windows" -or -not $capabilities.osVersion -or -not $capabilities.architecture) { throw "system/capabilities returned incomplete Windows platform metadata." }
+            if ($capabilities.capabilities.Count -lt 5) { throw "system/capabilities returned too few capability records." }
+            if ($null -eq $capabilities.isAdministrator) { throw "system/capabilities did not report the current administrator state." }
+            $permissions = $responses["phase2-permissions"].result
+            if (-not $permissions.userName -or -not $permissions.source -or $null -eq $permissions.isAuthenticated) { throw "system/permissions/read returned an incomplete Windows token context." }
             if (-not $responses["phase-settings-invalid"].error) { throw "system/open-settings must reject pages outside its allowlist." }
             if ($null -eq $responses["phase-power-read"].result.schemes -or $responses["phase-power-read"].result.schemes.Count -lt 1) { throw "system/power/read returned no actual power schemes." }
             if (-not $responses["phase-power-read"].result.activeGuid) { throw "system/power/read returned no active power scheme." }
@@ -178,6 +190,8 @@ jobs:
             if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
             if ($null -eq $responses["phase2-devices"].result.devices -or $null -eq $responses["phase2-devices"].result.count -or $null -eq $responses["phase2-devices"].result.problemCount -or -not $responses["phase2-devices"].result.source) { throw "devices/read returned no Plug and Play health inventory." }
             if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
+            $protectedRpc = @($responses["phase2-services"].result.services | Where-Object { $_.name -eq "RpcSs" -and $_.isProtected -eq $true })
+            if ($protectedRpc.Count -ne 1) { throw "services/read did not mark the Windows RPC service as protected." }
             if (-not $responses["phase2-protected-service-stop"].error) { throw "services/control allowed stopping a protected Windows RPC service." }
             if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
             if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
@@ -197,7 +211,7 @@ jobs:
             if (-not $responses["phase2-file-ads"].error) { throw "files/read-content accepted an NTFS alternate data stream path." }
             if (-not $responses["phase2-file-device-path"].error) { throw "files/read-content accepted a Windows device namespace path." }
             $terminal = $responses["phase2-terminal"].result
-            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command." }
+            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command. Response: $($responses['phase2-terminal'] | ConvertTo-Json -Compress -Depth 8)" }
             if ($terminal.workingDirectory -ne $testRoot) { throw "terminal/execute did not preserve the requested working directory." }
             if ($terminal.elevated -ne $false) { throw "terminal/execute must never elevate automatically." }
 
@@ -221,8 +235,8 @@ jobs:
             if ($responses["phase2-collision-read"].result.content -ne "keep existing file") { throw "A failed rename modified the existing destination file." }
             if ($responses["phase2-collision-delete"].result.deleted -ne $true) { throw "Collision test cleanup failed." }
             if ($responses["phase2-locations"].result.locations.Count -lt 1) { throw "files/locations returned no Windows locations." }
-            if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
-            if (-not $responses["phase2-invalid-params"].error) { throw "Native IPC must reject non-object params." }
+            if (-not $responses["phase2-unknown"].error -or $responses["phase2-unknown"].errorCode -ne "unsupported") { throw "Unknown native methods must return a structured unsupported error." }
+            if (-not $responses["phase2-invalid-params"].error -or $responses["phase2-invalid-params"].errorCode -ne "invalid-argument") { throw "Native IPC must reject non-object params with invalid-argument." }
             if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
             if (Test-Path (Join-Path $testRoot "renamed-dir")) { throw "Native directory deletion did not remove the source from its original location." }
 

@@ -283,7 +283,8 @@ export const SettingsApp: React.FC = () => {
             />)}
             {storageSnapshot && <Row title={`${storageSnapshot.diskCount} disque(s) physique(s)`} description={`${storageSnapshot.source} · Inventaire en lecture seule ; aucune opération sur les partitions.`} last />}
           </Group>
-        </>      case 'accounts':
+        </>
+      case 'accounts':
         return <>
           <div style={{ ...panel, padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--win-accent)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 22 }}>U</div><div><div style={{ fontSize: 17, fontWeight: 650 }}>Utilisateur</div><div style={muted}>Compte local · Session actuelle</div></div></div>
           <Group title="Synchronisation"><Row title="Synchroniser les paramètres" description="Préférence locale ; aucun compte cloud n’est connecté." control={toggle(s.syncSettings, s.toggleSyncSettings, 'Synchronisation')} last /></Group>
