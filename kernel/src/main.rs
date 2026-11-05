@@ -21,6 +21,7 @@ static SCHEDULER_SHARED_COUNT: SpinMutex<usize> = SpinMutex::new(0);
 
 #[cfg(feature = "qemu-scheduler-test")]
 extern "C" fn scheduler_worker_a() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler task A entered\\r\\n"); }
     loop {
         SCHEDULER_WORK_A.fetch_add(1, Ordering::Relaxed);
         *SCHEDULER_SHARED_COUNT.lock() += 1;
@@ -30,6 +31,7 @@ extern "C" fn scheduler_worker_a() -> ! {
 
 #[cfg(feature = "qemu-scheduler-test")]
 extern "C" fn scheduler_worker_b() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler task B entered\\r\\n"); }
     loop {
         SCHEDULER_WORK_B.fetch_add(1, Ordering::Relaxed);
         *SCHEDULER_SHARED_COUNT.lock() += 1;
@@ -40,6 +42,7 @@ extern "C" fn scheduler_worker_b() -> ! {
 
 #[cfg(feature = "qemu-scheduler-test")]
 extern "C" fn scheduler_blocked_worker() -> ! {
+    unsafe { debug_write(b"SYSTEMES_TEST: scheduler blocked task entered\\r\\n"); }
     loop {
         systemes_kernel::scheduler::block_current();
         SCHEDULER_BLOCKED_RESUMES.fetch_add(1, Ordering::Relaxed);
