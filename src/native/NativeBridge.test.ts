@@ -61,6 +61,28 @@ describe('NativeBridge WebView2 transport', () => {
     bridge.disconnect();
   });
 
+  it('reattaches the message listener when the WebView2 transport is replaced', async () => {
+    const bridge = new NativeBridge();
+    await bridge.connect();
+    const firstTransport = (window as Window & { chrome?: { webview?: unknown } }).chrome?.webview;
+    Object.defineProperty(window, 'chrome', {
+      configurable: true,
+      value: {
+        webview: {
+          postMessage,
+          addEventListener: vi.fn((_type: string, listener: Listener) => listeners.push(listener)),
+          removeEventListener: vi.fn((_type: string, listener: Listener) => {
+            listeners = listeners.filter((candidate) => candidate !== listener);
+          }),
+        },
+      },
+    });
+    await bridge.connect();
+    expect(firstTransport).not.toBe((window as Window & { chrome?: { webview?: unknown } }).chrome?.webview);
+    expect(listeners).toHaveLength(1);
+    bridge.disconnect();
+  });
+
   it('preserves structured permission errors from the native engine', async () => {
     const bridge = new NativeBridge();
     const pending = bridge.send('files/write', { path: 'C:/protected/file.txt', content: 'x' });
