@@ -5,6 +5,7 @@
 //! This crate deliberately contains no Windows, WPF, WebView2, or standard-library
 //! dependencies. The UEFI loader will populate BootInfo before transferring control.
 
+pub mod acpi;
 pub mod interrupts;
 pub mod memory;
 pub mod paging;
