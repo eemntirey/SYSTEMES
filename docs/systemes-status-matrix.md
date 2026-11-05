@@ -24,20 +24,36 @@ partir de :
 | Élément | Valeur vérifiée |
 | --- | --- |
 | `main` | `0b732fd` — K3.1.2 « Cycle de vie natif des applications » (#34), 275 commits |
-| PR #35 (K2.7) | tête `13a002f`, **non fusionnée** dans `main` ; ref de merge `a2de819` présente ; branche `feat/k2-7-preemptive-kernel-scheduler` = 134 commits d'avance sur `main` |
-| Branche de cette PR | `feat/k2-8-fpu-simd-context`, empilée sur la tête de #35 |
-| Noyau dans `main` | K2.1 allocateur de frames, K2.2 GDT/IDT/exceptions, K2.3 paging noyau |
+| PR #35 (K2.7) | tête `13a002f`, état **open**, **base `k2-apic-ioapic-irq-routing`** (et non `main`), `mergeable_state=unstable` ; 29 commits / 8 fichiers contre sa base, 134 commits d'avance sur `main` ; 10 checks noyau verts mais `Kilo Code Review` = `action_required` et statut combiné `pending` |
+| Chaîne de PR noyau | #16 → #17 → #18 → #19 → #20 → #21 → #35 : PR empilées ; #16 vise `main`, chaque suivante vise la branche de la précédente ; #17 à #21 sont des **drafts** |
+| Branche de cette PR | `feat/k2-8-fpu-simd-context` (commit `d03d43e`), base de PR = `feat/k2-7-preemptive-kernel-scheduler` (branche de #35) |
+| Noyau dans `main` | K2.1 allocateur de frames, K2.2 GDT/IDT/exceptions, K2.3 paging noyau, `main` étant aussi la base de #16 |
 | Noyau sur la branche K2.7 | + K2.4 W^X/NX, K2.5 TSS/IST, K2.6 ACPI/APIC/IOAPIC/PS/2, K2.7 scheduler |
 | CI | `ci.yml` (typecheck/tests/build web + hôte natif Windows), `kernel.yml` (contrat noyau, boot UEFI QEMU, matrice de 8 scénarios matériels après cette PR) |
-| Accès GitHub authentifié | **indisponible dans cet environnement** : `api.github.com` renvoie 403 (quota non authentifié) et les pages HTML sont tronquées. Les états de review/checks par commit ne sont donc pas vérifiables ici. |
+| Accès GitHub | API authentifiée disponible via le credential Git local ; les états de PR et de checks ci-dessus ont été lus par API le 2026-11-05 |
 
-### Pourquoi K2.7 n'apparaît pas dans `main`
+### Pourquoi K2.4–K2.7 n'apparaissent pas dans `main`
 
-Le graphe de commits montre que K2.4 → K2.7 ont été développés sur une branche
-longue durée et que les PR intermédiaires (#22, #28, #30, #33) ont été fusionnées
-**dans cette branche**, pas dans `main`. La PR #35 porte donc l'intégralité de
-K2.4–K2.7. Toute nouvelle phase noyau doit s'empiler sur #35 tant qu'elle n'est
-pas fusionnée, sans quoi les dépendances K2.4–K2.7 seraient cassées.
+Le noyau avance par une chaîne de PR empilées. Chaque branche contient les
+commits cumulés de la précédente, et chaque PR vise la branche précédente :
+
+```text
+main
+ └─ #16 k2-memory-protection            (draft)
+     └─ #17 k2-memory-fault-validation  (draft)
+         └─ #18 k2-tss-ist-exception-stacks (draft)
+             └─ #19 k2-pic-pit-hardware-irqs (draft)
+                 └─ #20 k2-apic-discovery-local-controller (draft)
+                     └─ #21 k2-apic-ioapic-irq-routing (draft)
+                         └─ #35 feat/k2-7-preemptive-kernel-scheduler (open)
+                             └─ cette PR K2.8
+```
+
+Conséquence : K2.8 doit viser directement la branche de #35, et l'ordre de
+fusion imposé par les dépendances est #16 → #17 → #18 → #19 → #20 → #21 → #35 →
+cette PR (ou une réintégration explicite de la chaîne). Aucune de ces PR ne peut
+être fusionnée tant que le commit exact n'a pas tous ses checks verts et qu'une
+autorisation explicite n'a pas été donnée.
 
 ## A. Noyau (kernel)
 
@@ -47,13 +63,13 @@ pas fusionnée, sans quoi les dépendances K2.4–K2.7 seraient cassées.
 | K2.1 — allocateur de frames physique | TERMINÉ | `kernel/src/memory.rs`, tests hôtes |
 | K2.2 — GDT, IDT, exceptions CPU | TERMINÉ | `kernel/src/interrupts.rs` |
 | K2.3 — paging noyau 4 niveaux | TERMINÉ | `kernel/src/paging.rs` |
-| K2.4 — NX, W^X, fautes mémoire réelles | TERMINÉ (branche) | scénarios QEMU `qemu-nx-execute-test`, `qemu-rx-write-test` |
-| K2.5 — TSS, piles IST, routage IDT | TERMINÉ (branche) | scénarios `qemu-ist-nmi-test`, `qemu-ist-machine-check-test` |
-| K2.6.1 — découverte/validation ACPI MADT | TERMINÉ (branche) | `kernel/src/acpi.rs`, tests hôtes |
-| K2.6.2 — xAPIC/IOAPIC, routage IRQ0/PIT | TERMINÉ (branche) | scénario `qemu-pit-timer-test` |
-| K2.6.3 — IRQ spurious et dispatch matériel | TERMINÉ (branche) | scénario `qemu-apic-spurious-test` |
-| K2.6.4 — PS/2 8042, décodeurs, IRQ1/IRQ12, E2E QMP | TERMINÉ (branche) | `kernel-ps2-input.yml`, PR #28/#30/#33 |
-| K2.7 — scheduler préemptif mono-cœur | EN COURS | PR #35 ouverte, non fusionnée ; badge `kernel.yml` de la branche = passing |
+| K2.4 — NX, W^X, fautes mémoire réelles | EN COURS | code + QEMU verts sur la branche ; PR #16 (draft) et #17 (draft) non fusionnées |
+| K2.5 — TSS, piles IST, routage IDT | EN COURS | scénarios `qemu-ist-nmi-test`, `qemu-ist-machine-check-test` ; PR #18 (draft) |
+| K2.6.1 — découverte/validation ACPI MADT | EN COURS | `kernel/src/acpi.rs`, tests hôtes ; PR #20 (draft) |
+| K2.6.2 — xAPIC/IOAPIC, routage IRQ0/PIT | EN COURS | scénario `qemu-pit-timer-test` ; PR #21 (draft) |
+| K2.6.3 — IRQ spurious et dispatch matériel | EN COURS | scénario `qemu-apic-spurious-test` ; dans la chaîne #19–#35 |
+| K2.6.4 — PS/2 8042, décodeurs, IRQ1/IRQ12, E2E QMP | EN COURS | `kernel-ps2-input.yml`, PR #28/#30/#33 fusionnées dans la branche ; pas dans `main` |
+| K2.7 — scheduler préemptif mono-cœur | EN COURS | PR #35 open, base `k2-apic-ioapic-irq-routing` ; 10 checks verts, `Kilo Code Review` = `action_required`, statut combiné `pending` |
 | K2.8 — contexte FPU/SIMD par tâche | EN COURS | cette PR ; QEMU/OVMF local vert + contrôle négatif |
 | K2.9 — calibration du timer Local APIC | À DÉVELOPPER | la valeur `250 000` est provisoire (documentée en K2.7) |
 | SMP, démarrage des AP, IPI, synchronisation inter-processeur | À DÉVELOPPER | aucun code |
@@ -181,12 +197,13 @@ chargeur d'applications n'existe.
 
 ## Blocages et vérifications restantes
 
-1. **Fusion de #35** : impossible à valider ici (pas d'accès API authentifié
-   pour lire les checks du commit exact, pas d'autorisation de fusion). Le badge
-   public indique « passing » sur la branche, ce qui ne remplace pas la
-   vérification du commit exact.
-2. **CI de cette PR** : à confirmer par le workflow `kernel.yml` déclenché par la
-   PR (le job FPU et le boot standard sont les preuves attendues).
+1. **Chaîne de PR noyau non fusionnée** : #16 → #17 → #18 → #19 → #20 → #21 →
+   #35. Les #17 à #21 sont des drafts ; #35 est ouverte mais son check
+   `Kilo Code Review` est en `action_required` et le statut combiné est
+   `pending`. Aucune fusion n'est donc possible sans intervention humaine et
+   autorisation explicite.
+2. **CI de cette PR** : à confirmer par les workflows déclenchés sur le commit
+   exact `d03d43e` (contrat noyau, boot standard et scénario FPU).
 3. **Matériel physique** : jamais testé. UEFI/OVMF en QEMU n'est pas une preuve
    de compatibilité matérielle réelle (ACPI, APIC, PS/2, GOP varient).
 4. **Windows n'est pas encore supprimé de l'écosystème** : le bureau et les
@@ -195,7 +212,8 @@ chargeur d'applications n'existe.
 
 ## Prochaines tâches techniquement réalisables
 
-1. Fusionner #35 puis cette PR après CI verte sur le commit exact et autorisation.
+1. Fusionner la chaîne #16→#35 puis cette PR, dans l'ordre des dépendances,
+   uniquement après checks verts sur le commit exact et autorisation explicite.
 2. K2.9 : calibrer le timer Local APIC (PIT/TSC) et exposer une horloge noyau
    monotone en millisecondes.
 3. Heap noyau + création/destruction dynamique de tâches sur cette base.
