@@ -1186,7 +1186,17 @@ pub fn verify_irq_gates() -> bool {
             return false;
         }
     }
-    true
+    let timer = unsafe { &*idt.add(LOCAL_SCHEDULER_TIMER_VECTOR as usize) };
+    let timer_selector = unsafe { addr_of!(timer.selector).read_unaligned() };
+    let timer_attributes = unsafe { addr_of!(timer.attributes).read_unaligned() };
+    let timer_low = unsafe { addr_of!(timer.offset_low).read_unaligned() };
+    let timer_middle = unsafe { addr_of!(timer.offset_middle).read_unaligned() };
+    let timer_high = unsafe { addr_of!(timer.offset_high).read_unaligned() };
+    let timer_handler = timer_low as u64 | ((timer_middle as u64) << 16) | ((timer_high as u64) << 32);
+    timer_selector == KERNEL_CODE_SELECTOR
+        && timer_attributes == EXCEPTION_GATE_ATTRIBUTES
+        && timer_handler != 0
+        && timer.ist == 0
 }
 
 /// Install a private ring-0 GDT, TSS and IST-backed gates for CPU exceptions 0..31.
