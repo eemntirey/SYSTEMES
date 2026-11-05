@@ -36,3 +36,6 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Rust build outputs
+/kernel/target/

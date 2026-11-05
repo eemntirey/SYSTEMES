@@ -103,6 +103,8 @@ jobs:
           grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: kernel entry reached' build/uefi/debug.log
           grep -q 'SYSTEMES: CPU NX capability detected and EFER.NXE enabled' build/uefi/debug.log
+          grep -q 'SYSTEMES: x87/SSE (FXSAVE64) state enabled and round-trip verified' build/uefi/debug.log
+          grep -q 'SYSTEMES: per-task FXSAVE64 context images initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX' build/uefi/debug.log
           grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked' build/uefi/debug.log
@@ -172,6 +174,11 @@ jobs:
             expected_vector: NONE
             expected_error: NONE
             expected_test: 'SYSTEMES_TEST: Local APIC preemption switched three independent tasks'
+          - label: x87/SSE context isolation across preemptive tasks
+            feature: qemu-fpu-context-test
+            expected_vector: NONE
+            expected_error: NONE
+            expected_test: 'SYSTEMES_TEST: x87/SSE context preserved across preemptive task switches'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -246,6 +253,13 @@ jobs:
           if [ "${{ matrix.feature }}" = "qemu-scheduler-test" ]; then
             grep -q 'SYSTEMES: Local APIC periodic scheduler timer configured' build/uefi/debug.log
             grep -q 'SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified' build/uefi/debug.log
+            grep -q 'SYSTEMES: per-task FXSAVE64 context images initialized' build/uefi/debug.log
+          fi
+          if [ "${{ matrix.feature }}" = "qemu-fpu-context-test" ]; then
+            grep -q 'SYSTEMES: x87/SSE (FXSAVE64) state enabled and round-trip verified' build/uefi/debug.log
+            grep -q 'SYSTEMES: per-task FXSAVE64 context images initialized' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: boot task x87/SSE state restored after worker preemption' build/uefi/debug.log
+            grep -q 'SYSTEMES_TEST: three FPU tasks retained distinct control words and XMM registers' build/uefi/debug.log
           fi
           if [ "${{ matrix.feature }}" = "qemu-pit-timer-test" ]; then
             grep -q 'SYSTEMES: xAPIC enabled; IOAPIC PIT IRQ0 route installed' build/uefi/debug.log
