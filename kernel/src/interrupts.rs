@@ -1297,8 +1297,15 @@ pub unsafe fn initialize() {
         unsafe { idt.add(IRQ_VECTOR_BASE + irq).write(IdtEntry::interrupt_gate(*handler as u64, 0)) };
     }
 
-    // The Local APIC spurious vector is architecturally 0xFF; it must have a gate.
-    unsafe { idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)) };
+    // Local APIC scheduler timer and spurious vectors have dedicated gates.
+    unsafe {
+        idt.add(LOCAL_SCHEDULER_TIMER_VECTOR as usize).write(
+            IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64, 0)
+        );
+        idt.add(0xFF).write(
+            IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0)
+        );
+    }
 
     let idt_pointer = DescriptorTablePointer {
         limit: (256 * core::mem::size_of::<IdtEntry>() - 1) as u16,
