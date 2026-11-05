@@ -192,7 +192,37 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\r\n") };
     }
 
+    // Keep all IRQ lines masked except PIT IRQ0 until the timer is fully programmed.
+    unsafe { systemes_kernel::interrupts::initialize_pic_pit() };
+    if systemes_kernel::interrupts::legacy_pic_masks() != (0xFE, 0xFF) {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: legacy PIC masks are not IRQ0-only\\r\\n"); }
+        halt();
+    }
+    if !systemes_kernel::interrupts::verify_irq_gates() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PIC IRQ IDT gates invalid\\\\r\\\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: 8259 PIC remapped to 0x20/0x28; only IRQ0 unmasked\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES: PIT channel 0 programmed at 100 Hz\\r\\n"); }
+    unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
+    unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
+
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-pit-timer-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for three PIT IRQ0 ticks\\r\\n"); }
+        while systemes_kernel::interrupts::timer_ticks() < 3 {
+            // SAFETY: STI is active and PIT IRQ0 is the only unmasked PIC line.
+            unsafe { asm!("hlt", options(nomem, nostack)); }
+        }
+        unsafe { systemes_kernel::interrupts::disable_hardware_interrupts() };
+        let ticks = systemes_kernel::interrupts::timer_ticks();
+        if ticks < 3 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PIT timer did not advance\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: PIT IRQ0 delivered at least three timer ticks\\r\\n"); }
+    }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
         unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 2 through IST2\r\n"); }
