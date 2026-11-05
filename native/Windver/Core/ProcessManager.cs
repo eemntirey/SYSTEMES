@@ -277,5 +277,64 @@ namespace Systemes.Native.Core
                 throw new InvalidOperationException("Le processus n’existe plus.");
             }
         }
+
+        private static readonly string[] AllowedLaunchRoots =
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+        };
+
+        private static readonly string[] BlockedExecutableNames =
+        {
+            "regedit", "regedit.exe", "msconfig", "msconfig.exe", "taskmgr", "taskmgr.exe",
+            "services", "services.exe", "netsh", "netsh.exe", "gpedit", "gpedit.msc",
+            "diskpart", "diskpart.exe", "bcdedit", "bcdedit.exe",
+        };
+
+        public static object LaunchProcess(string executablePath, string? arguments)
+        {
+            if (string.IsNullOrWhiteSpace(executablePath))
+                throw new ArgumentException("Le chemin de l’exécutable est obligatoire.", nameof(executablePath));
+
+            var resolved = Path.GetFullPath(executablePath);
+            if (!File.Exists(resolved))
+                throw new FileNotFoundException($"L’exécutable est introuvable : {resolved}");
+
+            var name = Path.GetFileName(resolved).ToLowerInvariant();
+            if (BlockedExecutableNames.Contains(name))
+                throw new UnauthorizedAccessException($"L’exécutable « {name} » est réservé au système et ne peut pas être lancé depuis SYSTEMES.");
+
+            var rootOk = AllowedLaunchRoots.Any(root =>
+                !string.IsNullOrWhiteSpace(root) && resolved.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+            if (!rootOk)
+                throw new UnauthorizedAccessException("L’exécutable se trouve hors des répertoires autorisés (Program Files, Windows, profil utilisateur, Bureau).");
+
+            var start = new ProcessStartInfo
+            {
+                FileName = resolved,
+                Arguments = arguments ?? "",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = Path.GetDirectoryName(resolved) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            };
+
+            using var process = Process.Start(start)
+                ?? throw new InvalidOperationException("Windows n’a pas pu démarrer l’exécutable.");
+
+            return new
+            {
+                launched = true,
+                pid = process.Id,
+                name = process.ProcessName,
+                path = resolved,
+                arguments = arguments ?? "",
+                note = "Processus lancé en lecture seule, sans élévation de privilèges."
+            };
+        }
     }
 }

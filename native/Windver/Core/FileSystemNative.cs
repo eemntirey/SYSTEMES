@@ -424,5 +424,56 @@ namespace Systemes.Native.Core
                 note = "Liste de contrôle d’accès (ACL) réellement lue depuis Windows ; aucune permission n’a été modifiée."
             };
         }
+
+        public static object ReadNetworkLocations()
+        {
+            var locations = new System.Collections.Generic.List<object>();
+            try
+            {
+                using var searcher = new System.Management.ManagementObjectSearcher(
+                    "SELECT LocalName, RemoteName, ConnectionState, Name FROM Win32_NetworkConnection");
+                foreach (System.Management.ManagementObject item in searcher.Get())
+                {
+                    locations.Add(new
+                    {
+                        localName = item["LocalName"]?.ToString() ?? "",
+                        remoteName = item["RemoteName"]?.ToString() ?? "",
+                        connectionState = item["ConnectionState"]?.ToString() ?? "",
+                        shareName = item["Name"]?.ToString() ?? "",
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return new { error = ex.Message, locations = locations.ToArray(), note = "Lecture des lecteurs réseau indisponible." };
+            }
+            return new { locations = locations.ToArray(), count = locations.Count, note = "Lecteurs réseau mappés réellement lus depuis WMI Win32_NetworkConnection." };
+        }
+
+        public static object ReadFileProperties(string path)
+        {
+            var resolvedPath = ResolvePath(path);
+            if (!File.Exists(resolvedPath) && !Directory.Exists(resolvedPath))
+                throw new FileNotFoundException("L’élément à examiner n’existe plus.", resolvedPath);
+
+            var info = new FileInfo(resolvedPath);
+            var isDirectory = (info.Attributes & FileAttributes.Directory) == FileAttributes.Directory;
+
+            return new
+            {
+                path = info.FullName.Replace('\\', '/'),
+                name = info.Name,
+                isDirectory,
+                length = isDirectory ? null : (long?)info.Length,
+                created = info.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                modified = info.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                accessed = info.LastAccessTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                attributes = info.Attributes.ToString(),
+                isReadOnly = (info.Attributes & FileAttributes.ReadOnly) != 0,
+                isHidden = (info.Attributes & FileAttributes.Hidden) != 0,
+                extension = isDirectory ? null : info.Extension.TrimStart('.'),
+                note = "Propriétés réellement lues depuis Windows ; lecture seule, aucune modification."
+            };
+        }
     }
 }

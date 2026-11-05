@@ -209,6 +209,17 @@ namespace Systemes.Native.Core
                         case "update/check":
                             result = WindowsUpdateNative.CheckRealUpdates();
                             break;
+                        case "process/launch":
+                            result = ProcessManager.LaunchProcess(
+                                args["path"]?.Value<string>() ?? "",
+                                args["arguments"]?.Value<string>());
+                            break;
+                        case "files/network-locations":
+                            result = FileSystemNative.ReadNetworkLocations();
+                            break;
+                        case "files/properties/read":
+                            result = FileSystemNative.ReadFileProperties(args["path"]?.Value<string>() ?? "");
+                            break;
                         default:
                             throw new NotSupportedException($"Unknown native method: {method}");
                     }
