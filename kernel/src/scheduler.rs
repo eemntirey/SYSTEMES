@@ -168,6 +168,26 @@ pub fn on_timer(saved_rsp: usize) -> usize {
     saved_rsp
 }
 
+/// Validate the synthetic IRETQ frames before the first hardware preemption.
+pub fn validate_initial_contexts() -> bool {
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    for index in 1..count {
+        // SAFETY: Each saved pointer was built from a live static task stack.
+        let rsp = unsafe { (*task_ptr(index)).saved_rsp.load(Ordering::Acquire) };
+        if rsp == 0 { return false; }
+        let frame = rsp as *const usize;
+        let valid = unsafe {
+            frame.add(15).read() == TIMER_VECTOR
+                && frame.add(16).read() == 0
+                && frame.add(17).read() != 0
+                && frame.add(18).read() == KERNEL_CODE_SELECTOR
+                && frame.add(19).read() == INITIAL_RFLAGS
+        };
+        if !valid { return false; }
+    }
+    true
+}
+
 pub fn current_task() -> TaskId {
     TaskId(CURRENT_TASK.load(Ordering::Acquire))
 }
