@@ -36,6 +36,7 @@ pub enum ControllerError {
     SelfTestFailed(u8),
     ConfigReadFailed,
     ConfigWriteFailed,
+    DeviceCommandFailed,
     KeyboardInterfaceFailed(u8),
     AuxiliaryInterfaceFailed(u8),
 }
@@ -121,6 +122,32 @@ pub unsafe fn enable_interrupts(auxiliary_ready: bool) -> Result<(), ControllerE
             || verified & CONFIG_AUX_DISABLED != expected_disabled_bits
             || verified & CONFIG_TRANSLATION == 0 {
             return Err(ControllerError::ConfigWriteFailed);
+        }
+    }
+    Ok(())
+}
+
+
+/// Enable scanning/reporting on the attached PS/2 devices before unmasking IRQs.
+/// The controller clock and IRQ bits are configured separately; each device must
+/// acknowledge F4 (Enable Scanning / Enable Data Reporting) before IRQ delivery.
+pub unsafe fn initialize_devices(auxiliary_ready: bool) -> Result<(), ControllerError> {
+    unsafe {
+        flush_output();
+
+        // Keyboard: enable scan-code reporting and require the device ACK.
+        write_data(0xF4)?;
+        if read_data()? != 0xFA {
+            return Err(ControllerError::DeviceCommandFailed);
+        }
+
+        // Mouse: commands are prefixed with 0xD4 to target the auxiliary port.
+        if auxiliary_ready {
+            command(0xD4)?;
+            write_data(0xF4)?;
+            if read_data()? != 0xFA {
+                return Err(ControllerError::DeviceCommandFailed);
+            }
         }
     }
     Ok(())

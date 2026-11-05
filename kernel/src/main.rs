@@ -267,6 +267,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     } else if !ps2_ready {
         unsafe { debug_write(b"SYSTEMES: PS/2 controller unavailable; IRQs remain disabled\\r\\n"); }
     }
+    if ps2_ready {
+        // Device-level reporting is distinct from enabling the 8042 controller
+        // clocks and IRQ bits. Require ACKs before allowing PS/2 IRQ delivery.
+        if unsafe { systemes_kernel::ps2_controller::initialize_devices(auxiliary_ready) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 device reporting initialization failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: PS/2 keyboard scanning and mouse reporting enabled\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
@@ -355,6 +364,48 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
         unsafe { asm!("int3", options(nomem, nostack)) };
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
+        halt();
+    }
+    #[cfg(feature = "qemu-ps2-input-test")]
+    {
+        if !apic_initialized || !systemes_kernel::interrupts::apic_active() || !ps2_ready || !auxiliary_ready {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input integration prerequisites unavailable\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS2_INPUT_READY\\r\\n"); }
+        let start_ticks = systemes_kernel::interrupts::timer_ticks();
+        loop {
+            systemes_kernel::input::poll_events();
+            let elapsed = systemes_kernel::interrupts::timer_ticks().wrapping_sub(start_ticks);
+            if systemes_kernel::input::key_event_count() >= 2
+                && systemes_kernel::input::mouse_event_count() >= 2 {
+                break;
+            }
+            if elapsed >= 5000 {
+                if systemes_kernel::interrupts::irq_count(1).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ1_NOT_OBSERVED\\r\\n"); }
+                }
+                if systemes_kernel::interrupts::irq_count(12).unwrap_or(0) > 0 {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_OBSERVED\\r\\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES_TEST: PS2_IRQ12_NOT_OBSERVED\\r\\n"); }
+                }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input event timeout\\r\\n"); }
+                halt();
+            }
+            unsafe { asm!("pause", options(nomem, nostack, preserves_flags)); }
+        }
+        let mouse = systemes_kernel::input::mouse_state();
+        if systemes_kernel::input::key_is_pressed(0x1E, false)
+            || mouse.x == 0 || mouse.y == 0 || mouse.buttons != 0 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: PS/2 input state mismatch\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 keyboard make/break consumed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 mouse motion and button release consumed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: PS/2 IRQ input end-to-end verified\\r\\n"); }
         halt();
     }
     systemes_kernel::input::run_event_loop();

@@ -21,6 +21,8 @@ pub struct InputState {
     mouse_x: AtomicI32,
     mouse_y: AtomicI32,
     mouse_buttons: AtomicU8,
+    key_events: AtomicU64,
+    mouse_events: AtomicU64,
 }
 
 impl InputState {
@@ -30,10 +32,13 @@ impl InputState {
             mouse_x: AtomicI32::new(0),
             mouse_y: AtomicI32::new(0),
             mouse_buttons: AtomicU8::new(0),
+            key_events: AtomicU64::new(0),
+            mouse_events: AtomicU64::new(0),
         }
     }
 
     fn apply_key(&self, event: KeyEvent) {
+        self.key_events.fetch_add(1, Ordering::AcqRel);
         let KeyEvent::Scancode { code, pressed, extended } = event;
         let index = code as usize + if extended { 256 } else { 0 };
         let word = index / 64;
@@ -46,6 +51,7 @@ impl InputState {
     }
 
     fn apply_mouse(&self, event: MouseEvent) {
+        self.mouse_events.fetch_add(1, Ordering::AcqRel);
         let _ = self.mouse_x.fetch_update(Ordering::AcqRel, Ordering::Acquire,
             |value| Some(value.saturating_add(event.dx as i32)));
         let _ = self.mouse_y.fetch_update(Ordering::AcqRel, Ordering::Acquire,
@@ -58,6 +64,14 @@ impl InputState {
         let word = index / 64;
         let mask = 1u64 << (index % 64);
         self.pressed[word].load(Ordering::Acquire) & mask != 0
+    }
+
+    pub fn key_event_count(&self) -> u64 {
+        self.key_events.load(Ordering::Acquire)
+    }
+
+    pub fn mouse_event_count(&self) -> u64 {
+        self.mouse_events.load(Ordering::Acquire)
     }
 
     pub fn mouse_state(&self) -> MouseState {
@@ -101,6 +115,14 @@ pub fn key_is_pressed(code: u8, extended: bool) -> bool {
 
 pub fn mouse_state() -> MouseState {
     INPUT_STATE.mouse_state()
+}
+
+pub fn key_event_count() -> u64 {
+    INPUT_STATE.key_event_count()
+}
+
+pub fn mouse_event_count() -> u64 {
+    INPUT_STATE.mouse_event_count()
 }
 
 /// Idle loop: process deferred input, then sleep until the next interrupt.
