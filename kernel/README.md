@@ -21,13 +21,16 @@ GDT/IDT exception and IRQ gates, TSS/IST stacks, a physical-frame allocator,
 ACPI/MADT discovery, xAPIC/IOAPIC routing, and PS/2 input paths. K2.7 adds the
 first single-core preemptive scheduler using a periodic Local APIC timer,
 per-task kernel stacks, saved interrupt contexts, round-robin task selection,
-blocked-task wake-up, and an IRQ-safe mutex.
+blocked-task wake-up, and an IRQ-safe mutex. K2.8 adds explicit x87/SSE
+ownership (CR0/CR4) and a 512-byte FXSAVE64 image per task so XMM, MXCSR and
+x87 state survive preemptive context switches.
 
 This remains an early autonomous kernel, not yet a general-purpose OS. Tasks
 still execute in ring 0 and share one address space. SMP, calibrated timekeeping,
-FPU/SIMD context preservation, user mode, system calls, a VFS, storage drivers,
-and a complete device model remain future work. See
-[the K2.7 scheduler design](../docs/kernel-k2-7-preemptive-scheduler.md).
+AVX/AVX-512 upper-state switching (XSAVE/XCR0), user mode, system calls, a VFS,
+storage drivers, and a complete device model remain future work. See
+[the K2.7 scheduler design](../docs/kernel-k2-7-preemptive-scheduler.md) and
+[the K2.8 FPU context design](../docs/kernel-k2-8-fpu-simd-context.md).
 
 ## Local checks
 

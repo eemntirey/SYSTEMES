@@ -1,9 +1,11 @@
 //! Single-core preemptive kernel scheduler for x86_64.
 //!
 //! Contexts are captured by the Local APIC timer interrupt stub. Every task owns
-//! a private ring-0 stack. This is an early kernel scheduler: address spaces are
-//! shared until user-mode isolation is implemented in a later kernel phase.
+//! a private ring-0 stack and a 512-byte FXSAVE64 image so x87/SSE state is
+//! task-private. This is an early kernel scheduler: address spaces are shared
+//! until user-mode isolation is implemented in a later kernel phase.
 
+use crate::fpu::{self, FpuArea};
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -47,6 +49,7 @@ struct TaskStack([u8; STACK_SIZE]);
 
 struct Task {
     stack: TaskStack,
+    fpu: FpuArea,
     saved_rsp: AtomicUsize,
     state: AtomicU8,
     switches: AtomicUsize,
@@ -56,6 +59,7 @@ impl Task {
     const fn new() -> Self {
         Self {
             stack: TaskStack([0; STACK_SIZE]),
+            fpu: FpuArea::zeroed(),
             saved_rsp: AtomicUsize::new(0),
             state: AtomicU8::new(TaskState::Empty as u8),
             switches: AtomicUsize::new(0),
@@ -114,6 +118,10 @@ pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
     if entries.len() >= MAX_TASKS {
         return Err("too many kernel tasks");
     }
+    #[cfg(not(test))]
+    if !fpu::is_initialized() {
+        return Err("FPU state not initialized");
+    }
     // SAFETY: Boot calls this before STI; no task can access the table yet.
     unsafe {
         for index in 0..MAX_TASKS {
@@ -130,6 +138,18 @@ pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
             (*task).saved_rsp.store(rsp, Ordering::Release);
             (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
         }
+        // Seed every task from one freshly reset CPU state so no task inherits
+        // another task's x87/SSE registers. Interrupts are still disabled here.
+        #[cfg(not(test))]
+        {
+            fpu::reset_state();
+            fpu::capture(&mut (*boot).fpu);
+            for index in 1..=entries.len() {
+                let task = task_ptr(index);
+                (*task).fpu.copy_from(&(*boot).fpu);
+            }
+            fpu::set_current(&(*boot).fpu);
+        }
     }
     CURRENT_TASK.store(0, Ordering::Release);
     TASK_COUNT.store(entries.len() + 1, Ordering::Release);
@@ -145,7 +165,7 @@ pub fn on_timer(saved_rsp: usize) -> usize {
     }
     let count = TASK_COUNT.load(Ordering::Acquire);
     let current = CURRENT_TASK.load(Ordering::Relaxed);
-    if current >= count {
+    if current >= count || count <= 1 {
         return saved_rsp;
     }
 
@@ -163,6 +183,11 @@ pub fn on_timer(saved_rsp: usize) -> usize {
             if (*next).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
                 let next_rsp = (*next).saved_rsp.load(Ordering::Acquire);
                 if next_rsp != 0 {
+                    // The IRQ prologue already saved the interrupted task's
+                    // x87/SSE state. Point the epilogue at the incoming task's
+                    // image so it is reloaded exactly once before IRETQ.
+                    fpu::set_current(&(*next).fpu);
+                    fpu::set_next(&(*next).fpu);
                     CURRENT_TASK.store(candidate, Ordering::Release);
                     return next_rsp;
                 }

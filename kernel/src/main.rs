@@ -8,7 +8,9 @@ use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, Pag
 #[cfg(feature = "qemu-scheduler-test")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "qemu-scheduler-test")]
-use systemes_kernel::scheduler::{SpinMutex, TaskId};
+use systemes_kernel::scheduler::SpinMutex;
+#[cfg(any(feature = "qemu-scheduler-test", feature = "qemu-fpu-context-test"))]
+use systemes_kernel::scheduler::TaskId;
 
 #[cfg(feature = "qemu-scheduler-test")]
 static SCHEDULER_WORK_A: AtomicUsize = AtomicUsize::new(0);
@@ -46,6 +48,172 @@ extern "C" fn scheduler_blocked_worker() -> ! {
     loop {
         systemes_kernel::scheduler::block_current();
         SCHEDULER_BLOCKED_RESUMES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(feature = "qemu-fpu-context-test")]
+mod fpu_context_test {
+    use core::arch::asm;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Timer ticks the workers must observe before they report success.
+    pub const TARGET_TICKS: u64 = 24;
+    /// Minimum per-task verification passes that prove repeated preemption.
+    pub const MIN_VERIFIED: usize = 8;
+
+    /// A distinct x87/SSE state programmed by one task.
+    #[derive(Clone, Copy)]
+    pub struct FpuSpec {
+        pub xmm0: [u8; 16],
+        pub xmm8: [u8; 16],
+        pub xmm15: [u8; 16],
+        pub control_word: u16,
+        pub mxcsr: u32,
+        pub x87_bits: u64,
+    }
+
+    const fn pattern(seed: u8) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        let mut index = 0;
+        while index < 16 {
+            bytes[index] = seed.wrapping_add(index as u8);
+            index += 1;
+        }
+        bytes
+    }
+
+    pub const SPEC_A: FpuSpec = FpuSpec {
+        xmm0: pattern(0x10),
+        xmm8: pattern(0x30),
+        xmm15: pattern(0x50),
+        control_word: 0x037F,
+        mxcsr: 0x1F80,
+        x87_bits: 0x3FF0_0000_0000_0000, // 1.0
+    };
+    pub const SPEC_B: FpuSpec = FpuSpec {
+        xmm0: pattern(0x90),
+        xmm8: pattern(0xB0),
+        xmm15: pattern(0xD0),
+        control_word: 0x077F,
+        mxcsr: 0x3F80,
+        x87_bits: 0x4000_0000_0000_0000, // 2.0
+    };
+    pub const SPEC_C: FpuSpec = FpuSpec {
+        xmm0: pattern(0x21),
+        xmm8: pattern(0x41),
+        xmm15: pattern(0x61),
+        control_word: 0x0B7F,
+        mxcsr: 0x5F80,
+        x87_bits: 0x3FE0_0000_0000_0000, // 0.5
+    };
+    pub const SPEC_BOOT: FpuSpec = FpuSpec {
+        xmm0: pattern(0x77),
+        xmm8: pattern(0x88),
+        xmm15: pattern(0x99),
+        control_word: 0x0F7F,
+        mxcsr: 0x7F80,
+        x87_bits: 0x4008_0000_0000_0000, // 3.0
+    };
+
+    static VERIFIED_A: AtomicUsize = AtomicUsize::new(0);
+    static VERIFIED_B: AtomicUsize = AtomicUsize::new(0);
+    static VERIFIED_C: AtomicUsize = AtomicUsize::new(0);
+    static WORKERS_DONE: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe fn program(spec: &FpuSpec) {
+        // SAFETY: FPU/SSE control bits are enabled and alignments are exact.
+        unsafe {
+            asm!("movdqu xmm0, [{0}]", in(reg) spec.xmm0.as_ptr(), options(nostack, preserves_flags));
+            asm!("movdqu xmm8, [{0}]", in(reg) spec.xmm8.as_ptr(), options(nostack, preserves_flags));
+            asm!("movdqu xmm15, [{0}]", in(reg) spec.xmm15.as_ptr(), options(nostack, preserves_flags));
+            asm!("fldcw [{0}]", in(reg) core::ptr::addr_of!(spec.control_word), options(nostack, preserves_flags));
+            asm!("ldmxcsr [{0}]", in(reg) core::ptr::addr_of!(spec.mxcsr), options(nostack, preserves_flags));
+            asm!("fld qword ptr [{0}]", in(reg) core::ptr::addr_of!(spec.x87_bits), options(nostack, preserves_flags));
+        }
+    }
+
+    unsafe fn verify(spec: &FpuSpec) -> bool {
+        let mut xmm0 = [0u8; 16];
+        let mut xmm8 = [0u8; 16];
+        let mut xmm15 = [0u8; 16];
+        let mut control_word = 0u16;
+        let mut mxcsr = 0u32;
+        let mut x87_bits = 0u64;
+        // SAFETY: FPU/SSE control bits are enabled and every buffer is valid.
+        unsafe {
+            asm!("movdqu [{0}], xmm0", in(reg) xmm0.as_mut_ptr(), options(nostack, preserves_flags));
+            asm!("movdqu [{0}], xmm8", in(reg) xmm8.as_mut_ptr(), options(nostack, preserves_flags));
+            asm!("movdqu [{0}], xmm15", in(reg) xmm15.as_mut_ptr(), options(nostack, preserves_flags));
+            asm!("fnstcw [{0}]", in(reg) core::ptr::addr_of_mut!(control_word), options(nostack, preserves_flags));
+            asm!("stmxcsr [{0}]", in(reg) core::ptr::addr_of_mut!(mxcsr), options(nostack, preserves_flags));
+            asm!("fstp qword ptr [{0}]", in(reg) core::ptr::addr_of_mut!(x87_bits), options(nostack, preserves_flags));
+            asm!("fld qword ptr [{0}]", in(reg) core::ptr::addr_of!(spec.x87_bits), options(nostack, preserves_flags));
+        }
+        xmm0 == spec.xmm0
+            && xmm8 == spec.xmm8
+            && xmm15 == spec.xmm15
+            && control_word == spec.control_word
+            && mxcsr == spec.mxcsr
+            && x87_bits == spec.x87_bits
+    }
+
+    fn fail(message: &[u8]) -> ! {
+        // SAFETY: Fatal test diagnostics use the boot debug port.
+        unsafe { super::debug_write(message) };
+        super::halt();
+    }
+
+    fn run(spec: FpuSpec, verified: &'static AtomicUsize) -> ! {
+        // SAFETY: Runs in ring 0 after the FPU/SSE enable sequence.
+        unsafe { program(&spec) };
+        if !unsafe { verify(&spec) } {
+            fail(b"SYSTEMES_KERNEL_FAIL: FPU task initial state mismatch\r\n");
+        }
+        while systemes_kernel::interrupts::local_timer_ticks() < TARGET_TICKS {
+            if !unsafe { verify(&spec) } {
+                fail(b"SYSTEMES_KERNEL_FAIL: x87/SSE state clobbered between task switches\r\n");
+            }
+            verified.fetch_add(1, Ordering::Release);
+            core::hint::spin_loop();
+        }
+        WORKERS_DONE.fetch_add(1, Ordering::Release);
+        loop {
+            systemes_kernel::scheduler::block_current();
+        }
+    }
+
+    pub extern "C" fn worker_a() -> ! {
+        run(SPEC_A, &VERIFIED_A)
+    }
+
+    pub extern "C" fn worker_b() -> ! {
+        run(SPEC_B, &VERIFIED_B)
+    }
+
+    pub extern "C" fn worker_c() -> ! {
+        run(SPEC_C, &VERIFIED_C)
+    }
+
+    pub fn program_boot_task() {
+        // SAFETY: Called with interrupts disabled before the scheduler timer starts.
+        unsafe { program(&SPEC_BOOT) };
+    }
+
+    pub fn verify_boot_task() -> bool {
+        // SAFETY: The boot task still owns a valid FPU/SSE context.
+        unsafe { verify(&SPEC_BOOT) }
+    }
+
+    pub fn workers_done() -> bool {
+        WORKERS_DONE.load(Ordering::Acquire) == 3
+    }
+
+    pub fn verified_counts() -> [usize; 3] {
+        [
+            VERIFIED_A.load(Ordering::Acquire),
+            VERIFIED_B.load(Ordering::Acquire),
+            VERIFIED_C.load(Ordering::Acquire),
+        ]
     }
 }
 
@@ -153,6 +321,17 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\\r\\n"); }
+    // Enable x87/SSE ownership before any task can execute FPU instructions and
+    // before the scheduler seeds per-task FXSAVE images.
+    if systemes_kernel::fpu::initialize().is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: x87/SSE control register setup failed\\r\\n"); }
+        halt();
+    }
+    if !systemes_kernel::fpu::verify_round_trip() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FXSAVE64/FXRSTOR64 round-trip failed\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: x87/SSE (FXSAVE64) state enabled and round-trip verified\\r\\n") };
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
     if !systemes_kernel::interrupts::verify_task_register() {
@@ -326,8 +505,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         scheduler_worker_b,
         scheduler_blocked_worker,
     ];
-    #[cfg(not(feature = "qemu-scheduler-test"))]
+    #[cfg(not(any(feature = "qemu-scheduler-test", feature = "qemu-fpu-context-test")))]
     let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 0] = [];
+
+    #[cfg(all(feature = "qemu-fpu-context-test", not(feature = "qemu-scheduler-test")))]
+    let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 3] = [
+        fpu_context_test::worker_a,
+        fpu_context_test::worker_b,
+        fpu_context_test::worker_c,
+    ];
 
     if systemes_kernel::scheduler::initialize(&scheduler_entries).is_err() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler initialization failed\\r\\n"); }
@@ -338,6 +524,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: synthetic task IRETQ frames validated\\r\\n"); }
+    #[cfg(feature = "qemu-fpu-context-test")]
+    {
+        fpu_context_test::program_boot_task();
+        unsafe { debug_write(b"SYSTEMES_TEST: boot task programmed unique x87/SSE state\\r\\n"); }
+    }
+    unsafe { debug_write(b"SYSTEMES: per-task FXSAVE64 context images initialized\\r\\n"); }
     if apic_initialized {
         if unsafe { systemes_kernel::interrupts::initialize_local_apic_timer(250_000) }.is_err() {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC scheduler timer initialization failed\\r\\n"); }
@@ -383,6 +575,45 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { systemes_kernel::interrupts::disable_hardware_interrupts(); }
         unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preemption switched three independent tasks\\r\\n"); }
         unsafe { debug_write(b"SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified\\r\\n"); }
+        halt();
+    }
+    #[cfg(feature = "qemu-fpu-context-test")]
+    {
+        if !apic_initialized {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU context test requires an active Local APIC\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: waiting for FPU context workers\r\n"); }
+        while !fpu_context_test::workers_done()
+            || systemes_kernel::interrupts::local_timer_ticks() < fpu_context_test::TARGET_TICKS
+        {
+            if systemes_kernel::interrupts::local_timer_ticks() > 4000 {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU context test timeout\r\n"); }
+                halt();
+            }
+            core::hint::spin_loop();
+        }
+        if !fpu_context_test::verify_boot_task() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: boot task x87/SSE context was not restored\r\n"); }
+            halt();
+        }
+        let verified = fpu_context_test::verified_counts();
+        if verified.iter().any(|count| *count < fpu_context_test::MIN_VERIFIED) {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU task verification counter too low\r\n"); }
+            halt();
+        }
+        let switches = [1usize, 2, 3].map(|id| {
+            systemes_kernel::scheduler::switch_count(systemes_kernel::scheduler::TaskId(id)).unwrap_or(0)
+        });
+        if switches.iter().any(|count| *count < 2) {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: FPU tasks were not preempted repeatedly\r\n"); }
+            halt();
+        }
+        unsafe { systemes_kernel::interrupts::stop_local_apic_timer() };
+        unsafe { systemes_kernel::interrupts::disable_hardware_interrupts() };
+        unsafe { debug_write(b"SYSTEMES_TEST: x87/SSE context preserved across preemptive task switches\r\n") };
+        unsafe { debug_write(b"SYSTEMES_TEST: boot task x87/SSE state restored after worker preemption\r\n") };
+        unsafe { debug_write(b"SYSTEMES_TEST: three FPU tasks retained distinct control words and XMM registers\r\n") };
         halt();
     }
     #[cfg(feature = "qemu-pit-timer-test")]

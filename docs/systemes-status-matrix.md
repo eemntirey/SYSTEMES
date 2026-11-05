@@ -1,0 +1,223 @@
+# Matrice de suivi SYSTEMES — état réel au 2026-11-05
+
+Cette matrice remplace les annonces de statut non vérifiées. Elle est établie à
+partir de :
+
+- les références de branches, commits, comparaisons et PR lues sur GitHub ;
+- des workflows CI présents dans `.github/workflows/` ;
+- les workflows GitHub Actions et les preuves QEMU publiées ; les exécutions locales décrites dans les documents de phase ne sont pas revalidées par cet audit distant ;
+- du badge public du workflow `kernel.yml` pour la branche K2.7.
+
+## Légende
+
+| Statut | Sens |
+| --- | --- |
+| TERMINÉ | Implémenté, fusionné ou vérifié par un test réel sur le commit concerné. |
+| EN COURS | Implémenté sur une branche/PR non fusionnée, ou vérification finale en attente. |
+| BLOQUÉ | Dépendance technique ou externe empêchant d'avancer. |
+| À DÉVELOPPER | Aucun code fonctionnel dans le dépôt à ce jour. |
+| À TESTER SUR MATÉRIEL | Code présent mais jamais exécuté sur une machine physique. |
+
+## Photographie du dépôt
+
+| Élément | Valeur vérifiée |
+| --- | --- |
+| `main` | `0b732fd` — K3.1.2 « Cycle de vie natif des applications » (#34), 275 commits |
+| PR #35 (K2.7) | tête `13a002f`, état **open**, base `k2-apic-ioapic-irq-routing` ; CI du HEAD exact vérifiée : 9/9 jobs noyau et 1/1 job PS/2 réussis ; aucune fusion effectuée |
+| Chaîne de PR noyau | #16 → #17 → #18 → #19 → #20 → #21 → #35 : PR empilées ; #16 vise `main`, chaque suivante vise la branche de la précédente ; #17 à #21 sont des **drafts** |
+| PR #36 (K2.8) | tête `6d23123`, draft, base `feat/k2-7-preemptive-kernel-scheduler` (branche de #35) ; workflows noyau et PS/2 déclenchés et encore en cours au moment du contrôle |
+| Noyau dans `main` | K2.1 allocateur de frames, K2.2 GDT/IDT/exceptions, K2.3 paging noyau, `main` étant aussi la base de #16 |
+| Noyau sur la branche K2.7 | + K2.4 W^X/NX, K2.5 TSS/IST, K2.6 ACPI/APIC/IOAPIC/PS/2, K2.7 scheduler |
+| CI | `ci.yml` (typecheck/tests/build web + hôte natif Windows), `kernel.yml` (contrat noyau, boot UEFI QEMU, matrice de 8 scénarios matériels après cette PR) |
+| Accès GitHub | API authentifiée disponible via le credential Git local ; les états de PR et de checks ci-dessus ont été lus par API le 2026-11-05 |
+
+### Pourquoi K2.4–K2.7 n'apparaissent pas dans `main`
+
+Le noyau avance par une chaîne de PR empilées. Chaque branche contient les
+commits cumulés de la précédente, et chaque PR vise la branche précédente :
+
+```text
+main
+ └─ #16 k2-memory-protection            (draft)
+     └─ #17 k2-memory-fault-validation  (draft)
+         └─ #18 k2-tss-ist-exception-stacks (draft)
+             └─ #19 k2-pic-pit-hardware-irqs (draft)
+                 └─ #20 k2-apic-discovery-local-controller (draft)
+                     └─ #21 k2-apic-ioapic-irq-routing (draft)
+                         └─ #35 feat/k2-7-preemptive-kernel-scheduler (open)
+                             └─ cette PR K2.8
+```
+
+Conséquence : K2.8 doit viser directement la branche de #35, et l'ordre de
+fusion imposé par les dépendances est #16 → #17 → #18 → #19 → #20 → #21 → #35 →
+cette PR (ou une réintégration explicite de la chaîne). Aucune de ces PR ne peut
+être fusionnée tant que le commit exact n'a pas tous ses checks verts et qu'une
+autorisation explicite n'a pas été donnée.
+
+## A. Noyau (kernel)
+
+| Tâche | Statut | Preuve / remarque |
+| --- | --- | --- |
+| K1 — loader UEFI GNU-EFI, contrat `BootInfo`, GOP, ACPI RSDP | TERMINÉ | `docs/K1_BOOT_PROOF.md`, job `uefi-qemu-boot` |
+| K2.1 — allocateur de frames physique | TERMINÉ | `kernel/src/memory.rs`, tests hôtes |
+| K2.2 — GDT, IDT, exceptions CPU | TERMINÉ | `kernel/src/interrupts.rs` |
+| K2.3 — paging noyau 4 niveaux | TERMINÉ | `kernel/src/paging.rs` |
+| K2.4 — NX, W^X, fautes mémoire réelles | EN COURS | code + QEMU verts sur la branche ; PR #16 (draft) et #17 (draft) non fusionnées |
+| K2.5 — TSS, piles IST, routage IDT | EN COURS | scénarios `qemu-ist-nmi-test`, `qemu-ist-machine-check-test` ; PR #18 (draft) |
+| K2.6.1 — découverte/validation ACPI MADT | EN COURS | `kernel/src/acpi.rs`, tests hôtes ; PR #20 (draft) |
+| K2.6.2 — xAPIC/IOAPIC, routage IRQ0/PIT | EN COURS | scénario `qemu-pit-timer-test` ; PR #21 (draft) |
+| K2.6.3 — IRQ spurious et dispatch matériel | EN COURS | scénario `qemu-apic-spurious-test` ; dans la chaîne #19–#35 |
+| K2.6.4 — PS/2 8042, décodeurs, IRQ1/IRQ12, E2E QMP | EN COURS | `kernel-ps2-input.yml`, PR #28/#30/#33 fusionnées dans la branche ; pas dans `main` |
+| K2.7 — scheduler préemptif mono-cœur | EN COURS | PR #35 open, base `k2-apic-ioapic-irq-routing` ; 9/9 jobs noyau + 1/1 job PS/2 verts sur le HEAD exact ; dépendance APIC non fusionnée |
+| K2.8 — contexte FPU/SIMD par tâche | EN COURS | PR #36 draft, HEAD `6d23123`, CI déclenchée ; résultats à attendre sur le HEAD exact |
+| K2.9 — calibration du timer Local APIC | À DÉVELOPPER | la valeur `250 000` est provisoire (documentée en K2.7) |
+| SMP, démarrage des AP, IPI, synchronisation inter-processeur | À DÉVELOPPER | aucun code |
+| Heap noyau (allocateur dynamique) | À DÉVELOPPER | seules les frames physiques existent |
+| Appels système et Ring 3 | À DÉVELOPPER | aucune entrée syscall, aucune GDT utilisateur |
+| Stabilisation des exceptions et récupération | EN COURS | exceptions fatales uniquement ; pas de reprise |
+| Gestion des ressources du noyau | À DÉVELOPPER | pas de comptabilité mémoire/objets |
+
+## B. Processus et multitâche
+
+| Tâche | Statut |
+| --- | --- |
+| Tâches noyau préemptives (ring 0) | EN COURS (K2.7) |
+| Création/destruction dynamique de tâches | À DÉVELOPPER (table statique de 8) |
+| Threads indépendants | À DÉVELOPPER |
+| Espaces mémoire séparés | À DÉVELOPPER |
+| Mode utilisateur Ring 3 | À DÉVELOPPER |
+| IPC, signaux, événements | À DÉVELOPPER |
+| Ordonnancement multicœur | À DÉVELOPPER |
+| Priorités, zombies, limites de ressources | À DÉVELOPPER |
+
+## C. Mémoire
+
+| Tâche | Statut |
+| --- | --- |
+| Allocateur physique | TERMINÉ |
+| Mémoire virtuelle noyau (identité 512 Gio) | TERMINÉ |
+| Heap noyau et utilisateur | À DÉVELOPPER |
+| Copy-on-write, mémoire partagée, mmap | À DÉVELOPPER |
+| Protection des espaces mémoire | PARTIEL : W^X/NX noyau uniquement |
+| Détection de fuites, OOM | À DÉVELOPPER |
+
+## D. Pilotes matériels
+
+| Tâche | Statut |
+| --- | --- |
+| ACPI | PARTIEL : RSDP + MADT uniquement (pas de FADT/DSDT/AML) |
+| PIC/PIT, xAPIC/IOAPIC | TERMINÉ (branche) |
+| PS/2 clavier/souris | TERMINÉ (branche) |
+| Framebuffer GOP | PARTIEL : marqueur de boot, pas de console ni compositeur |
+| PCI/PCIe, enumeration | À DÉVELOPPER |
+| USB xHCI, HID, mass storage | À DÉVELOPPER |
+| Audio | À DÉVELOPPER |
+| SATA/AHCI, NVMe | À DÉVELOPPER |
+| Ethernet, Wi-Fi, Bluetooth | À DÉVELOPPER |
+| Batterie, thermique, énergie | À DÉVELOPPER |
+
+## E. Stockage et fichiers
+
+| Tâche | Statut |
+| --- | --- |
+| VFS | À DÉVELOPPER |
+| FAT32 (lecture/écriture), partition EFI | À DÉVELOPPER côté noyau (l'ISO de test est fabriquée par `mkfs.vfat` en CI) |
+| Système de fichiers natif, journalisation, récupération | À DÉVELOPPER |
+| Permissions, montage/démontage, cache disque | À DÉVELOPPER |
+
+## F. Sécurité
+
+| Tâche | Statut |
+| --- | --- |
+| Isolation processus / Ring 3 | À DÉVELOPPER |
+| W^X, NX, write-protect superviseur | TERMINÉ (branche) |
+| Comptes, permissions, administrateur | À DÉVELOPPER |
+| ASLR, secrets, audit | À DÉVELOPPER |
+| Secure Boot, mises à jour signées | À DÉVELOPPER (l'ISO n'est pas signée) |
+
+## G. Réseau
+
+Ethernet, ARP, IPv4/IPv6, ICMP, UDP/TCP, DNS, DHCP, TLS, Wi-Fi, pare-feu,
+diagnostic : **À DÉVELOPPER** dans le noyau autonome. Aucune pile réseau
+freestanding n'existe à ce jour.
+
+## H. Interface graphique Obsidian
+
+| Tâche | Statut |
+| --- | --- |
+| Bureau Obsidian actuel (React/Vite, hôte Windows) | TERMINÉ dans son périmètre hôte — PR #23, refonte du menu Démarrer |
+| Serveur graphique natif, compositeur, gestionnaire de fenêtres | À DÉVELOPPER |
+| Multi-écrans, thèmes, accessibilité, sessions | À DÉVELOPPER côté autonome |
+| Portage/abstraction pour supprimer la dépendance Windows | À DÉVELOPPER |
+
+Le design Obsidian et les fonctionnalités du bureau existant sont préservés :
+cette PR ne touche aucun fichier de `src/`, `native/` ou `native-core/`.
+
+## I. Applications natives
+
+| Tâche | Statut |
+| --- | --- |
+| Fondation « applications natives » K3.1 (hôte Windows) | TERMINÉ — PR #31/#32/#34, `docs/architecture/native-applications-foundation.md` |
+| Applications natives autonomes (explorateur, terminal, etc.) | À DÉVELOPPER |
+| Navigateur, lecteur multimédia, gestionnaires | À DÉVELOPPER |
+
+## J. Services système
+
+Services hôte Windows (paramètres, mise à jour, services) : TERMINÉ dans le
+périmètre Windows (commits `0e23a2e`, `c8d921d`). Services autonomes
+(initialisation, journaux, horloge, énergie, utilisateurs, tâches planifiées,
+notifications, mises à jour) : **À DÉVELOPPER**.
+
+## K. Installation
+
+| Tâche | Statut |
+| --- | --- |
+| ISO UEFI amorçable de bout en bout (loader + noyau) | TERMINÉ — QEMU/OVMF, CI et local |
+| Installateur, partitionnement, installation sur disque physique | À DÉVELOPPER |
+| Premier utilisateur, premier démarrage | À DÉVELOPPER |
+| Récupération après panne, mise à niveau, désinstallation | À DÉVELOPPER |
+
+## L. Tests et stabilité
+
+| Tâche | Statut |
+| --- | --- |
+| Tests unitaires hôtes | TERMINÉ — 62 tests verts sur Linux |
+| Vérification de compilation `x86_64-unknown-none` | TERMINÉ |
+| Tests d'intégration QEMU/OVMF (exceptions, NX, RX, IST, PIT, APIC, scheduler, FPU) | TERMINÉ sur la branche — 8 scénarios après cette PR ; CI obligatoire |
+| Tests de charge, fuzzing, tests de sécurité, régression longue durée | À DÉVELOPPER |
+| Tests sur matériel physique réel | À TESTER SUR MATÉRIEL — aucune exécution réelle effectuée |
+
+## M. Écosystème
+
+API système stable, SDK, bibliothèque C, support Rust utilisateur, chargeur ELF
+applicatif, gestionnaire de paquets, dépôt d'applications, documentation
+développeur : **À DÉVELOPPER**. Le noyau produit déjà un binaire ELF, mais aucun
+chargeur d'applications n'existe.
+
+## Blocages et vérifications restantes
+
+1. **Chaîne de PR noyau non fusionnée** : #16 → #17 → #18 → #19 → #20 → #21 →
+   #35 → #36. Les #17 à #21 sont des drafts ; #35 est ouverte avec ses 9 jobs
+   noyau et son job PS/2 réussis sur le HEAD exact. La chaîne reste non fusionnée
+   et toute fusion dépend des branches précédentes, des protections GitHub et
+   d'une autorisation explicite.
+2. **CI de K2.8 (#36)** : workflows déclenchés sur le HEAD exact `6d23123`
+   (workflow noyau et workflow PS/2) ; attendre leur conclusion avant toute
+   décision d'intégration.
+3. **Matériel physique** : jamais testé. UEFI/OVMF en QEMU n'est pas une preuve
+   de compatibilité matérielle réelle (ACPI, APIC, PS/2, GOP varient).
+4. **Windows n'est pas encore supprimé de l'écosystème** : le bureau et les
+   applications « natives » actuels dépendent de Windows/.NET. L'OS autonome
+   s'arrête aujourd'hui au noyau ring 0 sans FS, réseau ni Ring 3.
+
+## Prochaines tâches techniquement réalisables
+
+1. Fusionner la chaîne #16→#35 puis cette PR, dans l'ordre des dépendances,
+   uniquement après checks verts sur le commit exact et autorisation explicite.
+2. K2.9 : calibrer le timer Local APIC (PIT/TSC) et exposer une horloge noyau
+   monotone en millisecondes.
+3. Heap noyau + création/destruction dynamique de tâches sur cette base.
+4. Ring 3 : GDT utilisateur, TSS `RSP0`, IDT DPL=3, entrée syscall, pages
+   utilisateur et retour d'exception.
+5. VFS minimal en RAM puis FAT32 en lecture avant tout pilote de stockage.
+6. Pilote PCI + AHCI/NVMe, puis FAT32 persistant.

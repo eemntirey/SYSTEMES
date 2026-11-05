@@ -594,6 +594,13 @@ systemes_exception_common:
 systemes_irq_common:
     cld
     push rax
+    mov rax, qword ptr [rip + SYSTEMES_CURRENT_FPU_AREA]
+    test rax, rax
+    je .Lsystemes_irq_fpu_saved
+    fxsave64 [rax]
+.Lsystemes_irq_fpu_saved:
+    pop rax
+    push rax
     push rbx
     push rcx
     push rdx
@@ -613,6 +620,12 @@ systemes_irq_common:
     and rsp, -16
     call systemes_irq_dispatch
     mov rsp, rax
+    mov r11, qword ptr [rip + SYSTEMES_NEXT_FPU_AREA]
+    mov qword ptr [rip + SYSTEMES_NEXT_FPU_AREA], 0
+    test r11, r11
+    je .Lsystemes_irq_fpu_restored
+    fxrstor64 [r11]
+.Lsystemes_irq_fpu_restored:
     pop r15
     pop r14
     pop r13
