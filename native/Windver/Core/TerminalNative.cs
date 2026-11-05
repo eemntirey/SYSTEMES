@@ -64,7 +64,7 @@ namespace Systemes.Native.Core
             var directoryBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(directory));
             var script = $@"
 $ErrorActionPreference = 'Continue'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{commandBase64}'))
 $directory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{directoryBase64}'))
 $builder = New-Object System.Text.StringBuilder
