@@ -317,6 +317,34 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         unsafe { debug_write(b"SYSTEMES: PS/2 keyboard scanning and mouse reporting enabled\\r\\n"); }
     }
+    #[cfg(feature = "qemu-scheduler-test")]
+    let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 3] = [
+        scheduler_worker_a,
+        scheduler_worker_b,
+        scheduler_blocked_worker,
+    ];
+    #[cfg(not(feature = "qemu-scheduler-test"))]
+    let scheduler_entries: [systemes_kernel::scheduler::TaskEntry; 0] = [];
+
+    if systemes_kernel::scheduler::initialize(&scheduler_entries).is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler initialization failed\\r\\n"); }
+        halt();
+    }
+    if apic_initialized {
+        if unsafe { systemes_kernel::interrupts::initialize_local_apic_timer(250_000) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC scheduler timer initialization failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: Local APIC periodic scheduler timer configured\\r\\n"); }
+    } else {
+        #[cfg(feature = "qemu-scheduler-test")]
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler test requires active Local APIC\\r\\n"); }
+            halt();
+        }
+        #[cfg(not(feature = "qemu-scheduler-test"))]
+        unsafe { debug_write(b"SYSTEMES: Local APIC timer unavailable; scheduler remains idle\\r\\n"); }
+    }
     unsafe { systemes_kernel::interrupts::enable_hardware_interrupts() };
     unsafe { debug_write(b"SYSTEMES: hardware interrupts enabled\\r\\n"); }
 
