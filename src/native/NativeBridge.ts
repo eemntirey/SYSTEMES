@@ -150,6 +150,7 @@ function assertValidParams(params: Record<string, unknown>): void {
 
 export class NativeBridge {
   private connected = false
+  private connectedTransport: WebViewMessage | null = null
   private state: NativeBridgeState = 'checking'
   private readonly stateListeners = new Set<(state: NativeBridgeState) => void>()
 
@@ -166,7 +167,9 @@ export class NativeBridge {
   private setState(state: NativeBridgeState): void {
     if (this.state === state) return
     this.state = state
-    for (const listener of this.stateListeners) listener(state)
+    for (const listener of this.stateListeners) {
+      try { listener(state) } catch { /* UI subscribers must not break the IPC transport. */ }
+    }
   }
   private readonly pending = new Map<string, {
     resolve: (value: NativeResponse) => void
@@ -207,9 +210,11 @@ export class NativeBridge {
         true,
       )
     }
-    if (!this.connected) {
+    if (this.connectedTransport !== transport) {
+      this.connectedTransport?.removeEventListener('message', this.onMessage)
       this.setState('checking')
       transport.addEventListener('message', this.onMessage)
+      this.connectedTransport = transport
       this.connected = true
     }
   }
@@ -224,7 +229,10 @@ export class NativeBridge {
 
     await this.connect()
     const transport = this.transport()
-    if (!transport) throw new Error('Le canal natif WebView2 est indisponible.')
+    if (!transport) {
+      this.setState('unavailable')
+      throw new NativeOperationError('Le canal natif WebView2 est indisponible.', 'host-unavailable', true, method)
+    }
 
     const id = globalThis.crypto?.randomUUID?.()
       ?? `systemes-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -254,10 +262,8 @@ export class NativeBridge {
   }
 
   disconnect(): void {
-    const transport = this.transport()
-    if (this.connected && transport) {
-      transport.removeEventListener('message', this.onMessage)
-    }
+    this.connectedTransport?.removeEventListener('message', this.onMessage)
+    this.connectedTransport = null
     this.connected = false
     this.setState('unavailable')
     for (const pending of this.pending.values()) {
