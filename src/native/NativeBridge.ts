@@ -262,7 +262,7 @@ export class NativeBridge {
     this.setState('unavailable')
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
-      pending.reject(new Error('Connexion au moteur natif interrompue.'))
+      pending.reject(new NativeOperationError('Connexion au moteur natif interrompue.', 'host-unavailable', true))
     }
     this.pending.clear()
   }
