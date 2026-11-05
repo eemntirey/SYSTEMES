@@ -330,6 +330,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: scheduler initialization failed\\r\\n"); }
         halt();
     }
+    if !systemes_kernel::scheduler::validate_initial_contexts() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: synthetic task IRETQ frame invalid\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: synthetic task IRETQ frames validated\\r\\n"); }
     if apic_initialized {
         if unsafe { systemes_kernel::interrupts::initialize_local_apic_timer(250_000) }.is_err() {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC scheduler timer initialization failed\\r\\n"); }
