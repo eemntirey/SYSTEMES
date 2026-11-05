@@ -48,9 +48,11 @@ Do not infer `ready` from a successful frontend render. A capability is ready on
 - Add automated contract tests so client/server drift fails CI.
 
 ### K3.1.2 — Shared native lifecycle and error model
-- Introduce a small reusable lifecycle/error model for native-backed applications.
-- Keep host-unavailable, unsupported, permission-required, and operation-failed states distinct.
-- Add retry and cancellation behavior only where the underlying operation supports it.
+- `src/services/NativeLifecycle.ts` provides checking, ready, unavailable, unsupported, permission-required, and error states with subscriptions and a reusable operation wrapper.
+- `system/capabilities` reports Windows version/build, process architecture, administrator status, and detected application capabilities.
+- `system/permissions/read` exposes the current Windows token/UAC context read-only. It never grants privileges or silently relaunches elevated.
+- Native failures carry a stable `errorCode`, `retryable` flag, and operation context. Access-denied, unsupported, timeout, missing-resource, I/O, and unexpected errors remain distinguishable.
+- Retry remains an application decision; no automatic retry is applied to mutations.
 
 ### K3.1.3 — Explorer reliability
 - Preserve existing safe file-operation helpers.
