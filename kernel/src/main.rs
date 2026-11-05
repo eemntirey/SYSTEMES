@@ -400,7 +400,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     #[cfg(feature = "qemu-apic-spurious-test")]
     {
         let before = systemes_kernel::interrupts::apic_spurious_count();
-        systemes_kernel::interrupts::systemes_irq_dispatch(0xFF);
+        let _ = systemes_kernel::interrupts::systemes_irq_dispatch(0xFF, 0);
         if systemes_kernel::interrupts::apic_spurious_count() != before + 1 {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: APIC spurious vector accounting failed\\r\\n"); }
             halt();
