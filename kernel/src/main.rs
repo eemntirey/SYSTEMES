@@ -8,7 +8,9 @@ use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, Pag
 #[cfg(feature = "qemu-scheduler-test")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "qemu-scheduler-test")]
-use systemes_kernel::scheduler::{SpinMutex, TaskId};
+use systemes_kernel::scheduler::SpinMutex;
+#[cfg(any(feature = "qemu-scheduler-test", feature = "qemu-fpu-context-test"))]
+use systemes_kernel::scheduler::TaskId;
 
 #[cfg(feature = "qemu-scheduler-test")]
 static SCHEDULER_WORK_A: AtomicUsize = AtomicUsize::new(0);
