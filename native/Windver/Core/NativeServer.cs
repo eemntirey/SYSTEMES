@@ -27,6 +27,7 @@ namespace Systemes.Native.Core
                 }
 
                 JToken? id = null;
+                string? operation = null;
                 try
                 {
                     var request = JObject.Parse(line);
@@ -42,6 +43,7 @@ namespace Systemes.Native.Core
                     if (methodToken?.Type != JTokenType.String)
                         throw new ArgumentException("La méthode IPC doit être une chaîne de caractères.");
                     var method = methodToken.Value<string>() ?? "";
+                    operation = method;
                     if (string.IsNullOrWhiteSpace(method) || method.Length > MaxMethodCharacters)
                         throw new ArgumentException("La méthode IPC est vide ou dépasse 128 caractères.");
 
@@ -54,7 +56,13 @@ namespace Systemes.Native.Core
                     switch (method)
                     {
                         case "system/ping":
-                            result = new { status = "ready", engine = "SYSTEMES Native Core" };
+                            result = new { status = "ready", engine = "SYSTEMES Native Core", protocolVersion = 1 };
+                            break;
+                        case "system/capabilities":
+                            result = NativeCapabilities.Read();
+                            break;
+                        case "system/permissions/read":
+                            result = SecurityManager.ReadSecurityContext();
                             break;
                         case "terminal/execute":
                             result = TerminalNative.Execute(
@@ -214,10 +222,44 @@ namespace Systemes.Native.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(JsonConvert.SerializeObject(new { error = ex.Message, id }));
+                    var errorCode = ClassifyError(ex);
+                    var retryable = errorCode == "timeout" || errorCode == "io-error";
+                    Console.WriteLine(JsonConvert.SerializeObject(new
+                    {
+                        error = SafeMessage(ex),
+                        errorCode,
+                        retryable,
+                        operation,
+                        id
+                    }));
                     Console.Out.Flush();
                 }
             }
+        }
+
+        private static string ClassifyError(Exception exception)
+        {
+            if (exception is UnauthorizedAccessException || exception is System.Security.SecurityException)
+                return "permission-required";
+            if (exception is PlatformNotSupportedException || exception is NotSupportedException)
+                return "unsupported";
+            if (exception is TimeoutException)
+                return "timeout";
+            if (exception is FileNotFoundException || exception is DirectoryNotFoundException)
+                return "not-found";
+            if (exception is ArgumentException)
+                return "invalid-argument";
+            if (exception is IOException)
+                return "io-error";
+            return "native-error";
+        }
+
+        private static string SafeMessage(Exception exception)
+        {
+            // Return actionable exception messages, but never serialize stack traces or secrets.
+            return string.IsNullOrWhiteSpace(exception.Message)
+                ? "Une erreur native inattendue est survenue."
+                : exception.Message;
         }
     }
 }
