@@ -1013,6 +1013,38 @@ pub unsafe fn initialize_pic_pit() {
     TIMER_TICKS.store(0, Ordering::Release);
 }
 
+/// Configure a periodic Local APIC timer for preemptive task scheduling.
+/// The bootstrap count is provisional; clock calibration is a later phase.
+pub unsafe fn initialize_local_apic_timer(initial_count: u32) -> Result<(), ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) || initial_count == 0 {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return Err(ApicInitError::InvalidPhysicalAddress);
+    }
+    unsafe {
+        lapic_write(base, 0x3E0, 0x3); // Divide by 16.
+        lapic_write(base, 0x320, LOCAL_SCHEDULER_TIMER_VECTOR as u32 | (1 << 17));
+        lapic_write(base, 0x380, initial_count);
+    }
+    LOCAL_TIMER_TICKS.store(0, Ordering::Release);
+    Ok(())
+}
+
+/// Stop the Local APIC scheduler timer.
+pub unsafe fn stop_local_apic_timer() {
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if !base.is_null() {
+        unsafe { lapic_write(base, 0x320, (1 << 16) | LOCAL_SCHEDULER_TIMER_VECTOR as u32); }
+    }
+}
+
+/// Number of Local APIC scheduler timer interrupts since initialization.
+pub fn local_timer_ticks() -> u64 {
+    LOCAL_TIMER_TICKS.load(Ordering::Acquire)
+}
+
 /// Enable maskable hardware interrupts after the IDT, PIC and PIT are ready.
 pub unsafe fn enable_hardware_interrupts() {
     unsafe { asm!("sti", options(nomem, nostack)); }
