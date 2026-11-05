@@ -232,7 +232,7 @@ jobs:
             exit 1
           fi
           cat build/uefi/debug.log
-          fault_rip="$(sed -n 's/.* rip=0x\\([0-9A-Fa-f]\\{16\\}\\).*/0x\\1/p' build/uefi/debug.log | tail -n 1)"
+          fault_rip="$(sed -n 's/.* rip=0x\([0-9A-Fa-f]\{16\}\).*/0x\1/p' build/uefi/debug.log | tail -n 1)"
           if [ -n "$fault_rip" ]; then
             addr2line -f -C -e kernel/target/x86_64-unknown-none/release/systemes-kernel "$fault_rip" || true
           fi
