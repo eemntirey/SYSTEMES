@@ -392,7 +392,7 @@ jobs:
             }
             # ConvertFrom-Json can coerce ISO strings into locale-formatted DateTime values.
             # Validate the raw JSON wire values to avoid a culture-dependent false failure.
-            $metadataLine = $responseLines | Where-Object { $_.Contains('"id":"guard-metadata"') } | Select-Object -First 1
+            $metadataLine = $responseLines | Where-Object { $_ -match '"id"\s*:\s*"guard-metadata"' } | Select-Object -First 1
             if (-not $metadataLine) { throw "Missing raw response for guard-metadata." }
             $metadataDocument = [System.Text.Json.JsonDocument]::Parse($metadataLine)
             try {
