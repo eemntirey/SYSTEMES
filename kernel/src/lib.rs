@@ -8,6 +8,7 @@
 pub mod acpi;
 pub mod clock;
 pub mod fpu;
+pub mod heap;
 pub mod interrupts;
 pub mod input;
 pub mod memory;
