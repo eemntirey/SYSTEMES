@@ -5,7 +5,7 @@
 **Ce projet est développé uniquement à des fins éducatives, de recherche et d'utilisation personnelle gratuite.**
 
 - ✅ **Gratuit** — Aucun coût, aucun abonnement, aucune limitation d'usage
-- ✅ **Sans licence restrictive** — Code source ouvert, utilisation libre sans contrainte juridique
+- ⚠️ **Licence personnalisée** — Usage personnel, éducatif et de recherche non commerciale uniquement ; les usages commerciaux sont interdits par `LICENSE`
 - ✅ **Non commercial** — Aucune monétisation, aucune vente, aucune collecte de données
 - ✅ **Open Source** — Développement transparent, contributions bienvenues
 
@@ -13,7 +13,7 @@
 
 ## 📋 Description
 
-Recréation fidèle de l'interface Windows 11 en **React 18 + Vite + TypeScript**, avec un **moteur natif .NET 8** qui interagit réellement avec le système Windows (WMI, Win32, APIs système) — **aucune simulation**.
+Recréation fidèle de l'interface Windows 11 en **React 18 + Vite + TypeScript**, avec un **moteur natif .NET 8** qui expose des opérations Windows réelles (WMI, Win32, APIs système). Certaines fonctions restent des préférences locales ou des représentations logiques ; leur statut doit être indiqué dans l’interface.
 
 ### Fonctionnalités principales
 - Bureau, barre des tâches, menu Démarrer (thème Obsidian glassmorphism)
