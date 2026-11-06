@@ -252,6 +252,8 @@ jobs:
           grep -q "${{ matrix.expected_test }}" build/uefi/debug.log
           if [ "${{ matrix.feature }}" = "qemu-scheduler-test" ]; then
             grep -q 'SYSTEMES: Local APIC periodic scheduler timer configured' build/uefi/debug.log
+            grep -q 'SYSTEMES: Local APIC timer calibrated against PIT channel 2 at 100 Hz' build/uefi/debug.log
+            grep -q 'SYSTEMES: monotonic kernel clock initialized at 100 Hz' build/uefi/debug.log
             grep -q 'SYSTEMES_TEST: blocked task wakeup and IRQ-safe mutex verified' build/uefi/debug.log
             grep -q 'SYSTEMES: per-task FXSAVE64 context images initialized' build/uefi/debug.log
           fi
