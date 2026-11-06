@@ -20,9 +20,13 @@ const PIC_MASTER_DATA: u16 = 0x21;
 const PIC_SLAVE_COMMAND: u16 = 0xA0;
 const PIC_SLAVE_DATA: u16 = 0xA1;
 const PIT_CHANNEL0: u16 = 0x40;
+const PIT_CHANNEL2: u16 = 0x42;
 const PIT_COMMAND: u16 = 0x43;
+const PIT_SPEAKER: u16 = 0x61;
 const PIT_INPUT_HZ: u32 = 1_193_182;
 const PIT_FREQUENCY_HZ: u32 = 100;
+const PIT_CALIBRATION_COUNT: u16 = 59_659;
+const PIT_CALIBRATION_TIMEOUT_ITERATIONS: usize = 100_000_000;
 const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / PIT_FREQUENCY_HZ) as u16;
 static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 static IRQ_COUNTS: [AtomicU64; IRQ_COUNT] = [const { AtomicU64::new(0) }; IRQ_COUNT];
@@ -682,6 +686,8 @@ pub enum ApicInitError {
     InvalidInterruptOverride,
     IoApicGsiNotCovered,
     IoApicProgrammingFailed,
+    TimerCalibrationTimeout,
+    TimerCalibrationInvalid,
 }
 
 unsafe fn read_msr(msr: u32) -> u64 {
@@ -697,6 +703,20 @@ unsafe fn write_msr(msr: u32, value: u64) {
 
 unsafe fn lapic_write(base: *mut u8, offset: usize, value: u32) {
     unsafe { core::ptr::write_volatile(base.add(offset) as *mut u32, value); }
+}
+
+unsafe fn lapic_read(base: *mut u8, offset: usize) -> u32 {
+    unsafe { core::ptr::read_volatile(base.add(offset) as *const u32) }
+}
+
+unsafe fn read_io_port(port: u16) -> u8 {
+    let value: u8;
+    unsafe { asm!("in al, dx", in("dx") port, out("al") value, options(nomem, nostack, preserves_flags)); }
+    value
+}
+
+unsafe fn write_io_port(port: u16, value: u8) {
+    unsafe { asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags)); }
 }
 
 unsafe fn ioapic_read(base: *mut u8, register: u8) -> u32 {
@@ -1027,23 +1047,80 @@ pub unsafe fn initialize_pic_pit() {
     TIMER_TICKS.store(0, Ordering::Release);
 }
 
-/// Configure a periodic Local APIC timer for preemptive task scheduling.
-/// The bootstrap count is provisional; clock calibration is a later phase.
+/// Result of calibrating the divided Local APIC timer against PIT channel 2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimerCalibration {
+    pub timer_hz: u64,
+    pub target_hz: u32,
+    pub initial_count: u32,
+    pub pit_count: u16,
+    pub elapsed_timer_counts: u32,
+}
+
+fn derive_timer_calibration(elapsed: u32, pit_count: u16, target_hz: u32) -> Option<TimerCalibration> {
+    if elapsed == 0 || pit_count == 0 || target_hz == 0 { return None; }
+    let timer_hz = (elapsed as u64).checked_mul(PIT_INPUT_HZ as u64)? / pit_count as u64;
+    let initial_count = timer_hz / target_hz as u64;
+    if timer_hz == 0 || initial_count == 0 || initial_count > u32::MAX as u64 { return None; }
+    Some(TimerCalibration { timer_hz, target_hz, initial_count: initial_count as u32, pit_count, elapsed_timer_counts: elapsed })
+}
+
+/// Configure a periodic Local APIC timer using a supplied calibrated count.
 pub unsafe fn initialize_local_apic_timer(initial_count: u32) -> Result<(), ApicInitError> {
-    if !APIC_ACTIVE.load(Ordering::Acquire) || initial_count == 0 {
-        return Err(ApicInitError::InvalidPhysicalAddress);
-    }
+    if !APIC_ACTIVE.load(Ordering::Acquire) || initial_count == 0 { return Err(ApicInitError::InvalidPhysicalAddress); }
     let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
-    if base.is_null() {
-        return Err(ApicInitError::InvalidPhysicalAddress);
-    }
+    if base.is_null() { return Err(ApicInitError::InvalidPhysicalAddress); }
     unsafe {
-        lapic_write(base, 0x3E0, 0x3); // Divide by 16.
+        lapic_write(base, 0x3E0, 0x3);
         lapic_write(base, 0x320, LOCAL_SCHEDULER_TIMER_VECTOR as u32 | (1 << 17));
         lapic_write(base, 0x380, initial_count);
     }
     LOCAL_TIMER_TICKS.store(0, Ordering::Release);
+    crate::clock::initialize();
     Ok(())
+}
+
+/// Calibrate the Local APIC countdown against the independent PIT channel-2 reference.
+/// PIT channel 2 measures about 50 ms; no guessed APIC frequency is used.
+pub unsafe fn calibrate_and_initialize_local_apic_timer(target_hz: u32) -> Result<TimerCalibration, ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) || target_hz == 0 { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() { return Err(ApicInitError::InvalidPhysicalAddress); }
+    let original_speaker = unsafe { read_io_port(PIT_SPEAKER) };
+    unsafe { write_io_port(PIT_SPEAKER, original_speaker & !0x03); }
+    unsafe { write_io_port(PIT_COMMAND, 0xB0); }
+    unsafe { write_io_port(PIT_CHANNEL2, PIT_CALIBRATION_COUNT as u8); }
+    unsafe { write_io_port(PIT_CHANNEL2, (PIT_CALIBRATION_COUNT >> 8) as u8); }
+    unsafe {
+        lapic_write(base, 0x3E0, 0x3);
+        lapic_write(base, 0x320, (1 << 16) | LOCAL_SCHEDULER_TIMER_VECTOR as u32);
+        lapic_write(base, 0x380, u32::MAX);
+    }
+    if unsafe { read_io_port(PIT_SPEAKER) } & (1 << 5) != 0 {
+        unsafe {
+            lapic_write(base, 0x320, (1 << 16) | LOCAL_SCHEDULER_TIMER_VECTOR as u32);
+            lapic_write(base, 0x380, 0);
+            write_io_port(PIT_SPEAKER, original_speaker);
+        }
+        return Err(ApicInitError::TimerCalibrationInvalid);
+    }
+    unsafe { write_io_port(PIT_SPEAKER, (original_speaker & !0x02) | 0x01); }
+    let mut completed = false;
+    for _ in 0..PIT_CALIBRATION_TIMEOUT_ITERATIONS {
+        if unsafe { read_io_port(PIT_SPEAKER) } & (1 << 5) != 0 { completed = true; break; }
+        core::hint::spin_loop();
+    }
+    let current = unsafe { lapic_read(base, 0x390) };
+    unsafe {
+        lapic_write(base, 0x320, (1 << 16) | LOCAL_SCHEDULER_TIMER_VECTOR as u32);
+        lapic_write(base, 0x380, 0);
+        write_io_port(PIT_SPEAKER, original_speaker);
+    }
+    if !completed { return Err(ApicInitError::TimerCalibrationTimeout); }
+    let elapsed = u32::MAX.saturating_sub(current);
+    let calibration = derive_timer_calibration(elapsed, PIT_CALIBRATION_COUNT, target_hz).ok_or(ApicInitError::TimerCalibrationInvalid)?;
+    unsafe { initialize_local_apic_timer(calibration.initial_count)?; }
+    Ok(calibration)
 }
 
 /// Stop the Local APIC scheduler timer.
@@ -1123,6 +1200,7 @@ pub extern "C" fn systemes_irq_dispatch(vector: u64, saved_rsp: usize) -> usize 
     }
     if vector == LOCAL_SCHEDULER_TIMER_VECTOR as u64 {
         LOCAL_TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
+        crate::clock::on_timer_interrupt();
         let next_rsp = crate::scheduler::on_timer(saved_rsp);
         let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
         if !base.is_null() {
@@ -1539,4 +1617,24 @@ mod tests {
 #[cfg(test)]
 const fn has_cpu_error_code(vector: u8) -> bool {
     matches!(vector, 8 | 10 | 11 | 12 | 13 | 14 | 17 | 21 | 29 | 30)
+}
+
+#[cfg(test)]
+mod timer_calibration_tests {
+    use super::*;
+    #[test]
+    fn derives_a_100_hz_count_from_a_measured_pit_interval() {
+        let elapsed = 500_000u32;
+        let result = derive_timer_calibration(elapsed, PIT_CALIBRATION_COUNT, 100).unwrap();
+        assert_eq!(result.target_hz, 100);
+        assert_eq!(result.initial_count, (result.timer_hz / 100) as u32);
+        assert!((9_900_000..=10_100_000).contains(&result.timer_hz));
+    }
+    #[test]
+    fn rejects_zero_and_unrepresentable_calibration_inputs() {
+        assert_eq!(derive_timer_calibration(0, PIT_CALIBRATION_COUNT, 100), None);
+        assert_eq!(derive_timer_calibration(100, 0, 100), None);
+        assert_eq!(derive_timer_calibration(100, PIT_CALIBRATION_COUNT, 0), None);
+        assert_eq!(derive_timer_calibration(u32::MAX, 1, 1), None);
+    }
 }
