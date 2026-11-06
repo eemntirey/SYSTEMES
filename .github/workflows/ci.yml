@@ -390,13 +390,23 @@ jobs:
               $response = $line | ConvertFrom-Json
               $responses[$response.id] = $response
             }
-            $metadata = $responses["guard-metadata"].result
-            foreach ($field in @("created", "modified", "accessed")) {
-              $value = [string]$metadata.$field
-              $parsed = [DateTimeOffset]::MinValue
-              if ($value -notmatch "Z$" -or -not [DateTimeOffset]::TryParse($value, [ref]$parsed) -or $parsed.Offset -ne [TimeSpan]::Zero) {
-                throw "File metadata field '$field' is not an explicit UTC ISO timestamp: '$value'"
+            # ConvertFrom-Json can coerce ISO strings into locale-formatted DateTime values.
+            # Validate the raw JSON wire values to avoid a culture-dependent false failure.
+            $metadataLine = $responseLines | Where-Object { $_.Contains('"id":"guard-metadata"') } | Select-Object -First 1
+            if (-not $metadataLine) { throw "Missing raw response for guard-metadata." }
+            $metadataDocument = [System.Text.Json.JsonDocument]::Parse($metadataLine)
+            try {
+              $metadata = $metadataDocument.RootElement.GetProperty("result")
+              foreach ($field in @("created", "modified", "accessed")) {
+                $value = $metadata.GetProperty($field).GetString()
+                $parsed = [DateTimeOffset]::MinValue
+                if ($value -notmatch "Z$" -or -not [DateTimeOffset]::TryParse($value, [ref]$parsed) -or $parsed.Offset -ne [TimeSpan]::Zero) {
+                  throw "File metadata field '$field' is not an explicit UTC ISO timestamp: '$value'"
+                }
               }
+            }
+            finally {
+              $metadataDocument.Dispose()
             }
             if ($responses["guard-valid-launch"].result.launched -ne $true) { throw "A valid executable under Windows/System32 was rejected." }
             if (-not $responses["guard-prefix-bypass"].error) { throw "The Program FilesEvil sibling-prefix path was not rejected." }
