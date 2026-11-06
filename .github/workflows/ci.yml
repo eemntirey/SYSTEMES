@@ -354,3 +354,57 @@ jobs:
           name: systemes-windows-ui-smoke
           path: systemes-ui-smoke.png
           if-no-files-found: ignore
+
+      - name: Verify native launch path boundaries and UTC file metadata
+        shell: pwsh
+        run: |
+          $engine = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/native-engine/SystemesNative.exe"
+          $testRoot = Join-Path $env:RUNNER_TEMP ("systemes-launch-guard-" + [guid]::NewGuid().ToString("N"))
+          $siblingRoot = Join-Path (Split-Path $env:ProgramFiles -Parent) ("Program FilesEvil-" + [guid]::NewGuid().ToString("N"))
+          $junctionTarget = Join-Path $env:ProgramData ("SYSTEMES-Outside-" + [guid]::NewGuid().ToString("N"))
+          $junctionPath = Join-Path $testRoot "linked-outside"
+          $sourceExe = Join-Path $env:WINDIR "System32/whoami.exe"
+          $metadataFile = Join-Path $testRoot "metadata.txt"
+          New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $siblingRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $junctionTarget -Force | Out-Null
+          Copy-Item $sourceExe (Join-Path $siblingRoot "whoami.exe")
+          Copy-Item $sourceExe (Join-Path $junctionTarget "whoami.exe")
+          Set-Content -Path $metadataFile -Value "SYSTEMES UTC metadata test"
+          New-Item -ItemType Junction -Path $junctionPath -Target $junctionTarget | Out-Null
+
+          try {
+            $requests = @(
+              @{ id = "guard-metadata"; method = "files/properties/read"; params = @{ path = $metadataFile } },
+              @{ id = "guard-valid-launch"; method = "process/launch"; params = @{ path = $sourceExe; arguments = "" } },
+              @{ id = "guard-prefix-bypass"; method = "process/launch"; params = @{ path = (Join-Path $siblingRoot "whoami.exe"); arguments = "" } },
+              @{ id = "guard-junction-bypass"; method = "process/launch"; params = @{ path = (Join-Path $junctionPath "whoami.exe"); arguments = "" } }
+            )
+            $requestLines = $requests | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 }
+            $responseLines = $requestLines | & $engine
+            if ($LASTEXITCODE -ne 0) { throw "Native engine exited with code $LASTEXITCODE during launch guard tests." }
+            if ($responseLines.Count -ne $requests.Count) { throw "Expected $($requests.Count) responses, received $($responseLines.Count)." }
+
+            $responses = @{}
+            foreach ($line in $responseLines) {
+              $response = $line | ConvertFrom-Json
+              $responses[$response.id] = $response
+            }
+            $metadata = $responses["guard-metadata"].result
+            foreach ($field in @("created", "modified", "accessed")) {
+              $value = [string]$metadata.$field
+              $parsed = [DateTimeOffset]::MinValue
+              if ($value -notmatch "Z$" -or -not [DateTimeOffset]::TryParse($value, [ref]$parsed) -or $parsed.Offset -ne [TimeSpan]::Zero) {
+                throw "File metadata field '$field' is not an explicit UTC ISO timestamp: '$value'"
+              }
+            }
+            if ($responses["guard-valid-launch"].result.launched -ne $true) { throw "A valid executable under Windows/System32 was rejected." }
+            if (-not $responses["guard-prefix-bypass"].error) { throw "The Program FilesEvil sibling-prefix path was not rejected." }
+            if (-not $responses["guard-junction-bypass"].error) { throw "An executable reached through a directory junction was not rejected." }
+            Write-Host "Native launch path boundary, junction rejection, valid launch, and UTC metadata checks passed."
+          }
+          finally {
+            Remove-Item $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $siblingRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $junctionTarget -Recurse -Force -ErrorAction SilentlyContinue
+          }
