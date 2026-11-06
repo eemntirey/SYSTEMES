@@ -130,7 +130,7 @@ namespace Systemes.Native.Core
                     }
                 }
 
-                var memoryByAdapter = new System.Collections.Generic.Dictionary<string, (ulong Dedicated, ulong Shared)>(StringComparer.OrdinalIgnoreCase);
+                var memoryByAdapter = new System.Collections.Generic.Dictionary<string, (ulong? Dedicated, ulong? Shared)>(StringComparer.OrdinalIgnoreCase);
                 using (var searcher = new ManagementObjectSearcher("SELECT Name, DedicatedUsage, SharedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory"))
                 {
                     foreach (ManagementObject item in searcher.Get())
@@ -185,10 +185,14 @@ namespace Systemes.Native.Core
             catch { return 0; }
         }
 
-        private static ulong ReadUnsignedCounter(ManagementBaseObject item, string property)
+        private static ulong? ReadUnsignedCounter(ManagementBaseObject item, string property)
         {
-            try { return Convert.ToUInt64(item[property] ?? 0, CultureInfo.InvariantCulture); }
-            catch { return 0; }
+            try
+            {
+                var value = item[property];
+                return value == null ? null : Convert.ToUInt64(value, CultureInfo.InvariantCulture);
+            }
+            catch { return null; }
         }
 
         public static object ReadRealProcesses()
