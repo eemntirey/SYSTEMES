@@ -112,6 +112,7 @@ jobs:
           grep -q 'SYSTEMES: PS/2 IRQ1 keyboard and IRQ12 auxiliary routes enabled via IOAPIC' build/uefi/debug.log
           grep -q 'SYSTEMES: hardware interrupts enabled' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
+          grep -q 'SYSTEMES: 1 MiB dynamic kernel heap initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
           grep -q 'SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified' build/uefi/debug.log
