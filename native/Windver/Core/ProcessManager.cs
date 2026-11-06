@@ -22,7 +22,7 @@ namespace Systemes.Native.Core
         };
 
         private static readonly Regex GpuLuidPattern = new(
-            @"luid_[^_]+_[^_]+_phys_\\d+",
+            @"luid_[^_]+_[^_]+_phys_\d+",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         [StructLayout(LayoutKind.Sequential)]
