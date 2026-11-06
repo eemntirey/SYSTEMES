@@ -81,6 +81,10 @@ impl CpuTopology {
             len: 0,
         };
         let mut bsp = None;
+        // Track every enabled APIC ID, including the BSP which is held aside
+        // until the inventory is reordered. Checking only `topology.cpus`
+        // misses duplicates of the BSP itself.
+        let mut seen_apic_ids = [false; 256];
 
         for entry in madt.local_apics.iter().take(madt.local_apic_count) {
             // MADT Local APIC flags bit 0 means enabled. Bit 1 alone means
@@ -89,12 +93,11 @@ impl CpuTopology {
                 continue;
             }
 
-            if topology.cpus[..topology.len]
-                .iter()
-                .any(|cpu| cpu.apic_id == entry.apic_id)
-            {
+            let seen = &mut seen_apic_ids[entry.apic_id as usize];
+            if *seen {
                 return Err(TopologyError::DuplicateApicId);
             }
+            *seen = true;
             if topology.len == MAX_CPUS {
                 return Err(TopologyError::TooManyCpus);
             }
