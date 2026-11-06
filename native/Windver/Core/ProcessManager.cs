@@ -277,5 +277,99 @@ namespace Systemes.Native.Core
                 throw new InvalidOperationException("Le processus n’existe plus.");
             }
         }
+
+        private static readonly string[] AllowedLaunchRoots =
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+        };
+
+        private static readonly string[] BlockedExecutableNames =
+        {
+            "regedit", "regedit.exe", "msconfig", "msconfig.exe", "taskmgr", "taskmgr.exe",
+            "services", "services.exe", "netsh", "netsh.exe", "gpedit", "gpedit.msc",
+            "diskpart", "diskpart.exe", "bcdedit", "bcdedit.exe",
+        };
+
+        private static bool IsPathWithinRoot(string path, string? root)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+                return false;
+
+            var normalizedPath = Path.GetFullPath(path);
+            var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+            return string.Equals(normalizedPath, normalizedRoot, StringComparison.OrdinalIgnoreCase)
+                || normalizedPath.StartsWith(
+                    normalizedRoot + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Refuse les liens symboliques, jonctions et autres reparse points sur chaque segment existant.
+        // Cela réduit les sorties de racine, sans éliminer à lui seul toute course TOCTOU.
+        private static void EnsureNoReparsePoints(string fullPath)
+        {
+            var current = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrEmpty(current))
+                throw new UnauthorizedAccessException("Le chemin de l’exécutable n’a pas de racine Windows valide.");
+
+            var segments = fullPath.Substring(current.Length)
+                .Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var segment in segments)
+            {
+                current = Path.Combine(current, segment);
+                if (!File.Exists(current) && !Directory.Exists(current))
+                    continue;
+
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException("Les liens symboliques et jonctions sont interdits dans le chemin de lancement.");
+            }
+        }
+
+        public static object LaunchProcess(string executablePath, string? arguments)
+        {
+            if (string.IsNullOrWhiteSpace(executablePath))
+                throw new ArgumentException("Le chemin de l’exécutable est obligatoire.", nameof(executablePath));
+
+            var resolved = Path.GetFullPath(executablePath);
+            if (!File.Exists(resolved))
+                throw new FileNotFoundException($"L’exécutable est introuvable : {resolved}");
+
+            var name = Path.GetFileName(resolved).ToLowerInvariant();
+            if (BlockedExecutableNames.Contains(name))
+                throw new UnauthorizedAccessException($"L’exécutable « {name} » est réservé au système et ne peut pas être lancé depuis SYSTEMES.");
+
+            var rootOk = AllowedLaunchRoots.Any(root => IsPathWithinRoot(resolved, root));
+            if (!rootOk)
+                throw new UnauthorizedAccessException("L’exécutable se trouve hors des répertoires autorisés (Program Files, Windows, profil utilisateur, Bureau).");
+
+            EnsureNoReparsePoints(resolved);
+
+            var start = new ProcessStartInfo
+            {
+                FileName = resolved,
+                Arguments = arguments ?? "",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(resolved) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            };
+
+            using var process = Process.Start(start)
+                ?? throw new InvalidOperationException("Windows n’a pas pu démarrer l’exécutable.");
+
+            return new
+            {
+                launched = true,
+                pid = process.Id,
+                name = process.ProcessName,
+                path = resolved,
+                arguments = arguments ?? "",
+                note = "Processus lancé en lecture seule, sans élévation de privilèges."
+            };
+        }
     }
 }

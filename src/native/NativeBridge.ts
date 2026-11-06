@@ -92,6 +92,11 @@ export const ALLOWED_NATIVE_METHODS = new Set([
   'bluetooth/scan',
   'bluetooth/pair',
   'update/check',
+  'process/launch',
+  'files/network-locations',
+  'files/properties/read',
+  'files/shares/read',
+  'files/drives/read',
 ])
 
 const MAX_PENDING_REQUESTS = 32
@@ -113,6 +118,11 @@ const METHOD_TIMEOUT_MS: Record<string, number> = {
   'bluetooth/pair': 45_000,
   'terminal/execute': 60_000,
   'update/check': 180_000,
+  'process/launch': 30_000,
+  'files/network-locations': 15_000,
+  'files/properties/read': 10_000,
+  'files/shares/read': 15_000,
+  'files/drives/read': 15_000,
   'processes/read': 20_000,
   'storage/volumes': 20_000,
   'apps/installed': 25_000,

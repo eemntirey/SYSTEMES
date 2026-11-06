@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "SYSTEMES — Recréation éducative de Windows 11 (React + .NET 8). GRATUIT, sans licence restrictive, NON COMMERCIAL. Mission: usage libre, éducatif, recherche uniquement. Aucune monétisation, jamais.",
+  "license": "UNLICENSED — Free for personal/educational use only. No commercial use. See README.md",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
