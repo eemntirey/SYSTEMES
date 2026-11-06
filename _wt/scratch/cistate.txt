@@ -1,0 +1,10 @@
+checks=8 completed=8 fresh=True enough=True
+  QEMU hardware fault — RX write must fault            completed  success
+  QEMU hardware fault — NX execution must fault        completed  success
+  no_std contract tests and x86_64 target check        completed  success
+  Build UEFI loader and boot kernel in QEMU/OVMF       completed  success
+  Build UEFI loader and boot kernel in QEMU/OVMF       completed  success
+  QEMU hardware fault — NX execution must fault        completed  success
+  no_std contract tests and x86_64 target check        completed  success
+  QEMU hardware fault — RX write must fault            completed  success
+CI_OK

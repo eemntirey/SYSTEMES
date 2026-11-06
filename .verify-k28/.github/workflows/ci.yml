@@ -1,0 +1,348 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - AttaqueComplet
+      - Phase2-Parametres-Natifs
+      - Phase3-Services-Windows
+      - feat/systemes-modernisation-apps
+      - Osreell
+  pull_request:
+    branches:
+      - main
+      - Phase2-Parametres-Natifs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, tests and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+
+  windows-native-host:
+    name: Windows native host build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build React assets
+        run: npm run build
+      - name: Build WPF + WebView2 host and native engine
+        run: dotnet build native/windows-host/SYSTEMES.WindowsHost.csproj --configuration Release
+      - name: Smoke test native engine JSON handshake
+        shell: pwsh
+        run: |
+          $engine = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/native-engine/SystemesNative.exe"
+          if (-not (Test-Path $engine)) {
+            throw "Native engine executable missing: $engine"
+          }
+
+          $request = '{"id":"ci-smoke","method":"system/ping","params":{}}'
+          $responseLines = $request | & $engine
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native engine exited with code $LASTEXITCODE"
+          }
+
+          $response = ($responseLines -join "`n") | ConvertFrom-Json
+          if ($response.id -ne "ci-smoke" -or $response.result.status -ne "ready") {
+            throw "Unexpected native engine handshake response: $($responseLines -join ' ')"
+          }
+
+          Write-Host "Native engine process started and answered the JSON handshake."
+
+      - name: Exercise native read operations and temporary file lifecycle
+        shell: pwsh
+        run: |
+          $engine = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/native-engine/SystemesNative.exe"
+          $testRoot = Join-Path $env:RUNNER_TEMP ("systemes-phase2-" + [guid]::NewGuid().ToString("N"))
+          $testFile = Join-Path $testRoot "bridge-smoke.txt"
+          New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+
+          try {
+            $testDir = Join-Path $testRoot "created-dir"
+            $requests = @(
+              @{ id = "phase2-ping"; method = "system/ping"; params = @{} },
+              @{ id = "phase-settings-invalid"; method = "system/open-settings"; params = @{ page = "arbitrary-command" } },
+              @{ id = "phase-power-read"; method = "system/power/read"; params = @{} },
+              @{ id = "phase-power-invalid-set"; method = "system/power/set"; params = @{ guid = "not-a-guid" } },
+              @{ id = "phase2-hardware"; method = "hardware/read"; params = @{} },
+              @{ id = "phase2-memory"; method = "memory/read"; params = @{} },
+              @{ id = "phase2-processes"; method = "processes/read"; params = @{} },
+              @{ id = "phase2-network"; method = "network/read"; params = @{} },
+              @{ id = "phase2-devices"; method = "devices/read"; params = @{} },
+              @{ id = "phase2-services"; method = "services/read"; params = @{} },
+              @{ id = "phase2-protected-service-stop"; method = "services/control"; params = @{ name = "RpcSs"; action = "stop" } },
+              @{ id = "phase2-security"; method = "security/read"; params = @{} },
+              @{ id = "phase2-update"; method = "update/check"; params = @{} },
+              @{ id = "phase2-file-dir-create"; method = "files/create-directory"; params = @{ path = $testDir } },
+              @{ id = "phase2-file-create"; method = "files/create"; params = @{ path = $testFile; content = "SYSTEMES native integration test" } },
+              @{ id = "phase2-file-list"; method = "files/list"; params = @{ path = $testRoot } },
+              @{ id = "phase2-file-read"; method = "files/read"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-read-content"; method = "files/read-content"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-write"; method = "files/write"; params = @{ path = $testFile; content = "SYSTEMES updated integration test" } },
+              @{ id = "phase2-file-read-updated"; method = "files/read-content"; params = @{ path = $testFile } },
+              @{ id = "phase2-file-copy"; method = "files/copy"; params = @{ source = $testFile; destination = (Join-Path $testRoot "copy-smoke.txt") } },
+              @{ id = "phase2-file-move"; method = "files/move"; params = @{ source = (Join-Path $testRoot "copy-smoke.txt"); destination = (Join-Path $testRoot "moved-smoke.txt") } },
+              @{ id = "phase2-file-ads"; method = "files/read-content"; params = @{ path = ($testFile + ":systemes") } },
+              @{ id = "phase2-file-device-path"; method = "files/read-content"; params = @{ path = '\\.\C:\Windows\win.ini' } },
+              @{ id = "phase2-terminal"; method = "terminal/execute"; params = @{ command = "Write-Output 'SYSTEMES_TERMINAL_OK'"; workingDirectory = $testRoot } },
+              @{ id = "phase2-file-rename"; method = "files/rename"; params = @{ path = $testFile; newName = "renamed-smoke.txt" } },
+              @{ id = "phase2-collision-create"; method = "files/create"; params = @{ path = (Join-Path $testRoot "collision.txt"); content = "keep existing file" } },
+              @{ id = "phase2-rename-collision"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "collision.txt" } },
+              @{ id = "phase2-rename-reserved"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "CON.txt" } },
+              @{ id = "phase2-rename-traversal"; method = "files/rename"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt"); newName = "../escaped.txt" } },
+              @{ id = "phase2-dir-rename"; method = "files/rename"; params = @{ path = $testDir; newName = "renamed-dir" } },
+              @{ id = "phase2-file-permissions"; method = "files/permissions/read"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt") } },
+              @{ id = "phase2-collision-read"; method = "files/read-content"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
+              @{ id = "phase2-file-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-smoke.txt") } },
+              @{ id = "phase2-dir-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "renamed-dir") } },
+              @{ id = "phase2-collision-delete"; method = "files/delete"; params = @{ path = (Join-Path $testRoot "collision.txt") } },
+              @{ id = "phase2-locations"; method = "files/locations"; params = @{} },
+              @{ id = "phase2-unknown"; method = "phase2/unknown"; params = @{} },
+              @{ id = "phase2-invalid-params"; method = "system/ping"; params = @("not", "an-object") }
+            )
+            $requestLines = $requests | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }
+            $responseLines = $requestLines | & $engine
+            if ($LASTEXITCODE -ne 0) {
+              throw "Native engine exited with code $LASTEXITCODE during phase 2 integration tests."
+            }
+            if ($responseLines.Count -ne $requests.Count) {
+              throw "Expected $($requests.Count) native responses, received $($responseLines.Count)."
+            }
+
+            $responses = @{}
+            foreach ($line in $responseLines) {
+              $response = $line | ConvertFrom-Json
+              $responses[$response.id] = $response
+            }
+            foreach ($request in $requests) {
+              if (-not $responses.ContainsKey($request.id)) {
+                throw "Missing native response for request $($request.id)."
+              }
+            }
+
+            if ($responses["phase2-ping"].result.status -ne "ready") { throw "system/ping failed." }
+            if (-not $responses["phase-settings-invalid"].error) { throw "system/open-settings must reject pages outside its allowlist." }
+            if ($null -eq $responses["phase-power-read"].result.schemes -or $responses["phase-power-read"].result.schemes.Count -lt 1) { throw "system/power/read returned no actual power schemes." }
+            if (-not $responses["phase-power-read"].result.activeGuid) { throw "system/power/read returned no active power scheme." }
+            if (-not $responses["phase-power-invalid-set"].error) { throw "system/power/set accepted an invalid scheme identifier." }
+            if (-not $responses["phase2-hardware"].result.note) { throw "hardware/read returned no diagnostic result." }
+            $memory = $responses["phase2-memory"].result
+            if ($null -eq $memory.totalPhysicalBytes -or $memory.totalPhysicalBytes -le 0) { throw "memory/read returned no physical RAM total." }
+            if ($null -eq $memory.availablePhysicalBytes -or $memory.availablePhysicalBytes -gt $memory.totalPhysicalBytes) { throw "memory/read returned an invalid available RAM counter." }
+            if ($null -eq $memory.usedPhysicalBytes -or $memory.usedPhysicalBytes -ne ($memory.totalPhysicalBytes - $memory.availablePhysicalBytes)) { throw "memory/read returned an inconsistent used RAM counter." }
+            if ($memory.memoryLoadPercent -lt 0 -or $memory.memoryLoadPercent -gt 100) { throw "memory/read returned a percentage outside 0-100." }
+            if ($memory.sampleSource -ne "Windows GlobalMemoryStatusEx") { throw "memory/read did not identify the real Windows measurement source." }
+            if ($null -eq $responses["phase2-processes"].result.processes) { throw "processes/read returned no process collection." }
+            if ($null -eq $responses["phase2-processes"].result.logicalProcessorCount) { throw "processes/read returned no logical processor count." }
+            if (-not $responses["phase2-processes"].result.performance.source) { throw "processes/read returned no Windows performance counter source." }
+            if ($null -eq $responses["phase2-processes"].result.performance.disks -or $null -eq $responses["phase2-processes"].result.performance.networks -or $null -eq $responses["phase2-processes"].result.performance.gpus) { throw "processes/read returned an incomplete GPU/disk/network snapshot." }
+            foreach ($process in $responses["phase2-processes"].result.processes) {
+              if ($null -ne $process.cpuUsagePercent -and ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100)) { throw "Process CPU sample is outside the normalized 0-100 range." }
+            }
+            if ($null -eq $responses["phase2-devices"].result.usb -or $null -eq $responses["phase2-devices"].result.network) { throw "devices/read returned an incomplete result." }
+            if ($null -eq $responses["phase2-devices"].result.devices -or $null -eq $responses["phase2-devices"].result.count -or $null -eq $responses["phase2-devices"].result.problemCount -or -not $responses["phase2-devices"].result.source) { throw "devices/read returned no Plug and Play health inventory." }
+            if ($null -eq $responses["phase2-services"].result.services -or $responses["phase2-services"].result.count -lt 1) { throw "services/read returned no Windows service inventory." }
+            $protectedRpc = @($responses["phase2-services"].result.services | Where-Object { $_.name -eq "RpcSs" -and $_.isProtected -eq $true })
+            if ($protectedRpc.Count -ne 1) { throw "services/read did not mark the Windows RPC service as protected." }
+            if (-not $responses["phase2-protected-service-stop"].error) { throw "services/control allowed stopping a protected Windows RPC service." }
+            if (-not $responses["phase2-security"].result.userName -or -not $responses["phase2-security"].result.source) { throw "security/read returned no Windows security context." }
+            if (-not $responses["phase2-network"].result.note) { throw "network/read returned no diagnostic note." }
+            if (-not $responses["phase2-update"].result.note) { throw "update/check returned no diagnostic result." }
+            if ($responses["phase2-file-dir-create"].result.created -ne $true) { throw "files/create-directory failed." }
+            if ($responses["phase2-file-copy"].result.copied -ne $true) { throw "files/copy did not create a native copy." }
+            if ($responses["phase2-file-move"].result.moved -ne $true) { throw "files/move did not move the copied file." }
+            if (-not $responses["phase2-file-ads"].error) { throw "files/read-content accepted an NTFS alternate data stream path." }
+            if (-not $responses["phase2-file-device-path"].error) { throw "files/read-content accepted a Windows device namespace path." }
+            $terminal = $responses["phase2-terminal"].result
+            if ($terminal.output -notmatch "SYSTEMES_TERMINAL_OK") { throw "terminal/execute did not execute a real PowerShell command. Response: $($responses['phase2-terminal'] | ConvertTo-Json -Compress -Depth 8)" }
+            if ($terminal.workingDirectory -ne $testRoot) { throw "terminal/execute did not preserve the requested working directory." }
+            if ($terminal.elevated -ne $false) { throw "terminal/execute must never elevate automatically." }
+
+            if ($responses["phase2-file-create"].result.created -ne $true) { throw "files/create failed." }
+            if ($responses["phase2-file-list"].result.items.name -notcontains "bridge-smoke.txt") { throw "files/list did not return the created file." }
+            if ($responses["phase2-file-read"].result.exists -ne $true) { throw "files/read did not find the created file." }
+            if ($responses["phase2-file-read-content"].result.content -ne "SYSTEMES native integration test") { throw "files/read-content returned unexpected content." }
+            if ($responses["phase2-file-write"].result.written -ne $true) { throw "files/write failed." }
+            if ($responses["phase2-file-read-updated"].result.content -ne "SYSTEMES updated integration test") { throw "files/write did not persist updated content." }
+            if ($responses["phase2-file-rename"].result.renamed -ne $true) { throw "files/rename failed." }
+            if ($responses["phase2-file-rename"].result.name -ne "renamed-smoke.txt") { throw "files/rename returned the wrong destination name." }
+            if (Test-Path $testFile) { throw "files/rename left the source file in place." }
+            if (-not $responses["phase2-rename-collision"].error) { throw "files/rename overwrote an existing destination." }
+            if (-not $responses["phase2-rename-reserved"].error) { throw "files/rename accepted a reserved Windows device name." }
+            if (-not $responses["phase2-rename-traversal"].error) { throw "files/rename accepted a path traversal name." }
+            if ($responses["phase2-dir-rename"].result.renamed -ne $true -or $responses["phase2-dir-rename"].result.isDirectory -ne $true) { throw "Directory rename failed." }
+            if ($responses["phase2-file-delete"].result.deleted -ne $true) { throw "files/delete failed after rename." }
+            if ($responses["phase2-file-delete"].result.recycled -ne $true) { throw "files/delete did not confirm Windows Recycle Bin transfer." }
+            if ($responses["phase2-dir-delete"].result.recycled -ne $true) { throw "Directory deletion did not confirm Windows Recycle Bin transfer." }
+            if (-not $responses["phase2-file-permissions"].result.acl -or $responses["phase2-file-permissions"].result.source -ne "icacls.exe") { throw "files/permissions/read returned no Windows ACL." }
+            if ($responses["phase2-collision-read"].result.content -ne "keep existing file") { throw "A failed rename modified the existing destination file." }
+            if ($responses["phase2-collision-delete"].result.deleted -ne $true) { throw "Collision test cleanup failed." }
+            if ($responses["phase2-locations"].result.locations.Count -lt 1) { throw "files/locations returned no Windows locations." }
+            if (-not $responses["phase2-unknown"].error) { throw "Unknown native methods must return a top-level protocol error." }
+            if (-not $responses["phase2-invalid-params"].error) { throw "Native IPC must reject non-object params." }
+            if (Test-Path $testFile) { throw "Temporary native test file was not deleted." }
+            if (Test-Path (Join-Path $testRoot "renamed-dir")) { throw "Native directory deletion did not remove the source from its original location." }
+
+            $powerStart = New-Object System.Diagnostics.ProcessStartInfo
+            $powerStart.FileName = $engine
+            $powerStart.UseShellExecute = $false
+            $powerStart.CreateNoWindow = $true
+            $powerStart.RedirectStandardInput = $true
+            $powerStart.RedirectStandardOutput = $true
+            $powerStart.RedirectStandardError = $true
+            $powerProcess = [System.Diagnostics.Process]::Start($powerStart)
+            try {
+              $powerProcess.StandardInput.WriteLine('{"id":"power-read","method":"system/power/read","params":{}}')
+              $powerProcess.StandardInput.Flush()
+              $powerRead = $powerProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($powerRead.id -ne "power-read" -or -not $powerRead.result.activeGuid) { throw "Could not read the active Windows power scheme." }
+              $activePowerGuid = [string]$powerRead.result.activeGuid
+              $setRequest = @{ id = "power-set"; method = "system/power/set"; params = @{ guid = $activePowerGuid } } | ConvertTo-Json -Compress -Depth 5
+              $powerProcess.StandardInput.WriteLine($setRequest)
+              $powerProcess.StandardInput.Flush()
+              $powerSet = $powerProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($powerSet.id -ne "power-set" -or $powerSet.result.activeGuid -ne $activePowerGuid) { throw "Windows did not confirm re-applying the current power scheme." }
+            }
+            finally {
+              $powerProcess.StandardInput.Close()
+              if (-not $powerProcess.HasExited) { $powerProcess.Kill() }
+              $powerProcess.Dispose()
+            }
+
+            $cpuStart = New-Object System.Diagnostics.ProcessStartInfo
+            $cpuStart.FileName = $engine
+            $cpuStart.UseShellExecute = $false
+            $cpuStart.CreateNoWindow = $true
+            $cpuStart.RedirectStandardInput = $true
+            $cpuStart.RedirectStandardOutput = $true
+            $cpuStart.RedirectStandardError = $true
+            $cpuProcess = [System.Diagnostics.Process]::Start($cpuStart)
+            try {
+              $cpuProcess.StandardInput.WriteLine('{"id":"cpu-first","method":"processes/read","params":{}}')
+              $cpuProcess.StandardInput.Flush()
+              $firstSample = $cpuProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($firstSample.id -ne "cpu-first" -or -not $firstSample.result.processes) { throw "Initial process CPU sample request failed." }
+              Start-Sleep -Milliseconds 1200
+              $cpuProcess.StandardInput.WriteLine('{"id":"cpu-second","method":"processes/read","params":{}}')
+              $cpuProcess.StandardInput.Flush()
+              $secondSample = $cpuProcess.StandardOutput.ReadLine() | ConvertFrom-Json
+              if ($secondSample.id -ne "cpu-second") { throw "Second process CPU sample request failed." }
+              $measured = @($secondSample.result.processes | Where-Object { $_.cpuSampleAvailable -eq $true -and $null -ne $_.cpuUsagePercent })
+              if ($measured.Count -lt 1) { throw "No real CPU sample was produced after the sampling interval." }
+              foreach ($process in $measured) {
+                if ($process.cpuUsagePercent -lt 0 -or $process.cpuUsagePercent -gt 100) { throw "Measured process CPU is outside 0-100 percent." }
+              }
+            }
+            finally {
+              $cpuProcess.StandardInput.Close()
+              if (-not $cpuProcess.HasExited) { $cpuProcess.Kill() }
+              $cpuProcess.Dispose()
+            }
+
+            Write-Host "Phase 2 native integration checks passed: process, hardware, devices, updates, directory listing, text read/write, collision-safe file/directory rename, reserved-name and traversal rejection, safe delete, measured process CPU sampling, and locations."
+          }
+          finally {
+            Remove-Item $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Launch WPF host and verify WebView2 React rendering
+        shell: pwsh
+        run: |
+          $hostExe = Join-Path $env:GITHUB_WORKSPACE "native/windows-host/bin/Release/net8.0-windows/SYSTEMES.WindowsHost.exe"
+          $resultPath = Join-Path $env:RUNNER_TEMP "systemes-ui-smoke.json"
+          $screenshotPath = Join-Path $env:GITHUB_WORKSPACE "systemes-ui-smoke.png"
+          if (-not (Test-Path $hostExe)) {
+            throw "WPF host executable missing: $hostExe"
+          }
+
+          Remove-Item $resultPath -Force -ErrorAction SilentlyContinue
+          $env:SYSTEMES_UI_SMOKE_RESULT = $resultPath
+          $hostProcess = Start-Process -FilePath $hostExe -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(75)
+            while (-not (Test-Path $resultPath) -and (Get-Date) -lt $deadline) {
+              if ($hostProcess.HasExited) {
+                throw "WPF host exited early with code $($hostProcess.ExitCode)"
+              }
+              Start-Sleep -Seconds 1
+            }
+
+            if (-not (Test-Path $resultPath)) {
+              throw "Timed out waiting for WebView2/React render result."
+            }
+
+            $uiResult = Get-Content $resultPath -Raw | ConvertFrom-Json
+            if ($uiResult.status -ne "ready") {
+              throw "WPF/WebView2 UI smoke test failed: $($uiResult.error)"
+            }
+            if ($uiResult.rootChildren -lt 1 -or $uiResult.bodyTextLength -lt 1) {
+              throw "React root is empty: $($uiResult | ConvertTo-Json -Compress)"
+            }
+
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            $graphics.Dispose()
+            $bitmap.Dispose()
+
+            if ((Get-Item $screenshotPath).Length -lt 10000) {
+              throw "UI screenshot is unexpectedly small; graphical rendering may have failed."
+            }
+
+            Write-Host "WPF window launched and WebView2 rendered React UI: $($uiResult | ConvertTo-Json -Compress)"
+            Write-Host "Screenshot saved: $screenshotPath"
+          }
+          finally {
+            if (-not $hostProcess.HasExited) {
+              Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item Env:SYSTEMES_UI_SMOKE_RESULT -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload Windows UI smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: systemes-windows-ui-smoke
+          path: systemes-ui-smoke.png
+          if-no-files-found: ignore

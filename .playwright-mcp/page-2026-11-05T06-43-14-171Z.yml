@@ -1,0 +1,518 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e3]:
+    - link "Skip to content" [ref=f1e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=f1e9]:
+      - heading "Navigation Menu" [level=2] [ref=f1e10]
+      - generic [ref=f1e11]:
+        - link "Homepage" [ref=f1e14] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f1e17]:
+          - navigation "Global" [ref=f1e18]:
+            - list [ref=f1e19]:
+              - listitem [ref=f1e20]:
+                - button "Products" [ref=f1e22] [cursor=pointer]
+              - listitem [ref=f1e25]:
+                - button "Developers" [ref=f1e27] [cursor=pointer]
+              - listitem [ref=f1e30]:
+                - button "Businesses" [ref=f1e32] [cursor=pointer]
+              - listitem [ref=f1e35]:
+                - button "Resources" [ref=f1e37] [cursor=pointer]
+              - listitem [ref=f1e40]:
+                - link "Pricing" [ref=f1e41] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+          - generic [ref=f1e42]:
+            - button "Search or jump to, type / to search" [ref=f1e44] [cursor=pointer]:
+              - generic [ref=f1e47]:
+                - generic [ref=f1e48]: Search
+                - generic [aria-hidden] [ref=f1e49]: /
+            - generic [ref=f1e50]:
+              - link "Sign in" [ref=f1e52] [cursor=pointer]:
+                - /url: /login
+              - link "Sign up" [ref=f1e55] [cursor=pointer]:
+                - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F&source=header-home
+  - main [ref=f1e60]:
+    - generic [ref=f1e66]:
+      - generic [ref=f1e72]:
+        - generic [ref=f1e73]:
+          - link "GitHub Universe ‘26 Recap" [ref=f1e75] [cursor=pointer]:
+            - /url: https://github.com/events/universe/recap?utm_source=homepage-eyebrow-banner-universe-recap&utm_medium=web&utm_campaign=universe-2026&locale=en-US
+          - heading "Software still starts with you" [level=1] [ref=f1e87]:
+            - generic [aria-hidden] [ref=f1e88]:
+              - generic [ref=f1e89]: Software
+              - generic [ref=f1e90]: still
+              - generic [ref=f1e91]: starts
+            - generic [aria-hidden] [ref=f1e92]:
+              - generic [ref=f1e93]: with
+              - generic [ref=f1e94]: you
+        - generic [ref=f1e95]:
+          - form "Sign up for GitHub" [ref=f1e96]:
+            - generic [ref=f1e97]:
+              - generic: Enter your email
+              - textbox "Enter your email" [ref=f1e99]:
+                - /placeholder: you@domain.com
+            - button "Sign up for GitHub" [ref=f1e100] [cursor=pointer]
+          - link "Download GitHub Copilot app" [ref=f1e102] [cursor=pointer]:
+            - /url: /features/copilot
+      - generic [ref=f1e118]:
+        - heading "Product walkthrough" [level=2] [ref=f1e119]
+        - generic "Product walkthrough" [ref=f1e143]
+        - generic [ref=f1e144]:
+          - list [ref=f1e147]:
+            - listitem [ref=f1e148]:
+              - button "Review changes" [ref=f1e149] [cursor=pointer]
+            - listitem [ref=f1e152]:
+              - button "Direct the fix" [ref=f1e153] [cursor=pointer]
+            - listitem [ref=f1e155]:
+              - button "Check the results" [ref=f1e156] [cursor=pointer]
+            - listitem [ref=f1e158]:
+              - button "Approve and merge" [ref=f1e159] [cursor=pointer]
+            - listitem [ref=f1e161]:
+              - button "See it shipped" [ref=f1e162] [cursor=pointer]
+          - button "Pause the product walkthrough" [ref=f1e165] [cursor=pointer]
+      - generic [ref=f1e170]:
+        - heading "GitHub activity" [level=2] [ref=f1e171]
+        - list [ref=f1e173]:
+          - listitem [ref=f1e174]:
+            - link "branch merged from derupratama derupratama/judul-6_PPW Nov 5, 20265 minutes ago" [ref=f1e175] [cursor=pointer]:
+              - /url: /derupratama/judul-6_PPW/pull/1
+              - generic [ref=f1e176]: branch merged from derupratama
+              - generic [ref=f1e181]:
+                - generic [ref=f1e182]: derupratama/judul-6_PPW
+                - generic [ref=f1e183]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e184]:
+            - generic [ref=f1e185]:
+              - generic [ref=f1e186]:
+                - generic [ref=f1e187]: 225M+
+                - generic [aria-hidden] [ref=f1e188]: 0M+
+              - generic [ref=f1e189]: developers building on GitHub
+          - listitem [ref=f1e190]:
+            - link "push from RemiPelloux RemiPelloux/modelly-hub Nov 3, 20262 days ago" [ref=f1e191] [cursor=pointer]:
+              - /url: /RemiPelloux/modelly-hub/commit/a8c103a4a12057b3a635b14343ff8d795c4f5d5d
+              - generic [ref=f1e192]: push from RemiPelloux
+              - generic [ref=f1e197]:
+                - generic [ref=f1e198]: RemiPelloux/modelly-hub
+                - generic [ref=f1e199]: · Nov 3, 20262 days ago
+          - listitem [ref=f1e200]:
+            - link "repo starred by 250303305006-creator vercel-labs/agent-desktop Nov 5, 20265 minutes ago" [ref=f1e201] [cursor=pointer]:
+              - /url: /vercel-labs/agent-desktop
+              - generic [ref=f1e202]: repo starred by 250303305006-creator
+              - generic [ref=f1e207]:
+                - generic [ref=f1e208]: vercel-labs/agent-desktop
+                - generic [ref=f1e209]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e210]:
+            - link "pull request from danhandev corebank-tech/corebank-server Nov 5, 20265 minutes ago" [ref=f1e211] [cursor=pointer]:
+              - /url: /corebank-tech/corebank-server/pull/916
+              - generic [ref=f1e212]: pull request from danhandev
+              - generic [ref=f1e217]:
+                - generic [ref=f1e218]: corebank-tech/corebank-server
+                - generic [ref=f1e219]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e220]:
+            - link "branch merged from kento-yosida kento-yosida/q3-group-project Nov 5, 20265 minutes ago" [ref=f1e221] [cursor=pointer]:
+              - /url: /kento-yosida/q3-group-project/pull/13
+              - generic [ref=f1e222]: branch merged from kento-yosida
+              - generic [ref=f1e227]:
+                - generic [ref=f1e228]: kento-yosida/q3-group-project
+                - generic [ref=f1e229]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e230]:
+            - generic [ref=f1e231]:
+              - generic [ref=f1e232]:
+                - generic [ref=f1e233]: 230+
+                - generic [aria-hidden] [ref=f1e234]: 0+
+              - generic [ref=f1e235]: repositories created every minute
+          - listitem [ref=f1e236]:
+            - link "push from majidassaleh-del majidassaleh-del/Dar-app Nov 4, 202617 hours ago" [ref=f1e237] [cursor=pointer]:
+              - /url: /majidassaleh-del/Dar-app/commit/dbeb5fb3235ef4f8f9c30955b133d15059b2c7e1
+              - generic [ref=f1e238]: push from majidassaleh-del
+              - generic [ref=f1e243]:
+                - generic [ref=f1e244]: majidassaleh-del/Dar-app
+                - generic [ref=f1e245]: · Nov 4, 202617 hours ago
+          - listitem [ref=f1e246]:
+            - link "repo starred by Zhanyuanium icebear0828/codex-proxy Nov 5, 20265 minutes ago" [ref=f1e247] [cursor=pointer]:
+              - /url: /icebear0828/codex-proxy
+              - generic [ref=f1e248]: repo starred by Zhanyuanium
+              - generic [ref=f1e253]:
+                - generic [ref=f1e254]: icebear0828/codex-proxy
+                - generic [ref=f1e255]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e256]:
+            - link "pull request from GRIMDROWNED GRIMDROWNED/Drowned-Light Nov 5, 20265 minutes ago" [ref=f1e257] [cursor=pointer]:
+              - /url: /GRIMDROWNED/Drowned-Light/pull/190
+              - generic [ref=f1e258]: pull request from GRIMDROWNED
+              - generic [ref=f1e263]:
+                - generic [ref=f1e264]: GRIMDROWNED/Drowned-Light
+                - generic [ref=f1e265]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e266]:
+            - link "branch merged from jpsnover AI-Rosetta-Stone/ai-triad-research Nov 5, 20265 minutes ago" [ref=f1e267] [cursor=pointer]:
+              - /url: /AI-Rosetta-Stone/ai-triad-research/pull/4571
+              - generic [ref=f1e268]: branch merged from jpsnover
+              - generic [ref=f1e273]:
+                - generic [ref=f1e274]: AI-Rosetta-Stone/ai-triad-research
+                - generic [ref=f1e275]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e276]:
+            - generic [ref=f1e277]:
+              - generic [ref=f1e278]:
+                - generic [ref=f1e279]: 43M+
+                - generic [aria-hidden] [ref=f1e280]: 0M+
+              - generic [ref=f1e281]: pull requests merged each month
+          - listitem [ref=f1e282]:
+            - link "push from Thegreatsura Thegreatsura/unkey Nov 5, 202650 minutes ago" [ref=f1e283] [cursor=pointer]:
+              - /url: /Thegreatsura/unkey/commit/0cf6bd79d5194508b897b724c814cba07f7d59c8
+              - generic [ref=f1e284]: push from Thegreatsura
+              - generic [ref=f1e289]:
+                - generic [ref=f1e290]: Thegreatsura/unkey
+                - generic [ref=f1e291]: · Nov 5, 202650 minutes ago
+          - listitem [ref=f1e292]:
+            - link "repo starred by DogToon64 D-Pyro/NupStudio Nov 5, 20265 minutes ago" [ref=f1e293] [cursor=pointer]:
+              - /url: /D-Pyro/NupStudio
+              - generic [ref=f1e294]: repo starred by DogToon64
+              - generic [ref=f1e299]:
+                - generic [ref=f1e300]: D-Pyro/NupStudio
+                - generic [ref=f1e301]: · Nov 5, 20265 minutes ago
+          - listitem [ref=f1e302]:
+            - link "pull request from E-AI-MODEL E-AI-MODEL/website Nov 5, 20265 minutes ago" [ref=f1e303] [cursor=pointer]:
+              - /url: /E-AI-MODEL/website/pull/80
+              - generic [ref=f1e304]: pull request from E-AI-MODEL
+              - generic [ref=f1e309]:
+                - generic [ref=f1e310]: E-AI-MODEL/website
+                - generic [ref=f1e311]: · Nov 5, 20265 minutes ago
+          - listitem [aria-hidden] [ref=f1e312]:
+            - link [ref=f1e313] [cursor=pointer]:
+              - /url: /derupratama/judul-6_PPW/pull/1
+              - generic [ref=f1e314]: branch merged from derupratama
+              - generic [ref=f1e319]:
+                - generic [ref=f1e320]: derupratama/judul-6_PPW
+                - generic [ref=f1e321]: · Nov 5, 20265 minutes ago
+        - button "Pause activity" [ref=f1e323] [cursor=pointer]
+      - generic [ref=f1e326]:
+        - region [ref=f1e327]:
+          - heading "GitHub Platform" [level=2] [ref=f1e330]
+          - generic [ref=f1e333]:
+            - region [ref=f1e334]:
+              - generic [ref=f1e335]:
+                - img "A pull request with a merge stack" [ref=f1e349]
+                - generic [ref=f1e350]:
+                  - heading "GitHub" [level=3] [ref=f1e351]
+                  - paragraph [ref=f1e354]: Repository hosting, code review, and collaboration
+                  - generic [ref=f1e355]:
+                    - link "Learn more" [ref=f1e356] [cursor=pointer]:
+                      - /url: /platform
+                    - link "See plans and pricing" [ref=f1e359] [cursor=pointer]:
+                      - /url: /pricing
+            - region [ref=f1e362]:
+              - generic [ref=f1e363]:
+                - img "GitHub Copilot working with repository context" [ref=f1e377]
+                - generic [ref=f1e378]:
+                  - heading "Copilot" [level=3] [ref=f1e379]
+                  - paragraph [ref=f1e382]: AI coding agent for tasks, projects, and automated work
+                  - generic [ref=f1e383]:
+                    - link "Learn more" [ref=f1e384] [cursor=pointer]:
+                      - /url: /features/copilot
+                    - link "See plans and pricing" [ref=f1e387] [cursor=pointer]:
+                      - /url: /features/copilot/plans
+        - region [ref=f1e398]:
+          - heading "More ways to use GitHub" [level=2] [ref=f1e401]
+          - generic [ref=f1e404]:
+            - region [ref=f1e405]:
+              - generic [ref=f1e406]:
+                - img "A successful GitHub Actions workflow" [ref=f1e420]
+                - generic [ref=f1e421]:
+                  - heading "Actions" [level=3] [ref=f1e422]
+                  - paragraph [ref=f1e423]: CI/CD and automation
+                  - link "Explore Actions" [ref=f1e425] [cursor=pointer]:
+                    - /url: /features/actions
+            - region [ref=f1e428]:
+              - generic [ref=f1e429]:
+                - img "A code quality autofix suggestion" [ref=f1e443]
+                - generic [ref=f1e444]:
+                  - heading "Code Quality" [level=3] [ref=f1e445]
+                  - paragraph [ref=f1e446]: Quality analysis, fixes, and enforcement
+                  - link "Explore Code Quality" [ref=f1e448] [cursor=pointer]:
+                    - /url: /features/code-quality
+            - region [ref=f1e451]:
+              - generic [ref=f1e452]:
+                - img "A code injection security alert" [ref=f1e466]
+                - generic [ref=f1e467]:
+                  - heading "Code Security" [level=3] [ref=f1e468]
+                  - paragraph [ref=f1e469]: Vulnerability detection and response
+                  - link "Explore Code Security" [ref=f1e471] [cursor=pointer]:
+                    - /url: /security/advanced-security/code-security
+            - region [ref=f1e474]:
+              - generic [ref=f1e475]:
+                - img "A leaked password security alert" [ref=f1e489]
+                - generic [ref=f1e490]:
+                  - heading "Secret Protection" [level=3] [ref=f1e491]
+                  - paragraph [ref=f1e492]: Secret scanning and leak prevention
+                  - link "Explore Secret Protection" [ref=f1e494] [cursor=pointer]:
+                    - /url: /security/advanced-security/secret-protection
+            - region [ref=f1e497]:
+              - generic [ref=f1e498]:
+                - img "A GitHub Codespaces environment selector" [ref=f1e512]
+                - generic [ref=f1e513]:
+                  - heading "Codespaces" [level=3] [ref=f1e514]
+                  - paragraph [ref=f1e515]: Cloud development environments
+                  - link "Explore Codespaces" [ref=f1e517] [cursor=pointer]:
+                    - /url: /features/codespaces
+      - region [ref=f1e527]:
+        - generic [ref=f1e531]:
+          - heading "Whatever you're building, you can build it on GitHub" [level=2] [ref=f1e532]
+          - link "Start Enterprise free trial" [ref=f1e533] [cursor=pointer]:
+            - /url: /get_started?with=enterprise
+      - generic [ref=f1e535]:
+        - generic [ref=f1e540]:
+          - heading "What our customers say" [level=2] [ref=f1e541]
+          - region "What our customers say" [ref=f1e543]:
+            - generic [ref=f1e544]:
+              - group "Testimonial navigation" [ref=f1e546]:
+                - button "Previous testimonial" [ref=f1e547] [cursor=pointer]
+                - generic [ref=f1e551]:
+                  - button "Go to testimonial 1" [disabled] [ref=f1e552] [cursor=pointer]
+                  - button "Go to testimonial 2" [ref=f1e553] [cursor=pointer]
+                  - button "Go to testimonial 3" [ref=f1e554] [cursor=pointer]
+                  - button "Go to testimonial 4" [ref=f1e555] [cursor=pointer]
+                  - button "Go to testimonial 5" [ref=f1e556] [cursor=pointer]
+                - button "Next testimonial" [ref=f1e557] [cursor=pointer]
+              - group "Testimonial 1 of 5" [ref=f1e562]:
+                - figure [ref=f1e563]:
+                  - generic [ref=f1e564]:
+                    - generic [ref=f1e566]: “
+                    - blockquote [ref=f1e567]:
+                      - generic [ref=f1e568]: GitHub is one of the de facto tools that engineers want to use, and because of that, we don't have long, expensive onboarding periods or productivity gaps.
+                  - generic [ref=f1e571]:
+                    - generic [ref=f1e572]: Rob Witoff
+                    - generic [ref=f1e573]: CTO, Coinbase
+            - status [ref=f1e574]
+          - generic [ref=f1e575]:
+            - generic [ref=f1e576]:
+              - paragraph [ref=f1e577]:
+                - generic [ref=f1e578]: 800M
+                - generic [aria-hidden] [ref=f1e579]: 0M
+              - paragraph [ref=f1e580]: public and open source repositories
+            - generic [ref=f1e581]:
+              - paragraph [ref=f1e582]:
+                - generic [ref=f1e583]: 90%
+                - generic [aria-hidden] [ref=f1e584]: 0%
+              - paragraph [ref=f1e585]: of the Fortune 100 uses GitHub
+        - generic [ref=f1e590]:
+          - heading "Companies using GitHub" [level=2] [ref=f1e591]
+          - generic [ref=f1e592]:
+            - generic [ref=f1e594]:
+              - img "Duolingo" [ref=f1e595]
+              - img "FedEx" [ref=f1e597]
+              - img "American Airlines" [ref=f1e600]
+              - img "Postmates" [ref=f1e603]
+              - img "Mercado Libre" [ref=f1e606]
+            - button "Pause animation" [ref=f1e650] [cursor=pointer]
+      - generic [ref=f1e655]:
+        - heading "Customer stories" [level=2] [ref=f1e656]
+        - generic [ref=f1e671]:
+          - generic [ref=f1e674]:
+            - img "Figma" [ref=f1e676]
+            - heading [level=3] [ref=f1e677]:
+              - link "Figma streamlines development and strengthens security" [ref=f1e678] [cursor=pointer]:
+                - /url: /customer-stories/figma
+          - generic [ref=f1e681]:
+            - img "Mercedes-Benz" [ref=f1e683]
+            - heading [level=3] [ref=f1e684]:
+              - link "Mercedes-Benz standardizes source code and automates onboarding" [ref=f1e685] [cursor=pointer]:
+                - /url: /customer-stories/mercedes-benz
+          - generic [ref=f1e688]:
+            - img "Mercado Libre" [ref=f1e690]
+            - heading [level=3] [ref=f1e691]:
+              - link "Mercado Libre cuts coding time by 50%with GitHub Copilot" [ref=f1e692] [cursor=pointer]:
+                - /url: /customer-stories/mercado-libre
+      - generic [ref=f1e698]:
+        - heading "Featured repositories" [level=2] [ref=f1e700]
+        - region [ref=f1e752]:
+          - generic [ref=f1e753]:
+            - generic [ref=f1e758]:
+              - generic [ref=f1e759]: Built with GitHub
+              - heading "Join the world's largest developer community" [level=2] [ref=f1e764]
+            - generic [ref=f1e765]:
+              - paragraph [ref=f1e766]: Every project adds something new to the community. Explore what developers are building across GitHub, then create an account and contribute your own.
+              - form "Join the world's largest developer community" [ref=f1e767]:
+                - generic [ref=f1e768]:
+                  - generic: Enter your email
+                  - textbox "Enter your email" [ref=f1e770]:
+                    - /placeholder: you@domain.com
+                - button "Sign up for GitHub" [ref=f1e771] [cursor=pointer]
+  - contentinfo [ref=f1e777]:
+    - heading "Site-wide Links" [level=2] [ref=f1e778]
+    - generic [ref=f1e780]:
+      - region [ref=f1e781]:
+        - link "Go to GitHub homepage" [ref=f1e782] [cursor=pointer]:
+          - /url: /
+        - heading "The developer newsletter" [level=3] [ref=f1e785]
+        - paragraph [ref=f1e787]: Get tips, technical guides, and best practices. Twice a month. Right in your inbox.
+        - link "Subscribe" [ref=f1e788] [cursor=pointer]:
+          - /url: /newsletter
+      - generic [ref=f1e791]:
+        - navigation [ref=f1e792]:
+          - heading "Products" [level=3] [ref=f1e793]
+          - list [ref=f1e794]:
+            - listitem [ref=f1e795]:
+              - link "GitHub" [ref=f1e796] [cursor=pointer]:
+                - /url: /platform
+            - listitem [ref=f1e798]:
+              - link "Actions" [ref=f1e799] [cursor=pointer]:
+                - /url: /features/actions
+            - listitem [ref=f1e801]:
+              - link "Code Quality" [ref=f1e802] [cursor=pointer]:
+                - /url: /features/code-quality
+            - listitem [ref=f1e804]:
+              - link "Copilot" [ref=f1e805] [cursor=pointer]:
+                - /url: /features/copilot
+            - listitem [ref=f1e807]:
+              - link "Codespaces" [ref=f1e808] [cursor=pointer]:
+                - /url: /features/codespaces
+            - listitem [ref=f1e810]:
+              - link "Code Security" [ref=f1e811] [cursor=pointer]:
+                - /url: /security/advanced-security/code-security
+            - listitem [ref=f1e813]:
+              - link "Secret Protection" [ref=f1e814] [cursor=pointer]:
+                - /url: /security/advanced-security/secret-protection
+            - listitem [ref=f1e816]:
+              - link "Pricing" [ref=f1e817] [cursor=pointer]:
+                - /url: /pricing
+            - listitem [ref=f1e819]:
+              - link "Team" [ref=f1e820] [cursor=pointer]:
+                - /url: /team
+            - listitem [ref=f1e822]:
+              - link "Resources" [ref=f1e823] [cursor=pointer]:
+                - /url: https://github.com/resources
+            - listitem [ref=f1e825]:
+              - link "Roadmap" [ref=f1e826] [cursor=pointer]:
+                - /url: /github-roadmap
+            - listitem [ref=f1e828]:
+              - link "Compare GitHub" [ref=f1e829] [cursor=pointer]:
+                - /url: /resources/articles/devops-tools-comparison
+            - listitem [ref=f1e831]:
+              - link "All Features" [ref=f1e832] [cursor=pointer]:
+                - /url: /features
+        - navigation [ref=f1e834]:
+          - heading "Developers" [level=3] [ref=f1e835]
+          - list [ref=f1e836]:
+            - listitem [ref=f1e837]:
+              - link "Developer API" [ref=f1e838] [cursor=pointer]:
+                - /url: https://docs.github.com/integrations/concepts/about-building-integrations
+            - listitem [ref=f1e840]:
+              - link "Education" [ref=f1e841] [cursor=pointer]:
+                - /url: /education
+            - listitem [ref=f1e843]:
+              - link "GitHub CLI" [ref=f1e844] [cursor=pointer]:
+                - /url: https://cli.github.com
+            - listitem [ref=f1e846]:
+              - link "GitHub Desktop" [ref=f1e847] [cursor=pointer]:
+                - /url: https://github.com/apps/desktop
+            - listitem [ref=f1e849]:
+              - link "GitHub Mobile" [ref=f1e850] [cursor=pointer]:
+                - /url: /mobile
+            - listitem [ref=f1e852]:
+              - link "Integrations" [ref=f1e853] [cursor=pointer]:
+                - /url: /marketplace
+            - listitem [ref=f1e855]:
+              - link "MCP Registry" [ref=f1e856] [cursor=pointer]:
+                - /url: /mcp
+            - listitem [ref=f1e858]:
+              - link "Training" [ref=f1e859] [cursor=pointer]:
+                - /url: https://skills.github.com
+            - listitem [ref=f1e861]:
+              - link "Build with Copilot" [ref=f1e862] [cursor=pointer]:
+                - /url: /features/ai
+        - navigation [ref=f1e864]:
+          - heading "Support" [level=3] [ref=f1e865]
+          - list [ref=f1e866]:
+            - listitem [ref=f1e867]:
+              - link "Docs" [ref=f1e868] [cursor=pointer]:
+                - /url: https://docs.github.com
+            - listitem [ref=f1e870]:
+              - link "Community Forum" [ref=f1e871] [cursor=pointer]:
+                - /url: https://github.community
+            - listitem [ref=f1e873]:
+              - link "Professional Services" [ref=f1e874] [cursor=pointer]:
+                - /url: https://github.com/services
+            - listitem [ref=f1e876]:
+              - link "Premium Support" [ref=f1e877] [cursor=pointer]:
+                - /url: /enterprise/premium-support
+            - listitem [ref=f1e879]:
+              - link "GitHub Status" [ref=f1e880] [cursor=pointer]:
+                - /url: https://www.githubstatus.com
+            - listitem [ref=f1e882]:
+              - link "Contact GitHub" [ref=f1e883] [cursor=pointer]:
+                - /url: https://support.github.com?tags=dotcom-footer
+            - listitem [ref=f1e885]:
+              - link "Sitemap" [ref=f1e886] [cursor=pointer]:
+                - /url: /sitemap
+        - navigation [ref=f1e888]:
+          - heading "Company" [level=3] [ref=f1e889]
+          - list [ref=f1e890]:
+            - listitem [ref=f1e891]:
+              - link "About" [ref=f1e892] [cursor=pointer]:
+                - /url: /about
+            - listitem [ref=f1e894]:
+              - link "Why GitHub" [ref=f1e895] [cursor=pointer]:
+                - /url: /why-github
+            - listitem [ref=f1e897]:
+              - link "Customer Stories" [ref=f1e898] [cursor=pointer]:
+                - /url: /customer-stories?type=enterprise
+            - listitem [ref=f1e900]:
+              - link "Blog" [ref=f1e901] [cursor=pointer]:
+                - /url: https://github.blog
+            - listitem [ref=f1e903]:
+              - link "Careers" [ref=f1e904] [cursor=pointer]:
+                - /url: https://github.careers
+            - listitem [ref=f1e906]:
+              - link "Inclusion" [ref=f1e907] [cursor=pointer]:
+                - /url: /about/diversity
+            - listitem [ref=f1e909]:
+              - link "Partners" [ref=f1e910] [cursor=pointer]:
+                - /url: https://github.com/partners
+            - listitem [ref=f1e912]:
+              - link "Social Impact" [ref=f1e913] [cursor=pointer]:
+                - /url: https://socialimpact.github.com
+            - listitem [ref=f1e915]:
+              - link "Shop" [ref=f1e916] [cursor=pointer]:
+                - /url: https://thegithubshop.com
+            - listitem [ref=f1e918]:
+              - link "What is Git?" [ref=f1e919] [cursor=pointer]:
+                - /url: /git-guides
+    - generic [ref=f1e922]:
+      - navigation "Legal and Resource Links" [ref=f1e923]:
+        - list [ref=f1e924]:
+          - listitem [ref=f1e925]:
+            - time [ref=f1e926]: © 2026 GitHub, Inc.
+          - listitem [ref=f1e927]:
+            - link "Terms" [ref=f1e928] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=f1e929]:
+            - link "Privacy" [ref=f1e930] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement
+          - listitem [ref=f1e931]:
+            - button "Manage cookies" [ref=f1e933] [cursor=pointer]
+          - listitem [ref=f1e934]:
+            - button "Do not share my personal information" [ref=f1e936] [cursor=pointer]
+      - generic [ref=f1e937]:
+        - navigation "GitHub's Social Media Links" [ref=f1e938]:
+          - list [ref=f1e939]:
+            - listitem [ref=f1e940]:
+              - link "GitHub on LinkedIn" [ref=f1e941] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/github
+            - listitem [ref=f1e945]:
+              - link "GitHub on Instagram" [ref=f1e946] [cursor=pointer]:
+                - /url: https://www.instagram.com/github
+            - listitem [ref=f1e950]:
+              - link "GitHub on YouTube" [ref=f1e951] [cursor=pointer]:
+                - /url: https://www.youtube.com/github
+            - listitem [ref=f1e955]:
+              - link "GitHub on X" [ref=f1e956] [cursor=pointer]:
+                - /url: https://x.com/github
+            - listitem [ref=f1e960]:
+              - link "GitHub on TikTok" [ref=f1e961] [cursor=pointer]:
+                - /url: https://www.tiktok.com/@github
+            - listitem [ref=f1e965]:
+              - link "GitHub on Twitch" [ref=f1e966] [cursor=pointer]:
+                - /url: https://www.twitch.tv/github
+            - listitem [ref=f1e970]:
+              - link "GitHub’s organization on GitHub" [ref=f1e971] [cursor=pointer]:
+                - /url: https://github.com/github
+        - button "English - Select language" [ref=f1e976] [cursor=pointer]:
+          - generic [ref=f1e977]: English

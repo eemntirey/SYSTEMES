@@ -1,0 +1,13 @@
+prefix=/usr
+exec_prefix=/usr
+includedir=/usr/include
+libdir=/usr/lib
+efi_machine_type_name=ia32
+gnu_efi_arch=ia32
+gnu_efi_default_is_objcopy=true
+
+Name: gnu-efi
+Description: EFI development toolkit
+Version: 4.0.0
+Cflags: -I${includedir}/efi
+Libs: -lefi

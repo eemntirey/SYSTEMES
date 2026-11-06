@@ -1,0 +1,37 @@
+[package]
+name = "systemes-kernel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+qemu-exception-test = []
+qemu-nx-execute-test = []
+qemu-rx-write-test = []
+qemu-ist-nmi-test = []
+qemu-ist-machine-check-test = []
+qemu-pit-timer-test = []
+qemu-apic-spurious-test = []
+qemu-ps2-input-test = []
+qemu-scheduler-test = []
+qemu-fpu-context-test = []
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "systemes-kernel"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+opt-level = "s"

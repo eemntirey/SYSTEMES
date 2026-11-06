@@ -1,0 +1,338 @@
+- generic [ref=f5e2]:
+  - generic [ref=f5e3]:
+    - link "Skip to content" [ref=f5e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=f5e9]:
+      - heading "Navigation Menu" [level=2] [ref=f5e10]
+      - generic [ref=f5e11]:
+        - link "Homepage" [ref=f5e14] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f5e17]:
+          - navigation "Global" [ref=f5e18]:
+            - list [ref=f5e19]:
+              - listitem [ref=f5e20]:
+                - button "Products" [ref=f5e22] [cursor=pointer]
+              - listitem [ref=f5e25]:
+                - button "Developers" [ref=f5e27] [cursor=pointer]
+              - listitem [ref=f5e30]:
+                - button "Businesses" [ref=f5e32] [cursor=pointer]
+              - listitem [ref=f5e35]:
+                - button "Resources" [ref=f5e37] [cursor=pointer]
+              - listitem [ref=f5e40]:
+                - link "Pricing" [ref=f5e41] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+          - generic [ref=f5e42]:
+            - button "Search or jump to, type / to search" [ref=f5e44] [cursor=pointer]:
+              - generic [ref=f5e47]:
+                - generic [ref=f5e48]: Search
+                - generic [aria-hidden] [ref=f5e49]: /
+            - generic [ref=f5e50]:
+              - link "Sign in" [ref=f5e52] [cursor=pointer]:
+                - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Feemntirey%2FSYSTEMES
+              - link "Sign up" [ref=f5e55] [cursor=pointer]:
+                - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E&source=header-repo&source_repo=eemntirey%2FSYSTEMES
+              - button "Appearance settings" [ref=f5e58] [cursor=pointer]
+  - main [ref=f5e65]:
+    - generic "Global navigation menu" [ref=f5e68]:
+      - navigation "Breadcrumbs" [ref=f5e71]:
+        - list [ref=f5e72]:
+          - listitem [ref=f5e73]:
+            - link "eemntirey" [ref=f5e74] [cursor=pointer]:
+              - /url: /eemntirey
+          - listitem [ref=f5e76]:
+            - link "SYSTEMES" [ref=f5e77] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES
+      - heading "Repository navigation" [level=2] [ref=f5e80]
+      - navigation "Repository" [ref=f5e81]:
+        - list [ref=f5e82]:
+          - listitem [ref=f5e83]:
+            - link "Code" [ref=f5e84] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES
+          - listitem [ref=f5e89]:
+            - link "Issues" [ref=f5e90] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/issues
+          - listitem [ref=f5e96]:
+            - link "Pull requests (13)" [ref=f5e97] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/pulls
+              - generic [ref=f5e101]: Pull requests
+              - generic [ref=f5e102]:
+                - generic [aria-hidden] [ref=f5e103]: "13"
+                - generic [ref=f5e104]: (13)
+          - listitem [ref=f5e105]:
+            - link "Actions" [ref=f5e106] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/actions
+          - listitem [ref=f5e111]:
+            - link "Projects" [ref=f5e112] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/projects
+          - listitem [ref=f5e117]:
+            - link "Security and quality" [ref=f5e118] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/security
+          - listitem [ref=f5e123]:
+            - link "Insights" [ref=f5e124] [cursor=pointer]:
+              - /url: /eemntirey/SYSTEMES/pulse
+    - generic [ref=f5e141]:
+      - generic [ref=f5e145]:
+        - generic [ref=f5e148]:
+          - img "eemntirey" [ref=f5e149]
+          - generic "SYSTEMES" [ref=f5e150]:
+            - strong [ref=f5e151]:
+              - link "SYSTEMES" [ref=f5e152] [cursor=pointer]:
+                - /url: /eemntirey/SYSTEMES
+          - generic [ref=f5e153]: Public
+        - list [ref=f5e155]:
+          - listitem [ref=f5e156]:
+            - link "You must be signed in to change notification settings" [ref=f5e157] [cursor=pointer]:
+              - /url: /login?return_to=%2Feemntirey%2FSYSTEMES
+              - generic [ref=f5e158]: Notifications
+          - listitem [ref=f5e160]:
+            - link "You must be signed in to fork a repository" [ref=f5e161] [cursor=pointer]:
+              - /url: /login?return_to=%2Feemntirey%2FSYSTEMES
+              - generic [ref=f5e163]:
+                - text: Fork
+                - generic [aria-hidden] [ref=f5e164]: "0"
+                - generic [ref=f5e165]: (0)
+          - listitem [ref=f5e166]:
+            - link "Star (0)" [ref=f5e167] [cursor=pointer]:
+              - /url: /login?return_to=%2Feemntirey%2FSYSTEMES
+              - generic [ref=f5e169]:
+                - text: Star
+                - generic [aria-hidden] [ref=f5e170]: "0"
+                - generic [ref=f5e171]: (0)
+      - generic [ref=f5e172]:
+        - generic [ref=f5e175]:
+          - generic [ref=f5e176]:
+            - generic [ref=f5e177]:
+              - button "main branch" [ref=f5e179] [cursor=pointer]:
+                - generic [ref=f5e180]: main
+              - generic [ref=f5e184]:
+                - link "Branches" [ref=f5e185] [cursor=pointer]:
+                  - /url: /eemntirey/SYSTEMES/branches
+                - link "Tags" [ref=f5e188] [cursor=pointer]:
+                  - /url: /eemntirey/SYSTEMES/tags
+            - generic [ref=f5e191]:
+              - combobox "Go to file" [ref=f5e199]
+              - button "Code" [ref=f5e200] [cursor=pointer]
+          - generic [ref=f5e204]:
+            - generic [ref=f5e206]:
+              - heading "Latest commit" [level=2] [ref=f5e207]
+              - generic [ref=f5e210]:
+                - heading "History" [level=2] [ref=f5e211]
+                - link "274 Commits" [ref=f5e212] [cursor=pointer]:
+                  - /url: /eemntirey/SYSTEMES/commits/main/
+            - heading "Folders and files" [level=2] [ref=f5e215]
+            - table "Folders and files" [ref=f5e217]:
+              - rowgroup:
+                - row "Name Last commit message Last commit date":
+                  - columnheader "Name"
+                  - columnheader "Last commit message"
+                  - columnheader "Last commit date"
+              - rowgroup [ref=f5e218]:
+                - row ".github/workflows, (Directory)" [ref=f5e219]:
+                  - cell [ref=f5e220]:
+                    - link ".github/workflows, (Directory)" [ref=f5e227] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/.github/workflows
+                      - text: .github/workflows
+                  - cell [ref=f5e228]
+                  - cell [ref=f5e230]
+                - row ".playwright-mcp, (Directory)" [ref=f5e233]:
+                  - cell [ref=f5e234]:
+                    - link ".playwright-mcp, (Directory)" [ref=f5e241] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/.playwright-mcp
+                      - text: .playwright-mcp
+                  - cell [ref=f5e242]
+                  - cell [ref=f5e244]
+                - row "boot, (Directory)" [ref=f5e247]:
+                  - cell [ref=f5e248]:
+                    - link "boot, (Directory)" [ref=f5e255] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/boot
+                      - text: boot
+                  - cell [ref=f5e256]
+                  - cell [ref=f5e258]
+                - row "dist, (Directory)" [ref=f5e261]:
+                  - cell [ref=f5e262]:
+                    - link "dist, (Directory)" [ref=f5e269] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/dist
+                      - text: dist
+                  - cell [ref=f5e270]
+                  - cell [ref=f5e272]
+                - row "docs, (Directory)" [ref=f5e275]:
+                  - cell [ref=f5e276]:
+                    - link "docs, (Directory)" [ref=f5e283] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/docs
+                      - text: docs
+                  - cell [ref=f5e284]
+                  - cell [ref=f5e286]
+                - row "kernel, (Directory)" [ref=f5e289]:
+                  - cell [ref=f5e290]:
+                    - link "kernel, (Directory)" [ref=f5e297] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/kernel
+                      - text: kernel
+                  - cell [ref=f5e298]
+                  - cell [ref=f5e300]
+                - row "native-core, (Directory)" [ref=f5e303]:
+                  - cell [ref=f5e304]:
+                    - link "native-core, (Directory)" [ref=f5e311] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/native-core
+                      - text: native-core
+                  - cell [ref=f5e312]
+                  - cell [ref=f5e314]
+                - row "native, (Directory)" [ref=f5e317]:
+                  - cell [ref=f5e318]:
+                    - link "native, (Directory)" [ref=f5e325] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/native
+                      - text: native
+                  - cell [ref=f5e326]
+                  - cell [ref=f5e328]
+                - row "public/wallpapers, (Directory)" [ref=f5e331]:
+                  - cell [ref=f5e332]:
+                    - link "public/wallpapers, (Directory)" [ref=f5e339] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/public/wallpapers
+                      - text: public/wallpapers
+                  - cell [ref=f5e340]
+                  - cell [ref=f5e342]
+                - row "src, (Directory)" [ref=f5e345]:
+                  - cell [ref=f5e346]:
+                    - link "src, (Directory)" [ref=f5e353] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/tree/main/src
+                      - text: src
+                  - cell [ref=f5e354]
+                  - cell [ref=f5e356]
+                - row ".gitignore, (File)" [ref=f5e359]:
+                  - cell [ref=f5e360]:
+                    - link ".gitignore, (File)" [ref=f5e367] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/.gitignore
+                      - text: .gitignore
+                  - cell [ref=f5e368]
+                  - cell [ref=f5e370]
+                - row "AUDIT_REPORT.md, (File)" [ref=f5e373]:
+                  - cell [ref=f5e374]:
+                    - link "AUDIT_REPORT.md, (File)" [ref=f5e381] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/AUDIT_REPORT.md
+                      - text: AUDIT_REPORT.md
+                  - cell [ref=f5e382]
+                  - cell [ref=f5e384]
+                - row "FINAL_REPORT.md, (File)" [ref=f5e387]:
+                  - cell [ref=f5e388]:
+                    - link "FINAL_REPORT.md, (File)" [ref=f5e395] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/FINAL_REPORT.md
+                      - text: FINAL_REPORT.md
+                  - cell [ref=f5e396]
+                  - cell [ref=f5e398]
+                - row "fix.cjs, (File)" [ref=f5e401]:
+                  - cell [ref=f5e402]:
+                    - link "fix.cjs, (File)" [ref=f5e409] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/fix.cjs
+                      - text: fix.cjs
+                  - cell [ref=f5e410]
+                  - cell [ref=f5e412]
+                - row "fix_taskbar.py, (File)" [ref=f5e415]:
+                  - cell [ref=f5e416]:
+                    - link "fix_taskbar.py, (File)" [ref=f5e423] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/fix_taskbar.py
+                      - text: fix_taskbar.py
+                  - cell [ref=f5e424]
+                  - cell [ref=f5e426]
+                - row "index.html, (File)" [ref=f5e429]:
+                  - cell [ref=f5e430]:
+                    - link "index.html, (File)" [ref=f5e437] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/index.html
+                      - text: index.html
+                  - cell [ref=f5e438]
+                  - cell [ref=f5e440]
+                - row "package-lock.json, (File)" [ref=f5e443]:
+                  - cell [ref=f5e444]:
+                    - link "package-lock.json, (File)" [ref=f5e451] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/package-lock.json
+                      - text: package-lock.json
+                  - cell [ref=f5e452]
+                  - cell [ref=f5e454]
+                - row "package.json, (File)" [ref=f5e457]:
+                  - cell [ref=f5e458]:
+                    - link "package.json, (File)" [ref=f5e465] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/package.json
+                      - text: package.json
+                  - cell [ref=f5e466]
+                  - cell [ref=f5e468]
+                - row "tsconfig.json, (File)" [ref=f5e471]:
+                  - cell [ref=f5e472]:
+                    - link "tsconfig.json, (File)" [ref=f5e479] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/tsconfig.json
+                      - text: tsconfig.json
+                  - cell [ref=f5e480]
+                  - cell [ref=f5e482]
+                - row "typecheck-errors.txt, (File)" [ref=f5e485]:
+                  - cell [ref=f5e486]:
+                    - link "typecheck-errors.txt, (File)" [ref=f5e493] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/typecheck-errors.txt
+                      - text: typecheck-errors.txt
+                  - cell [ref=f5e494]
+                  - cell [ref=f5e496]
+                - row "vite.config.ts, (File)" [ref=f5e499]:
+                  - cell [ref=f5e500]:
+                    - link "vite.config.ts, (File)" [ref=f5e507] [cursor=pointer]:
+                      - /url: /eemntirey/SYSTEMES/blob/main/vite.config.ts
+                      - text: vite.config.ts
+                  - cell [ref=f5e508]
+                  - cell [ref=f5e510]
+        - generic [ref=f5e515]:
+          - generic [ref=f5e516]:
+            - heading "About" [level=2] [ref=f5e517]
+            - paragraph [ref=f5e518]: systemeOS
+            - generic [ref=f5e519]:
+              - link "Activity" [ref=f5e522] [cursor=pointer]:
+                - /url: /eemntirey/SYSTEMES/activity
+              - generic [ref=f5e525]:
+                - heading "Stars" [level=3] [ref=f5e526]
+                - generic [ref=f5e528]:
+                  - strong [ref=f5e531]: "0"
+                  - text: stars
+                - heading "Watchers" [level=3] [ref=f5e532]
+                - generic [ref=f5e534]:
+                  - strong [ref=f5e537]: "0"
+                  - text: watching
+                - heading "Forks" [level=3] [ref=f5e538]
+                - link [ref=f5e540] [cursor=pointer]:
+                  - /url: /eemntirey/SYSTEMES/forks
+                  - strong [ref=f5e544]: "0"
+                  - text: forks
+            - link "Report repository" [ref=f5e546] [cursor=pointer]:
+              - /url: /contact/report-content?content_url=https%3A%2F%2Fgithub.com%2Feemntirey%2FSYSTEMES&report=eemntirey+%28user%29
+          - heading "Releases" [level=2] [ref=f5e548]
+          - heading "Packages" [level=2] [ref=f5e552]
+          - heading "Contributors" [level=2] [ref=f5e555]
+          - heading "Languages" [level=2] [ref=f5e558]
+  - contentinfo [ref=f5e561]:
+    - heading "Footer" [level=2] [ref=f5e562]
+    - generic [ref=f5e563]:
+      - generic [ref=f5e564]:
+        - link "GitHub Homepage" [ref=f5e565] [cursor=pointer]:
+          - /url: https://github.com
+        - generic [ref=f5e568]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=f5e569]:
+        - heading "Footer navigation" [level=3] [ref=f5e570]
+        - list "Footer navigation" [ref=f5e571]:
+          - listitem [ref=f5e572]:
+            - link "Terms" [ref=f5e573] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=f5e574]:
+            - link "Privacy" [ref=f5e575] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=f5e576]:
+            - link "Security" [ref=f5e577] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=f5e578]:
+            - link "Status" [ref=f5e579] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=f5e580]:
+            - link "Community" [ref=f5e581] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=f5e582]:
+            - link "Docs" [ref=f5e583] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=f5e584]:
+            - link "Contact" [ref=f5e585] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=f5e586]:
+            - button "Manage cookies" [ref=f5e588] [cursor=pointer]
+          - listitem [ref=f5e589]:
+            - button "Do not share my personal information" [ref=f5e591] [cursor=pointer]

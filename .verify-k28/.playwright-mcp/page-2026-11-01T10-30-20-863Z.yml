@@ -1,0 +1,41 @@
+- generic [ref=f7e3]:
+  - generic [ref=f7e4]:
+    - generic:
+      - generic [ref=f7e5]: Ce PC
+      - generic [ref=f7e16]: Corbeille
+      - generic [ref=f7e25]: Photos
+      - generic [ref=f7e33]: Explorateur
+      - generic [ref=f7e41]: Bloc-notes
+      - generic [ref=f7e55]: Terminal
+      - generic [ref=f7e68] [cursor=pointer]:
+        - img [ref=f7e70]:
+          - generic [ref=f7e73]: "137"
+        - generic [ref=f7e83]: Calculatrice
+      - generic [ref=f7e84]: Paint
+      - generic [ref=f7e96]: Paramètres
+      - generic [ref=f7e105]: Lisez-moi.txt
+  - toolbar "Barre des tâches" [ref=f7e313]:
+    - generic [ref=f7e314]:
+      - button "Démarrer" [ref=f7e315] [cursor=pointer]
+      - button "Rechercher" [ref=f7e321] [cursor=pointer]
+      - button "Vue des tâches" [ref=f7e326] [cursor=pointer]
+      - button "Widgets" [ref=f7e330] [cursor=pointer]
+      - button "Copilot" [ref=f7e336] [cursor=pointer]
+      - button "Explorateur de fichiers" [ref=f7e341] [cursor=pointer]
+      - button "Bloc-notes" [ref=f7e347] [cursor=pointer]
+      - button "Terminal Windows" [ref=f7e358] [cursor=pointer]
+      - button "Calculatrice" [ref=f7e367] [cursor=pointer]:
+        - img [ref=f7e368]:
+          - generic [ref=f7e371]: "137"
+      - button "Paramètres" [ref=f7e381] [cursor=pointer]
+      - button "Photos" [ref=f7e387] [cursor=pointer]
+      - button "Paint" [ref=f7e392] [cursor=pointer]
+    - generic [ref=f7e401]:
+      - button "Afficher les icônes cachées" [ref=f7e402] [cursor=pointer]
+      - button "Réseau, son, batterie" [ref=f7e405] [cursor=pointer]
+      - button "Microphone" [ref=f7e416] [cursor=pointer]
+      - button "Heure, date et notifications" [ref=f7e420] [cursor=pointer]:
+        - generic [ref=f7e421]: 13:30
+        - generic [ref=f7e422]: 01/11/2026
+      - button "Notifications" [ref=f7e424] [cursor=pointer]
+      - button "Afficher le bureau" [ref=f7e428] [cursor=pointer]

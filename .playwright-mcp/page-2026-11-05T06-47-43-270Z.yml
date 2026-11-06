@@ -1,0 +1,307 @@
+- generic [ref=f4e2]:
+  - generic [ref=f4e3]:
+    - link "Skip to content" [ref=f4e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=f4e9]:
+      - heading "Navigation Menu" [level=2] [ref=f4e10]
+      - generic [ref=f4e11]:
+        - link "Homepage" [ref=f4e14] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f4e17]:
+          - navigation "Global" [ref=f4e18]:
+            - list [ref=f4e19]:
+              - listitem [ref=f4e20]:
+                - button "Products" [ref=f4e22] [cursor=pointer]
+              - listitem [ref=f4e25]:
+                - button "Developers" [ref=f4e27] [cursor=pointer]
+              - listitem [ref=f4e30]:
+                - button "Businesses" [ref=f4e32] [cursor=pointer]
+              - listitem [ref=f4e35]:
+                - button "Resources" [ref=f4e37] [cursor=pointer]
+              - listitem [ref=f4e40]:
+                - link "Pricing" [ref=f4e41] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+          - generic [ref=f4e42]:
+            - button "Search or jump to, type / to search" [ref=f4e44] [cursor=pointer]:
+              - generic [ref=f4e47]:
+                - generic [ref=f4e48]: Search
+                - generic [aria-hidden] [ref=f4e49]: /
+            - generic [ref=f4e50]:
+              - link "Sign in" [ref=f4e52] [cursor=pointer]:
+                - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Feemntirey%3Ftab%3Drepositories
+              - link "Sign up" [ref=f4e55] [cursor=pointer]:
+                - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2Feemntirey&source=header
+              - button "Appearance settings" [ref=f4e58] [cursor=pointer]
+  - main [ref=f4e64]:
+    - generic [ref=f4e67]:
+      - generic [ref=f4e68]:
+        - generic:
+          - generic:
+            - generic:
+              - img "@eemntirey"
+            - generic:
+              - strong: eemntirey
+              - generic:
+                - generic:
+                  - link "Follow":
+                    - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Feemntirey%3Ftab%3Drepositories
+      - navigation "User profile" [ref=f4e71]:
+        - link "Overview" [ref=f4e72] [cursor=pointer]:
+          - /url: /eemntirey
+        - link "Repositories 14" [ref=f4e75] [cursor=pointer]:
+          - /url: /eemntirey?tab=repositories
+          - text: Repositories
+          - generic "14" [ref=f4e78]
+        - link "Projects" [ref=f4e79] [cursor=pointer]:
+          - /url: /eemntirey?tab=projects
+        - link "Packages" [ref=f4e82] [cursor=pointer]:
+          - /url: /eemntirey?tab=packages
+        - link "Stars 4" [ref=f4e85] [cursor=pointer]:
+          - /url: /eemntirey?tab=stars
+          - text: Stars
+          - generic "4" [ref=f4e88]
+    - generic [ref=f4e90]:
+      - generic [ref=f4e92]:
+        - generic:
+          - generic:
+            - generic:
+              - img "@eemntirey"
+            - generic:
+              - generic:
+                - strong: eemntirey
+            - generic:
+              - generic:
+                - generic:
+                  - link "Follow":
+                    - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Feemntirey%3Ftab%3Drepositories
+        - generic [ref=f4e93]:
+          - generic [ref=f4e94]:
+            - generic [ref=f4e95]:
+              - link [ref=f4e96] [cursor=pointer]:
+                - /url: https://avatars.githubusercontent.com/u/196681854?v=4
+                - img "View eemntirey's full-sized avatar" [ref=f4e97]
+              - generic [ref=f4e100]:
+                - generic [ref=f4e101]: 🤒
+                - generic: Out sick
+            - heading "eemntirey" [level=1] [ref=f4e104]
+          - generic [ref=f4e106]:
+            - link "Follow" [ref=f4e113] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Feemntirey%3Ftab%3Drepositories
+            - generic [ref=f4e114]:
+              - generic [ref=f4e116]:
+                - link "5 followers" [ref=f4e117] [cursor=pointer]:
+                  - /url: https://github.com/eemntirey?tab=followers
+                - text: ·
+                - link "5 following" [ref=f4e120] [cursor=pointer]:
+                  - /url: https://github.com/eemntirey?tab=following
+              - list
+          - generic [ref=f4e121]:
+            - heading [level=2] [ref=f4e122]:
+              - link "Achievements" [ref=f4e123] [cursor=pointer]:
+                - /url: /eemntirey?tab=achievements
+            - generic [ref=f4e124]:
+              - link [ref=f4e125] [cursor=pointer]:
+                - /url: /eemntirey?achievement=pair-extraordinaire&tab=achievements
+                - 'img "Achievement: Pair Extraordinaire" [ref=f4e126]'
+              - 'link "Achievement: Pull Shark x2" [ref=f4e127] [cursor=pointer]':
+                - /url: /eemntirey?achievement=pull-shark&tab=achievements
+                - 'img "Achievement: Pull Shark" [ref=f4e128]'
+                - generic [ref=f4e129]: x2
+              - link [ref=f4e130] [cursor=pointer]:
+                - /url: /eemntirey?achievement=quickdraw&tab=achievements
+                - 'img "Achievement: Quickdraw" [ref=f4e131]'
+              - link [ref=f4e132] [cursor=pointer]:
+                - /url: /eemntirey?achievement=yolo&tab=achievements
+                - 'img "Achievement: YOLO" [ref=f4e133]'
+          - button "Block or report user" [ref=f4e135] [cursor=pointer]
+      - generic [ref=f4e140]:
+        - search "Repositories" [ref=f4e143]:
+          - generic [ref=f4e144]:
+            - searchbox "Find a repository…" [ref=f4e146]
+            - generic [ref=f4e147]:
+              - group [ref=f4e148]:
+                - button "Type" [ref=f4e149] [cursor=pointer]
+              - group [ref=f4e151]:
+                - button "Language" [ref=f4e152] [cursor=pointer]
+              - group [ref=f4e154]:
+                - button "Sort" [ref=f4e155] [cursor=pointer]
+        - list [ref=f4e158]:
+          - listitem [ref=f4e159]:
+            - generic [ref=f4e160]:
+              - heading "SYSTEMES Public" [level=3] [ref=f4e162]:
+                - link "SYSTEMES" [ref=f4e163] [cursor=pointer]:
+                  - /url: /eemntirey/SYSTEMES
+                - generic [ref=f4e164]: Public
+              - paragraph [ref=f4e166]: systemeOS
+              - generic [ref=f4e167]:
+                - generic [ref=f4e168]: TypeScript
+                - text: Updated Nov 5, 20268 minutes ago
+          - listitem [ref=f4e171]:
+            - generic [ref=f4e172]:
+              - heading "GoogleIA_MADA_Search Public" [level=3] [ref=f4e174]:
+                - link "GoogleIA_MADA_Search" [ref=f4e175] [cursor=pointer]:
+                  - /url: /eemntirey/GoogleIA_MADA_Search
+                - generic [ref=f4e176]: Public
+              - paragraph [ref=f4e178]: navigateur
+              - generic [ref=f4e179]:
+                - generic [ref=f4e180]: Kotlin
+                - text: Updated Oct 24, 20262 weeks ago
+          - listitem [ref=f4e183]:
+            - generic [ref=f4e184]:
+              - heading "MadaSearch Public" [level=3] [ref=f4e186]:
+                - link "MadaSearch" [ref=f4e187] [cursor=pointer]:
+                  - /url: /eemntirey/MadaSearch
+                - generic [ref=f4e188]: Public
+              - paragraph [ref=f4e190]: Navigateur
+              - generic [ref=f4e191]:
+                - generic [ref=f4e192]: C#
+                - text: Updated Oct 24, 20262 weeks ago
+          - listitem [ref=f4e195]:
+            - generic [ref=f4e196]:
+              - heading "Tady_trano Public" [level=3] [ref=f4e198]:
+                - link "Tady_trano" [ref=f4e199] [cursor=pointer]:
+                  - /url: /eemntirey/Tady_trano
+                - generic [ref=f4e200]: Public
+              - generic [ref=f4e201]:
+                - generic [ref=f4e202]: Java
+                - text: Updated Oct 20, 20262 weeks ago
+          - listitem [ref=f4e205]:
+            - generic [ref=f4e206]:
+              - heading "Y Public" [level=3] [ref=f4e208]:
+                - link "Y" [ref=f4e209] [cursor=pointer]:
+                  - /url: /eemntirey/Y
+                - generic [ref=f4e210]: Public
+              - paragraph [ref=f4e212]: distractor
+              - generic [ref=f4e213]:
+                - generic [ref=f4e214]: TypeScript
+                - text: Updated Oct 17, 20263 weeks ago
+          - listitem [ref=f4e217]:
+            - generic [ref=f4e218]:
+              - heading "MIHAJA_ERP_PRO Public" [level=3] [ref=f4e220]:
+                - link "MIHAJA_ERP_PRO" [ref=f4e221] [cursor=pointer]:
+                  - /url: /eemntirey/MIHAJA_ERP_PRO
+                - generic [ref=f4e222]: Public
+              - generic [ref=f4e223]:
+                - generic [ref=f4e224]: JavaScript
+                - link [ref=f4e226] [cursor=pointer]:
+                  - /url: /eemntirey/MIHAJA_ERP_PRO/stargazers
+                  - img "star" [ref=f4e227]
+                  - text: "1"
+                - text: Updated Oct 12, 20263 weeks ago
+          - listitem [ref=f4e230]:
+            - generic [ref=f4e231]:
+              - heading "turbo-cactus-scarlet-zinc Public" [level=3] [ref=f4e233]:
+                - link "turbo-cactus-scarlet-zinc" [ref=f4e234] [cursor=pointer]:
+                  - /url: /eemntirey/turbo-cactus-scarlet-zinc
+                - generic [ref=f4e235]: Public
+              - generic [ref=f4e236]:
+                - generic [ref=f4e237]: JavaScript
+                - text: Updated Oct 3, 2026on Oct 3
+          - listitem [ref=f4e240]:
+            - generic [ref=f4e241]:
+              - heading "eau Public" [level=3] [ref=f4e243]:
+                - link "eau" [ref=f4e244] [cursor=pointer]:
+                  - /url: /eemntirey/eau
+                - generic [ref=f4e245]: Public
+              - paragraph [ref=f4e247]: osunirversal
+              - generic [ref=f4e248]:
+                - generic [ref=f4e249]: Rust
+                - text: Updated Sep 29, 2026on Sep 29
+          - listitem [ref=f4e252]:
+            - generic [ref=f4e253]:
+              - heading "ERP_TIA_INFO Public" [level=3] [ref=f4e255]:
+                - link "ERP_TIA_INFO" [ref=f4e256] [cursor=pointer]:
+                  - /url: /eemntirey/ERP_TIA_INFO
+                - generic [ref=f4e257]: Public
+              - paragraph [ref=f4e259]: Site web Gestion d'une Grossite Commercial
+              - generic [ref=f4e260]:
+                - link [ref=f4e261] [cursor=pointer]:
+                  - /url: /eemntirey/ERP_TIA_INFO/stargazers
+                  - img "star" [ref=f4e262]
+                  - text: "2"
+                - text: Updated Aug 10, 2026on Aug 10
+          - listitem [ref=f4e265]:
+            - generic [ref=f4e266]:
+              - heading "parc Public" [level=3] [ref=f4e268]:
+                - link "parc" [ref=f4e269] [cursor=pointer]:
+                  - /url: /eemntirey/parc
+                - generic [ref=f4e270]: Public
+              - generic [ref=f4e271]:
+                - generic [ref=f4e272]: CSS
+                - text: Updated May 20, 2026on May 20
+          - listitem [ref=f4e275]:
+            - generic [ref=f4e276]:
+              - heading "sqlproj Public template" [level=3] [ref=f4e278]:
+                - link "sqlproj" [ref=f4e279] [cursor=pointer]:
+                  - /url: /eemntirey/sqlproj
+                - generic [ref=f4e280]: Public template
+              - generic [ref=f4e281]: Updated May 8, 2026on May 8
+          - listitem [ref=f4e283]:
+            - generic [ref=f4e284]:
+              - heading "mamy Public" [level=3] [ref=f4e286]:
+                - link "mamy" [ref=f4e287] [cursor=pointer]:
+                  - /url: /eemntirey/mamy
+                - generic [ref=f4e288]: Public
+              - generic [ref=f4e289]:
+                - generic [ref=f4e290]: CSS
+                - link [ref=f4e292] [cursor=pointer]:
+                  - /url: /eemntirey/mamy/stargazers
+                  - img "star" [ref=f4e293]
+                  - text: "1"
+                - text: Updated Mar 7, 2026on Mar 7
+          - listitem [ref=f4e296]:
+            - generic [ref=f4e297]:
+              - heading "html.ind Public" [level=3] [ref=f4e299]:
+                - link "html.ind" [ref=f4e300] [cursor=pointer]:
+                  - /url: /eemntirey/html.ind
+                - generic [ref=f4e301]: Public
+              - generic [ref=f4e302]:
+                - generic [ref=f4e303]: HTML
+                - text: Updated Mar 6, 2026on Mar 6
+          - listitem [ref=f4e306]:
+            - generic [ref=f4e307]:
+              - generic [ref=f4e308]:
+                - heading "site-html Public" [level=3] [ref=f4e309]:
+                  - link "site-html" [ref=f4e310] [cursor=pointer]:
+                    - /url: /eemntirey/site-html
+                  - generic [ref=f4e311]: Public
+                - generic [ref=f4e312]:
+                  - text: Forked from
+                  - link "rmmihaja82-sudo/site-html" [ref=f4e313] [cursor=pointer]:
+                    - /url: /rmmihaja82-sudo/site-html
+              - generic [ref=f4e314]: Updated Feb 4, 2026on Feb 4
+  - contentinfo [ref=f4e316]:
+    - heading "Footer" [level=2] [ref=f4e317]
+    - generic [ref=f4e318]:
+      - generic [ref=f4e319]:
+        - link "GitHub Homepage" [ref=f4e320] [cursor=pointer]:
+          - /url: https://github.com
+        - generic [ref=f4e323]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=f4e324]:
+        - heading "Footer navigation" [level=3] [ref=f4e325]
+        - list "Footer navigation" [ref=f4e326]:
+          - listitem [ref=f4e327]:
+            - link "Terms" [ref=f4e328] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=f4e329]:
+            - link "Privacy" [ref=f4e330] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=f4e331]:
+            - link "Security" [ref=f4e332] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=f4e333]:
+            - link "Status" [ref=f4e334] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=f4e335]:
+            - link "Community" [ref=f4e336] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=f4e337]:
+            - link "Docs" [ref=f4e338] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=f4e339]:
+            - link "Contact" [ref=f4e340] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=f4e341]:
+            - button "Manage cookies" [ref=f4e343] [cursor=pointer]
+          - listitem [ref=f4e344]:
+            - button "Do not share my personal information" [ref=f4e346] [cursor=pointer]

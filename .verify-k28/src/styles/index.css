@@ -1,0 +1,478 @@
+@charset "UTF-8";
+
+/* ==========================================================================
+   Windows 11 Futuristic Dark Neon & Fluent Design System
+   ========================================================================== */
+
+:root {
+  /* System Fonts */
+  --font-segoe: 'Segoe UI Variable', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Inter, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+
+  /* Dark Neon Palette */
+  --win-bg: #0a0a12;
+  --win-accent: #8b5cf6;
+  --win-accent-hover: #a78bfa;
+  --win-accent-active: #7c3aed;
+  --win-accent-cyan: #00d4ff;
+  --win-accent-light: rgba(139, 92, 246, 0.18);
+  --win-cyan-light: rgba(0, 212, 255, 0.15);
+
+  --taskbar-bg: rgba(10, 10, 18, 0.82);
+  --taskbar-border: rgba(139, 92, 246, 0.22);
+  --taskbar-item-hover: rgba(139, 92, 246, 0.16);
+  --taskbar-item-active: rgba(139, 92, 246, 0.28);
+
+  --flyout-bg: rgba(10, 10, 18, 0.88);
+  --flyout-border: rgba(139, 92, 246, 0.25);
+  --flyout-card: rgba(139, 92, 246, 0.08);
+  --flyout-card-hover: rgba(139, 92, 246, 0.2);
+  --flyout-input-bg: rgba(0, 0, 0, 0.45);
+
+  --window-bg: rgba(10, 10, 18, 0.94);
+  --window-titlebar: rgba(10, 10, 18, 0.92);
+  --window-border: rgba(139, 92, 246, 0.35);
+  --window-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.8), 0 0 24px rgba(139, 92, 246, 0.2);
+
+  --text-primary: #f0f0f5;
+  --text-secondary: #a0a0c0;
+  --text-tertiary: #64648c;
+  --text-inverse: #0a0a12;
+
+  --control-close-hover: #ef4444;
+  --control-hover: rgba(139, 92, 246, 0.15);
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+
+  --backdrop-blur: blur(28px) saturate(190%);
+}
+
+[data-theme='light'] {
+  --win-bg: #f5f3ff;
+  --taskbar-bg: rgba(245, 243, 255, 0.85);
+  --taskbar-border: rgba(139, 92, 246, 0.2);
+  --taskbar-item-hover: rgba(139, 92, 246, 0.12);
+  --taskbar-item-active: rgba(139, 92, 246, 0.2);
+
+  --flyout-bg: rgba(255, 255, 255, 0.9);
+  --flyout-border: rgba(139, 92, 246, 0.2);
+  --flyout-card: rgba(139, 92, 246, 0.06);
+  --flyout-card-hover: rgba(139, 92, 246, 0.12);
+  --flyout-input-bg: rgba(245, 243, 255, 0.8);
+
+  --window-bg: rgba(255, 255, 255, 0.96);
+  --window-titlebar: rgba(245, 243, 255, 0.95);
+  --window-border: rgba(139, 92, 246, 0.25);
+  --window-shadow: 0 20px 40px -10px rgba(139, 92, 246, 0.18), 0 0 0 1px rgba(139, 92, 246, 0.15);
+
+  --text-primary: #1e1b4b;
+  --text-secondary: #4c1d95;
+  --text-tertiary: #6b7280;
+  --text-inverse: #ffffff;
+
+  --control-hover: rgba(139, 92, 246, 0.1);
+}
+
+/* Reset & Global */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-segoe);
+  color: var(--text-primary);
+  background-color: var(--win-bg);
+}
+
+input, textarea, [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.redundant-explorer-label { display: none !important; }
+
+/* Custom Windows 11 Fluent Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.35);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.65);
+}
+
+/* Neon Glow Classes */
+.neon-glow {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.4), 0 0 40px rgba(139, 92, 246, 0.15);
+}
+
+.neon-cyan-glow {
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.4), 0 0 40px rgba(0, 212, 255, 0.15);
+}
+
+.text-glow {
+  text-shadow: 0 0 10px rgba(139, 92, 246, 0.6), 0 0 20px rgba(0, 212, 255, 0.4);
+}
+
+/* Animations */
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes slideRightFade {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes flyoutOpen {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes windowOpen {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.5;
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 30px rgba(0, 212, 255, 0.6);
+  }
+}
+
+/* Selection Rectangle (Lasso) */
+.selection-box {
+  position: absolute;
+  border: 1px solid rgba(0, 212, 255, 0.8);
+  background-color: rgba(139, 92, 246, 0.2);
+  pointer-events: none;
+  border-radius: 4px;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+  z-index: 10;
+}
+
+/* Utilities */
+.acrylic-card {
+  background: var(--flyout-bg);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid var(--flyout-border);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6), 0 0 20px rgba(139, 92, 246, 0.15);
+  border-radius: var(--radius-lg);
+}
+
+.acrylic-blur {
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+}
+
+/* ---------- Windows 11 Taskbar (Fluent) ---------- */
+.taskbar-w11 {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: var(--taskbar-bg);
+  backdrop-filter: blur(30px) saturate(165%);
+  -webkit-backdrop-filter: blur(30px) saturate(165%);
+  border-top: 1px solid var(--taskbar-border);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.04);
+  display: flex;
+  align-items: center;
+  z-index: 999990;
+  user-select: none;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  animation: taskbar-enter 0.5s ease-out;
+}
+
+@keyframes taskbar-enter {
+  from { transform: translateY(48px); }
+  to { transform: translateY(0); }
+}
+
+.taskbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.taskbar-center.align-left {
+  left: 8px;
+  transform: none;
+}
+
+.taskbar-tray {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding-right: 4px;
+}
+
+.taskbar-btn {
+  position: relative;
+  height: 40px;
+  min-width: 40px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.14s ease;
+  font-family: inherit;
+}
+.taskbar-btn:hover { background: var(--taskbar-item-hover); }
+.taskbar-btn.open { background: var(--taskbar-item-hover); }
+
+/* Win11 app icon with running-indicator pill */
+.taskbar-app {
+  position: relative;
+  height: 40px;
+  width: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.14s ease, transform 0.1s ease;
+  color: var(--text-primary);
+}
+.taskbar-app:hover { background: var(--taskbar-item-hover); }
+.taskbar-app:active { transform: scale(0.88); }
+.taskbar-app.active { background: var(--taskbar-item-active); }
+
+.taskbar-indicator {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 3px;
+  border-radius: 3px;
+  background: var(--text-secondary);
+  transition: width 0.18s ease, background 0.18s ease;
+}
+.taskbar-indicator.inactive { width: 6px; background: var(--text-tertiary, rgba(255,255,255,0.4)); }
+.taskbar-indicator.active { width: 16px; background: var(--win-accent); box-shadow: 0 0 6px var(--win-accent); }
+
+.taskbar-clock {
+  height: 40px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  line-height: 1.15;
+  transition: background 0.14s ease;
+  font-family: inherit;
+}
+.taskbar-clock:hover { background: var(--taskbar-item-hover); }
+
+.taskbar-showdesktop {
+  width: 6px;
+  height: 100%;
+  border: none;
+  border-left: 1px solid var(--taskbar-border);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.taskbar-showdesktop:hover { background: var(--taskbar-item-hover); }
+
+/* Flyout chevron tray (hidden icons) */
+.tray-flyout {
+  position: absolute;
+  bottom: 52px;
+  right: 8px;
+  background: var(--flyout-bg);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid var(--flyout-border);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  z-index: 999995;
+  display: flex;
+  gap: 6px;
+  animation: flyoutOpen 0.16s ease-out;
+}
+
+/* ---------- Legacy macOS Dock (kept for reference) ---------- */
+.dock-container {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 72px;
+  padding: 8px 16px;
+  background: transparent;
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 28px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45), 0 8px 30px rgba(139,92,246,0.12);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  z-index: 999990;
+  animation: dock-enter 0.6s ease-out;
+}
+
+.dock-divider {
+  width: 1px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 0 6px;
+  border-radius: 1px;
+}
+
+@keyframes dock-enter {
+  from { opacity: 0; transform: translateX(-50%) translateY(40px) scale(0.92); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* ---------- Modern Top Menu Bar (Mac-style) ---------- */
+.menu-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  background: rgba(20, 20, 30, 0.65);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 99995;
+  user-select: none;
+  font-family: 'Inter', '-apple-system', 'Segoe UI', 'BlinkMacSystemFont', 'Roboto', 'Helvetica Neue', sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #f0f0f5;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18), inset 0 -1px 0 rgba(255,255,255,0.06);
+}
+
+.menu-bar .menu-item {
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.menu-bar .menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  background: rgba(15, 15, 25, 0.92);
+  backdrop-filter: blur(32px) saturate(170%);
+  -webkit-backdrop-filter: blur(32px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 6px 0;
+  min-width: 160px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+  z-index: 99996;
+}
+
+.menu-dropdown .dropdown-item {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  color: #f0f0f5;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.menu-dropdown .dropdown-item:hover {
+  background: rgba(139, 92, 246, 0.18);
+  color: #fff;
+}
+
+@keyframes bounce-click {
+  0% { transform: scale(1); }
+  30% { transform: scale(0.85); }
+  60% { transform: scale(1.12); }
+  85% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}

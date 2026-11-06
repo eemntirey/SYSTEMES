@@ -1,0 +1,112 @@
+- generic [ref=f5e3]:
+  - generic [ref=f5e4]:
+    - generic:
+      - generic [ref=f5e5]: Ce PC
+      - generic [ref=f5e16]: Corbeille
+      - generic [ref=f5e25]: Photos
+      - generic [ref=f5e33]: Explorateur
+      - generic [ref=f5e41]: Bloc-notes
+      - generic [ref=f5e55]: Terminal
+      - generic [ref=f5e68] [cursor=pointer]:
+        - img [ref=f5e70]:
+          - generic [ref=f5e73]: "137"
+        - generic [ref=f5e83]: Calculatrice
+      - generic [ref=f5e84]: Paint
+      - generic [ref=f5e96]: Paramètres
+      - generic [ref=f5e105]: Lisez-moi.txt
+    - generic [ref=f5e119]:
+      - generic [ref=f5e120]:
+        - generic [ref=f5e121]: Explorateur de fichiers
+        - generic [ref=f5e127]:
+          - button "Réduire" [ref=f5e128]
+          - button "Agrandir" [ref=f5e131]
+          - button "Fermer" [ref=f5e134]
+      - generic [ref=f5e139]:
+        - generic [ref=f5e140]:
+          - generic [ref=f5e141]:
+            - button "Précédent" [disabled] [ref=f5e142]
+            - button "Suivant" [disabled] [ref=f5e145]
+            - button "Monter" [ref=f5e148] [cursor=pointer]
+          - generic [ref=f5e151]:
+            - generic:
+              - generic:
+                - generic: "C:"
+                - generic [ref=f5e159]: /
+                - generic: Users
+                - generic [ref=f5e160]: /
+                - generic: eemntirey
+            - textbox "Rechercher un fichier ou dossier..." [ref=f5e165]
+          - generic [ref=f5e166]:
+            - generic [ref=f5e167]: Trier
+            - combobox "Trier les éléments" [ref=f5e168]:
+              - option "Nom" [selected]
+              - option "Type"
+              - option "Date"
+          - generic [ref=f5e169]:
+            - button "Nouveau dossier" [ref=f5e170] [cursor=pointer]
+            - button "Nouveau fichier" [ref=f5e176] [cursor=pointer]
+            - button "Inspecteur & Aperçu" [ref=f5e188] [cursor=pointer]
+        - generic [ref=f5e191]:
+          - generic [ref=f5e192]:
+            - generic [ref=f5e193]:
+              - generic [ref=f5e194]: Favoris
+              - generic [ref=f5e198]:
+                - generic [ref=f5e199] [cursor=pointer]: Bureau
+                - generic [ref=f5e205] [cursor=pointer]: Documents
+                - generic [ref=f5e211] [cursor=pointer]: Téléchargements
+                - generic [ref=f5e217] [cursor=pointer]: Images
+                - generic [ref=f5e223] [cursor=pointer]: Ce PC (Racine)
+            - generic [ref=f5e232]:
+              - generic [ref=f5e233]: Stockage
+              - generic [ref=f5e251] [cursor=pointer]:
+                - generic [ref=f5e252]:
+                  - generic [ref=f5e253]: NVMe SSD (C:)
+                  - generic [ref=f5e254]: "Santé: 99%"
+                - generic [ref=f5e257]: 142 Go libres / 476 Go
+          - generic [ref=f5e259]:
+            - generic [ref=f5e260] [cursor=pointer]:
+              - button [ref=f5e261]
+              - generic [ref=f5e268]: Bureau
+              - generic [ref=f5e269]: Dossier
+            - generic [ref=f5e270] [cursor=pointer]:
+              - button [ref=f5e271]
+              - generic [ref=f5e278]: Documents
+              - generic [ref=f5e279]: Dossier
+            - generic [ref=f5e280] [cursor=pointer]:
+              - button [ref=f5e281]
+              - generic [ref=f5e288]: Images
+              - generic [ref=f5e289]: Dossier
+            - generic [ref=f5e290] [cursor=pointer]:
+              - button [ref=f5e291]
+              - generic [ref=f5e298]: Téléchargements
+              - generic [ref=f5e299]: Dossier
+        - generic [ref=f5e300]:
+          - generic [ref=f5e301]: 4 élément(s)
+          - generic [ref=f5e302]:
+            - generic [ref=f5e303]: "Encodage: UTF-8"
+            - generic [ref=f5e304]: "Protocole: NVMe v2.0"
+  - toolbar "Barre des tâches" [ref=f5e313]:
+    - generic [ref=f5e314]:
+      - button "Démarrer" [ref=f5e315] [cursor=pointer]
+      - button "Rechercher" [ref=f5e321] [cursor=pointer]
+      - button "Vue des tâches" [ref=f5e326] [cursor=pointer]
+      - button "Widgets" [ref=f5e330] [cursor=pointer]
+      - button "Copilot" [ref=f5e336] [cursor=pointer]
+      - button "Explorateur de fichiers" [ref=f5e341] [cursor=pointer]
+      - button "Bloc-notes" [ref=f5e347] [cursor=pointer]
+      - button "Terminal Windows" [ref=f5e358] [cursor=pointer]
+      - button "Calculatrice" [ref=f5e367] [cursor=pointer]:
+        - img [ref=f5e368]:
+          - generic [ref=f5e371]: "137"
+      - button "Paramètres" [ref=f5e381] [cursor=pointer]
+      - button "Photos" [ref=f5e387] [cursor=pointer]
+      - button "Paint" [ref=f5e392] [cursor=pointer]
+    - generic [ref=f5e401]:
+      - button "Afficher les icônes cachées" [ref=f5e402] [cursor=pointer]
+      - button "Réseau, son, batterie" [ref=f5e405] [cursor=pointer]
+      - button "Microphone" [ref=f5e416] [cursor=pointer]
+      - button "Heure, date et notifications" [ref=f5e420] [cursor=pointer]:
+        - generic [ref=f5e421]: 13:22
+        - generic [ref=f5e422]: 01/11/2026
+      - button "Notifications" [ref=f5e424] [cursor=pointer]
+      - button "Afficher le bureau" [ref=f5e428] [cursor=pointer]

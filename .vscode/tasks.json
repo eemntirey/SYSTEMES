@@ -1,0 +1,34 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Validate SYSTEMES kernel tests",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"--manifest-path",
+				"SYSTEMES/kernel/Cargo.toml"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Check SYSTEMES bare-metal target",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"--all-features",
+				"--manifest-path",
+				"SYSTEMES/kernel/Cargo.toml",
+				"--target",
+				"x86_64-unknown-none"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
