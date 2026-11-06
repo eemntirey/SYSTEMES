@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace Systemes.Native.Core
 {
@@ -19,6 +20,10 @@ namespace Systemes.Native.Core
             "winlogon.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe",
             "secure system", "svchost", "fontdrvhost", "dwm"
         };
+
+        private static readonly Regex GpuLuidPattern = new(
+            @"luid_[^_]+_[^_]+_phys_\d+",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct FileTime
@@ -44,7 +49,11 @@ namespace Systemes.Native.Core
             {
                 var previous = PreviousSystemCpu;
                 PreviousSystemCpu = current;
-                if (!previous.HasValue) return null;
+                if (!previous.HasValue ||
+                    current.Idle < previous.Value.Idle ||
+                    current.Kernel < previous.Value.Kernel ||
+                    current.User < previous.Value.User)
+                    return null;
 
                 var idleDelta = current.Idle - previous.Value.Idle;
                 var kernelDelta = current.Kernel - previous.Value.Kernel;
@@ -53,6 +62,12 @@ namespace Systemes.Native.Core
                 if (total == 0 || idleDelta > total) return null;
                 return Math.Round(Math.Clamp((total - idleDelta) * 100.0 / total, 0, 100), 1);
             }
+        }
+
+        private static string GetGpuAdapterKey(string instanceName)
+        {
+            var match = GpuLuidPattern.Match(instanceName ?? string.Empty);
+            return match.Success ? match.Value : instanceName ?? string.Empty;
         }
 
         private static object ReadPerformanceSnapshot()
@@ -107,8 +122,8 @@ namespace Systemes.Native.Core
                     foreach (ManagementObject item in searcher.Get())
                     {
                         var instance = item["Name"]?.ToString() ?? "GPU";
-                        var adapter = System.Text.RegularExpressions.Regex.Match(instance, @"luid_[^_]+_[^_]+_phys_\d+").Value;
-                        if (string.IsNullOrEmpty(adapter)) adapter = "GPU";
+                        var adapter = GetGpuAdapterKey(instance);
+                        if (string.IsNullOrWhiteSpace(adapter)) adapter = "GPU";
                         var utilization = ReadCounter(item, "UtilizationPercentage");
                         if (!engines.TryGetValue(adapter, out var current) || utilization > current)
                             engines[adapter] = Math.Clamp(utilization, 0, 100);
@@ -120,28 +135,34 @@ namespace Systemes.Native.Core
                 {
                     foreach (ManagementObject item in searcher.Get())
                     {
-                        var name = item["Name"]?.ToString() ?? "GPU";
-                        memoryByAdapter[name] = (
+                        var instance = item["Name"]?.ToString() ?? "GPU";
+                        var adapter = GetGpuAdapterKey(instance);
+                        if (string.IsNullOrWhiteSpace(adapter)) adapter = "GPU";
+                        memoryByAdapter[adapter] = (
                             ReadUnsignedCounter(item, "DedicatedUsage"),
                             ReadUnsignedCounter(item, "SharedUsage"));
                     }
                 }
 
-                gpus = engines.Select(pair => (object)new
+                // GPU engine and adapter-memory counters expose separate WMI instances.
+                // Join them by the stable adapter LUID; never silently report a measured
+                // utilization with fabricated zero VRAM values when the join is unavailable.
+                var adapterKeys = engines.Keys
+                    .Union(memoryByAdapter.Keys, StringComparer.OrdinalIgnoreCase)
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                gpus = adapterKeys.Select(adapter =>
                 {
-                    adapter = pair.Key,
-                    utilizationPercent = pair.Value,
-                    dedicatedMemoryBytes = (ulong?)null,
-                    sharedMemoryBytes = (ulong?)null
-                }).ToArray();
-                if (gpus.Length == 0 && memoryByAdapter.Count > 0)
-                    gpus = memoryByAdapter.Select(pair => (object)new
+                    var hasEngine = engines.TryGetValue(adapter, out var utilization);
+                    var hasMemory = memoryByAdapter.TryGetValue(adapter, out var memory);
+                    return (object)new
                     {
-                        adapter = pair.Key,
-                        utilizationPercent = (double?)null,
-                        dedicatedMemoryBytes = pair.Value.Dedicated,
-                        sharedMemoryBytes = pair.Value.Shared
-                    }).ToArray();
+                        adapter,
+                        utilizationPercent = hasEngine ? (double?)utilization : null,
+                        dedicatedMemoryBytes = hasMemory ? (ulong?)memory.Dedicated : null,
+                        sharedMemoryBytes = hasMemory ? (ulong?)memory.Shared : null
+                    };
+                }).ToArray();
             }
             catch (Exception ex) { gpuError = ex.Message; }
 
