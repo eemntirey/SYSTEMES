@@ -165,6 +165,7 @@ impl CpuSlot {
 
 /// Atomic per-CPU lifecycle registry shared by the BSP and AP entry paths.
 pub struct CpuRegistry {
+    initialization_claimed: AtomicBool,
     initialized: AtomicBool,
     slots: [CpuSlot; MAX_CPUS],
     count: AtomicU8,
@@ -173,6 +174,7 @@ pub struct CpuRegistry {
 impl CpuRegistry {
     pub const fn new() -> Self {
         Self {
+            initialization_claimed: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
             slots: [const { CpuSlot::new() }; MAX_CPUS],
             count: AtomicU8::new(0),
@@ -182,12 +184,12 @@ impl CpuRegistry {
     /// Publish the validated topology. The BSP is marked online; APs remain
     /// discovered until their startup handshake succeeds.
     pub fn initialize(&self, topology: &CpuTopology) -> Result<(), RegistryError> {
-        if self.initialized.load(Ordering::Acquire) {
-            return Err(RegistryError::AlreadyInitialized);
-        }
         if topology.is_empty() || topology.len() > MAX_CPUS {
             return Err(RegistryError::InvalidTopology);
         }
+        self.initialization_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| RegistryError::AlreadyInitialized)?;
 
         for index in 0..topology.len() {
             let descriptor = topology.get(index).ok_or(RegistryError::InvalidTopology)?;
