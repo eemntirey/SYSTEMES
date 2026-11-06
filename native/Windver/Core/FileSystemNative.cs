@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Globalization;
 using Microsoft.VisualBasic.FileIO;
 using System.Diagnostics;
 using System.Management;
@@ -466,9 +467,9 @@ namespace Systemes.Native.Core
                 name = info.Name,
                 isDirectory,
                 length = isDirectory ? null : (long?)info.Length,
-                created = info.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                modified = info.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                accessed = info.LastAccessTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                created = info.CreationTimeUtc.ToString("O", CultureInfo.InvariantCulture),
+                modified = info.LastWriteTimeUtc.ToString("O", CultureInfo.InvariantCulture),
+                accessed = info.LastAccessTimeUtc.ToString("O", CultureInfo.InvariantCulture),
                 attributes = info.Attributes.ToString(),
                 isReadOnly = (info.Attributes & FileAttributes.ReadOnly) != 0,
                 isHidden = (info.Attributes & FileAttributes.Hidden) != 0,
