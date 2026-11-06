@@ -386,6 +386,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\\r\\n") };
+    if systemes_kernel::heap::initialize().is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic heap initialization failed\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\\r\\n"); }
     unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
