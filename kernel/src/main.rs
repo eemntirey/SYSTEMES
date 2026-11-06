@@ -531,10 +531,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES: per-task FXSAVE64 context images initialized\\r\\n"); }
     if apic_initialized {
-        if unsafe { systemes_kernel::interrupts::initialize_local_apic_timer(250_000) }.is_err() {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC scheduler timer initialization failed\\r\\n"); }
+        if unsafe { systemes_kernel::interrupts::calibrate_and_initialize_local_apic_timer(100) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC timer calibration or initialization failed\\r\\n"); }
             halt();
         }
+        unsafe { debug_write(b"SYSTEMES: Local APIC timer calibrated against PIT channel 2 at 100 Hz\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES: monotonic kernel clock initialized at 100 Hz\\r\\n"); }
         unsafe { debug_write(b"SYSTEMES: Local APIC periodic scheduler timer configured\\r\\n"); }
     } else {
         #[cfg(feature = "qemu-scheduler-test")]
