@@ -288,17 +288,17 @@ pub static CPU_REGISTRY: CpuRegistry = CpuRegistry::new();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acpi::{LocalApic, MAX_LOCAL_APICS};
+    use crate::acpi::{InterruptOverride, IoApic, LocalApic};
 
     fn madt(entries: &[(u8, u8, u32)]) -> MadtInfo {
         let mut info = MadtInfo {
             local_apic_address: 0xFEE0_0000,
             flags: 1,
-            local_apics: [LocalApic::default(); MAX_LOCAL_APICS],
+            local_apics: [LocalApic::default(); 64],
             local_apic_count: entries.len(),
-            io_apics: [Default::default(); crate::acpi::MAX_IO_APICS],
+            io_apics: [IoApic::default(); 8],
             io_apic_count: 0,
-            overrides: [Default::default(); crate::acpi::MAX_ISO],
+            overrides: [InterruptOverride::default(); 16],
             override_count: 0,
         };
         for (index, (uid, apic_id, flags)) in entries.iter().copied().enumerate() {
