@@ -102,6 +102,9 @@ jobs:
           grep -q 'SYSTEMES_UEFI_ENTRY_REACHED' build/uefi/debug.log
           grep -q 'SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: kernel entry reached' build/uefi/debug.log
+          grep -q 'SYSTEMES: CPU NX capability detected and EFER.NXE enabled' build/uefi/debug.log
+          grep -q 'SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX' build/uefi/debug.log
+          grep -q 'SYSTEMES: W^X 4 KiB page permissions verified' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
