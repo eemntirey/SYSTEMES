@@ -12,11 +12,11 @@ export const SystemCompare = () => {
           <tr><td>Taskbar</td><td>Dock avec + (ok)</td><td>Dock centré, icônes ouvertes, heure, notifications</td></tr>
           <tr><td>StartMenu</td><td>Panel simple</td><td>App épinglées + recherche + profil</td></tr>
           <tr><td>Desktop</td><td>Fond violet, icônes fixes</td><td>Fond réel, icônes dynamiques, sélection rectangle</td></tr>
-          <tr><td>LockScreen</td><td>PIN 1234 (simulé)</td><td>Verrouillage réel, photo de fond</td></tr>
-          <tr><td>Settings</td><td>Paramètres visuels</td><td>Connecté au vrai Windows (WMI)</td></tr>
+          <tr><td>LockScreen</td><td>Verrouillage local, PIN codé en dur</td><td>Verrouillage réel, photo de fond</td></tr>
+          <tr><td>Settings</td><td>Paramètres visuels</td><td>Partiellement connecté (Wi-Fi, Bluetooth, son, services, mises à jour)</td></tr>
         </tbody>
       </table>
-      <p>Objectif : atteindre le niveau du système réel sans simulation.</p>
+      <p>Objectif : remplacer les fonctions locales restantes par des appels natifs.</p>
     </div>
   );
 };

@@ -155,10 +155,10 @@ Ce système a été recréé avec soin avec React, TypeScript et l'esthétique F
 • Explorateur de fichiers interactif (navigation, création de dossiers/fichiers).
 • Photos avec galerie, zoom, rotation et diaporama.
 • Bloc-notes Windows 11 complet avec sauvegarde dans le système de fichiers.
-• Terminal simulé avec commandes système documentées.
+• Terminal branché sur PowerShell via l’hôte Windows natif.
 • Calculatrice Windows 11 réaliste avec historique de calcul.
-• Paramètres complets (Thème Sombre/Clair, choix des fonds d'écran, réglages audio/luminosité).
-• Centre de contrôle rapide (Quick Settings Wi-Fi, Son, Luminosité, Batterie, Veilleuse).
+• Paramètres complets (Thème Sombre/Clair, choix des fonds d'écran, réglages audio, Wi-Fi et Bluetooth).
+• Centre de contrôle rapide (Wi-Fi, Son, Bluetooth).
 • Centre de notifications et calendrier mensuel interactif.
 • Snap Layouts de fenêtres (glissez ou survolez le bouton d'agrandissement).
 

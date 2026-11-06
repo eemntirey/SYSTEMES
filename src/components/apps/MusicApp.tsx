@@ -6,13 +6,13 @@ export const MusicApp: React.FC = () => {
     <div style={{ padding: '24px', color: '#f0f0f5' }}>
       <h3>Musique</h3>
       <p style={{ color: '#a0a0c0' }}>
-        {playing ? 'Lecture en cours — fichier audio réel détecté' : 'Sélectionnez un fichier audio réel'}
+        Lecteur non connecté : aucun fichier audio n’est lu.
       </p>
       <button onClick={() => setPlaying(!playing)} style={{ padding: '8px 16px', marginTop: '12px' }}>
-        {playing ? 'Pause (réel)' : 'Lecture (réel)'}
+        {playing ? 'Pause' : 'Lecture'}
       </button>
       <p style={{ fontSize: '11px', color: '#606060', marginTop: '12px' }}>
-        Note : pas de simulation. Intégration réelle du système audio Windows.
+        Le moteur audio Windows n’est pas encore relié à ce lecteur.
       </p>
     </div>
   );

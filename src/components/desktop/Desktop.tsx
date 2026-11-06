@@ -20,8 +20,6 @@ interface DesktopShortcut {
 export const Desktop: React.FC<DesktopProps> = ({ children }) => {
   const {
     wallpaper,
-    brightness,
-    nightLight,
     openWindow,
     closeAllFlyouts,
     files,
@@ -213,32 +211,6 @@ export const Desktop: React.FC<DesktopProps> = ({ children }) => {
         userSelect: 'none',
       }}
     >
-      {/* Night light warm filter overlay */}
-      {nightLight && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backgroundColor: 'rgba(255, 140, 0, 0.12)',
-            pointerEvents: 'none',
-            zIndex: 999990,
-          }}
-        />
-      )}
-
-      {/* Brightness adjustment overlay */}
-      {brightness < 100 && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backgroundColor: `rgba(0, 0, 0, ${(100 - brightness) / 130})`,
-            pointerEvents: 'none',
-            zIndex: 999991,
-          }}
-        />
-      )}
-
       {/* Selection Lasso Box */}
       {selectionBox && <div className="selection-box" style={getBoxStyle()} />}
 

@@ -59,16 +59,10 @@ interface OSContextType {
   isMuted: boolean
   toggleMute: () => void
   audioDeviceName: string | null
-  brightness: number
-  setBrightness: (b: number) => void
   wifiEnabled: boolean
   toggleWifi: () => void
   bluetoothEnabled: boolean
   toggleBluetooth: () => void
-  nightLight: boolean
-  toggleNightLight: () => void
-  batterySaver: boolean
-  toggleBatterySaver: () => void
 
   // Lock & Sleep
   isLocked: boolean
@@ -88,69 +82,9 @@ interface OSContextType {
   toggleDesktopLabels: () => void
   fontSize: number
   setFontSize: (size: number) => void
-  resolution: string
-  setResolution: (res: string) => void
-  refreshRate: string
-  setRefreshRate: (rate: string) => void
-  focusAssist: boolean
-  setFocusAssist: (enabled: boolean) => void
   taskbarAlignment: 'center' | 'left'
   setTaskbarAlignment: (align: 'center' | 'left') => void
 
-  // Privacy
-  locationEnabled: boolean
-  setLocationEnabled: (enabled: boolean) => void
-  cameraEnabled: boolean
-  setCameraEnabled: (enabled: boolean) => void
-  micEnabled: boolean
-  setMicEnabled: (enabled: boolean) => void
-  diagnosticData: boolean
-  setDiagnosticData: (enabled: boolean) => void
-
-  // Settings app toggles
-  notificationsEnabled: boolean
-  setNotificationsEnabled: (enabled: boolean) => void
-  toggleNotifications: () => void
-  airplaneMode: boolean
-  toggleAirplaneMode: () => void
-  mobileHotspot: boolean
-  toggleMobileHotspot: () => void
-  gameBarEnabled: boolean
-  toggleGameBar: () => void
-  gameModeEnabled: boolean
-  toggleGameMode: () => void
-  audioRecordingEnabled: boolean
-  toggleAudioRecording: () => void
-  vrrEnabled: boolean
-  toggleVRR: () => void
-  hardwareGpuScheduling: boolean
-  toggleHardwareGpuScheduling: () => void
-  magnifierEnabled: boolean
-  toggleMagnifier: () => void
-  colorFilterEnabled: boolean
-  toggleColorFilter: () => void
-  highContrastEnabled: boolean
-  toggleHighContrast: () => void
-  captionsEnabled: boolean
-  toggleCaptions: () => void
-  audioAlertsEnabled: boolean
-  toggleAudioAlerts: () => void
-  voiceAccessEnabled: boolean
-  toggleVoiceAccess: () => void
-  personalizedExperiences: boolean
-  togglePersonalizedExperiences: () => void
-  activityHistory: boolean
-  toggleActivityHistory: () => void
-  syncSettings: boolean
-  toggleSyncSettings: () => void
-  setTimeAutomatically: boolean
-  toggleSetTimeAutomatically: () => void
-  setTimeZoneAutomatically: boolean
-  toggleSetTimeZoneAutomatically: () => void
-  lockScreenBackground: boolean
-  toggleLockScreenBackground: () => void
-  lockScreenAppStatus: boolean
-  toggleLockScreenAppStatus: () => void
 
   // File System
   files: FileItem[]
@@ -218,48 +152,14 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [volume, setVolume] = useState(() => readPreference('volume', 70))
   const [isMuted, setIsMuted] = useState(false)
   const [audioDeviceName, setAudioDeviceName] = useState<string | null>(null)
-  const [brightness, setBrightness] = useState(() => readPreference('brightness', 90))
   const [wifiEnabled, setWifiEnabled] = useState(() => readPreference('wifiEnabled', true))
   const [bluetoothEnabled, setBluetoothEnabled] = useState(() => readPreference('bluetoothEnabled', true))
-  const [nightLight, setNightLight] = useState(() => readPreference('nightLight', false))
-  const [batterySaver, setBatterySaver] = useState(() => readPreference('batterySaver', false))
 
   // Display settings
   const [showDesktopLabels, setShowDesktopLabels] = useState(true)
   const [fontSize, setFontSize] = useState(() => readPreference('fontSize', 100))
-  const [resolution, setResolution] = useState(() => readPreference('resolution', '1920x1080'))
-  const [refreshRate, setRefreshRate] = useState(() => readPreference('refreshRate', '60Hz'))
-  const [focusAssist, setFocusAssist] = useState(false)
   const [taskbarAlignment, setTaskbarAlignment] = useState<'center' | 'left'>(() => readPreference('taskbarAlignment', 'center'))
 
-  // Privacy
-  const [locationEnabled, setLocationEnabled] = useState(true)
-  const [cameraEnabled, setCameraEnabled] = useState(true)
-  const [micEnabled, setMicEnabled] = useState(true)
-  const [diagnosticData, setDiagnosticData] = useState(true)
-
-  // Settings app toggles
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
-  const [airplaneMode, setAirplaneMode] = useState(false)
-  const [mobileHotspot, setMobileHotspot] = useState(false)
-  const [gameBarEnabled, setGameBarEnabled] = useState(true)
-  const [gameModeEnabled, setGameModeEnabled] = useState(false)
-  const [audioRecordingEnabled, setAudioRecordingEnabled] = useState(true)
-  const [vrrEnabled, setVrrEnabled] = useState(false)
-  const [hardwareGpuScheduling, setHardwareGpuScheduling] = useState(true)
-  const [magnifierEnabled, setMagnifierEnabled] = useState(false)
-  const [colorFilterEnabled, setColorFilterEnabled] = useState(false)
-  const [highContrastEnabled, setHighContrastEnabled] = useState(false)
-  const [captionsEnabled, setCaptionsEnabled] = useState(false)
-  const [audioAlertsEnabled, setAudioAlertsEnabled] = useState(false)
-  const [voiceAccessEnabled, setVoiceAccessEnabled] = useState(false)
-  const [personalizedExperiences, setPersonalizedExperiences] = useState(true)
-  const [activityHistory, setActivityHistory] = useState(true)
-  const [syncSettings, setSyncSettings] = useState(true)
-  const [setTimeAutomatically, setSetTimeAutomatically] = useState(true)
-  const [setTimeZoneAutomatically, setSetTimeZoneAutomatically] = useState(true)
-  const [lockScreenBackground, setLockScreenBackground] = useState(true)
-  const [lockScreenAppStatus, setLockScreenAppStatus] = useState(true)
 
   // Windows Update
   const [autoUpdate, setAutoUpdate] = useState(true)
@@ -303,10 +203,10 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
   // Persist system preferences across browser reloads.
   useEffect(() => {
-    const preferences = { theme, wallpaperId: wallpaper.id, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment }
+    const preferences = { theme, wallpaperId: wallpaper.id, accentColor, volume, wifiEnabled, bluetoothEnabled, fontSize, taskbarAlignment }
     try { Object.entries(preferences).forEach(([key, value]) => window.localStorage.setItem(`systemes:${key}`, JSON.stringify(value))) } catch { /* storage unavailable */ }
     document.documentElement.style.setProperty('--win-accent', accentColor)
-  }, [theme, wallpaper, accentColor, volume, brightness, wifiEnabled, bluetoothEnabled, nightLight, batterySaver, fontSize, resolution, refreshRate, taskbarAlignment])
+  }, [theme, wallpaper, accentColor, volume, wifiEnabled, bluetoothEnabled, fontSize, taskbarAlignment])
 
 
   // Keep active window valid after close/minimize
@@ -816,99 +716,6 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       })
   }, [bluetoothEnabled, addNotification])
 
-  const toggleNightLight = useCallback(() => {
-    setNightLight(prev => !prev)
-  }, [])
-
-  const toggleBatterySaver = useCallback(() => {
-    setBatterySaver(prev => !prev)
-  }, [])
-
-  // Settings app toggles
-  const toggleNotifications = useCallback(() => {
-    setNotificationsEnabled(prev => !prev)
-  }, [])
-
-  const toggleAirplaneMode = useCallback(() => {
-    setAirplaneMode(prev => !prev)
-  }, [])
-
-  const toggleMobileHotspot = useCallback(() => {
-    setMobileHotspot(prev => !prev)
-  }, [])
-
-  const toggleGameBar = useCallback(() => {
-    setGameBarEnabled(prev => !prev)
-  }, [])
-
-  const toggleGameMode = useCallback(() => {
-    setGameModeEnabled(prev => !prev)
-  }, [])
-
-  const toggleAudioRecording = useCallback(() => {
-    setAudioRecordingEnabled(prev => !prev)
-  }, [])
-
-  const toggleVRR = useCallback(() => {
-    setVrrEnabled(prev => !prev)
-  }, [])
-
-  const toggleHardwareGpuScheduling = useCallback(() => {
-    setHardwareGpuScheduling(prev => !prev)
-  }, [])
-
-  const toggleMagnifier = useCallback(() => {
-    setMagnifierEnabled(prev => !prev)
-  }, [])
-
-  const toggleColorFilter = useCallback(() => {
-    setColorFilterEnabled(prev => !prev)
-  }, [])
-
-  const toggleHighContrast = useCallback(() => {
-    setHighContrastEnabled(prev => !prev)
-  }, [])
-
-  const toggleCaptions = useCallback(() => {
-    setCaptionsEnabled(prev => !prev)
-  }, [])
-
-  const toggleAudioAlerts = useCallback(() => {
-    setAudioAlertsEnabled(prev => !prev)
-  }, [])
-
-  const toggleVoiceAccess = useCallback(() => {
-    setVoiceAccessEnabled(prev => !prev)
-  }, [])
-
-  const togglePersonalizedExperiences = useCallback(() => {
-    setPersonalizedExperiences(prev => !prev)
-  }, [])
-
-  const toggleActivityHistory = useCallback(() => {
-    setActivityHistory(prev => !prev)
-  }, [])
-
-  const toggleSyncSettings = useCallback(() => {
-    setSyncSettings(prev => !prev)
-  }, [])
-
-  const toggleSetTimeAutomatically = useCallback(() => {
-    setSetTimeAutomatically(prev => !prev)
-  }, [])
-
-  const toggleSetTimeZoneAutomatically = useCallback(() => {
-    setSetTimeZoneAutomatically(prev => !prev)
-  }, [])
-
-  const toggleLockScreenBackground = useCallback(() => {
-    setLockScreenBackground(prev => !prev)
-  }, [])
-
-  const toggleLockScreenAppStatus = useCallback(() => {
-    setLockScreenAppStatus(prev => !prev)
-  }, [])
-
   const lockOS = useCallback(() => {
     closeAllFlyouts()
     setIsLocked(true)
@@ -984,84 +791,20 @@ export const OSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         isMuted,
         toggleMute,
         audioDeviceName,
-        brightness,
-        setBrightness,
         wifiEnabled,
         toggleWifi,
         bluetoothEnabled,
         toggleBluetooth,
-        nightLight,
-        toggleNightLight,
-        batterySaver,
-        toggleBatterySaver,
         showDesktopLabels,
         setShowDesktopLabels,
         toggleDesktopLabels,
         fontSize,
         setFontSize,
-        focusAssist,
-        setFocusAssist,
-        resolution,
-        setResolution,
-        refreshRate,
-        setRefreshRate,
         taskbarAlignment,
         setTaskbarAlignment,
         autoUpdate,
         setAutoUpdate,
-        locationEnabled,
-        setLocationEnabled,
-        cameraEnabled,
-        setCameraEnabled,
-        micEnabled,
-        setMicEnabled,
-        diagnosticData,
-        setDiagnosticData,
 
-        // Settings app toggles
-        notificationsEnabled,
-        setNotificationsEnabled,
-        toggleNotifications,
-        airplaneMode,
-        toggleAirplaneMode,
-        mobileHotspot,
-        toggleMobileHotspot,
-        gameBarEnabled,
-        toggleGameBar,
-        gameModeEnabled,
-        toggleGameMode,
-        audioRecordingEnabled,
-        toggleAudioRecording,
-        vrrEnabled,
-        toggleVRR,
-        hardwareGpuScheduling,
-        toggleHardwareGpuScheduling,
-        magnifierEnabled,
-        toggleMagnifier,
-        colorFilterEnabled,
-        toggleColorFilter,
-        highContrastEnabled,
-        toggleHighContrast,
-        captionsEnabled,
-        toggleCaptions,
-        audioAlertsEnabled,
-        toggleAudioAlerts,
-        voiceAccessEnabled,
-        toggleVoiceAccess,
-        personalizedExperiences,
-        togglePersonalizedExperiences,
-        activityHistory,
-        toggleActivityHistory,
-        syncSettings,
-        toggleSyncSettings,
-        setTimeAutomatically,
-        toggleSetTimeAutomatically,
-        setTimeZoneAutomatically,
-        toggleSetTimeZoneAutomatically,
-        lockScreenBackground,
-        toggleLockScreenBackground,
-        lockScreenAppStatus,
-        toggleLockScreenAppStatus,
 
         isLocked,
         setIsLocked,

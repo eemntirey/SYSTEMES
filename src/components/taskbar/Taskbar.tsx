@@ -32,7 +32,6 @@ export const Taskbar: React.FC = () => {
     volume,
     isMuted,
     wifiEnabled,
-    batterySaver,
     minimizeWindow,
   } = useOS()
 
@@ -200,7 +199,7 @@ export const Taskbar: React.FC = () => {
         >
           <FluentIcon name={wifiEnabled ? 'wifi' : 'wifi-off'} size={16} color="var(--text-primary)" />
           <FluentIcon name={volumeIcon} size={16} color="var(--text-primary)" />
-          <FluentIcon name="battery" size={16} color={batterySaver ? 'var(--win-accent)' : 'var(--text-primary)'} />
+          <FluentIcon name="battery" size={16} color="var(--text-primary)" />
         </button>
 
         {/* Micro (indicateur d'état) */}

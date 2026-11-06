@@ -6,16 +6,6 @@ import { NativeBridge } from '../../services/NativeBridge'
 export const QuickSettings: React.FC = () => {
   const {
     isActionCenterOpen,
-    wifiEnabled,
-    toggleWifi: toggleWifiLocal,
-    bluetoothEnabled,
-    toggleBluetooth: toggleBluetoothLocal,
-    nightLight,
-    toggleNightLight,
-    batterySaver,
-    toggleBatterySaver,
-    brightness,
-    setBrightness,
     volume,
     setVolume,
     isMuted,
@@ -26,11 +16,8 @@ export const QuickSettings: React.FC = () => {
     addNotification,
   } = useOS()
 
-  const [wifiOn, setWifiOn] = useState(wifiEnabled)
-  const [btOn, setBtOn] = useState(bluetoothEnabled)
-
-  useEffect(() => { setWifiOn(wifiEnabled) }, [wifiEnabled])
-  useEffect(() => { setBtOn(bluetoothEnabled) }, [bluetoothEnabled])
+  const [wifiOn, setWifiOn] = useState<boolean | null>(null)
+  const [btOn, setBtOn] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!isActionCenterOpen) return
@@ -65,23 +52,19 @@ export const QuickSettings: React.FC = () => {
             'R\u00e9seau',
           )
         } else {
-          setWifiOn(true)
-          try {
-            await NativeBridge.openWindowsSettings('network-status')
-          } catch { /* ignore */ }
+          await NativeBridge.openWindowsSettings('network-status')
           addNotification(
             'Wi-Fi',
             'Ouvrez les param\u00e8tres Windows pour vous connecter \u00e0 un r\u00e9seau.',
             'R\u00e9seau',
           )
         }
-      } catch {
-        toggleWifiLocal()
-        setWifiOn(prev => !prev)
-        addNotification('Wi-Fi', 'Moteur natif indisponible \u2014 \u00e9tat local uniquement.', 'R\u00e9seau')
+      } catch (error) {
+        addNotification('Wi-Fi \u2014 op\u00e9ration refus\u00e9e',
+          error instanceof Error ? error.message : String(error), 'R\u00e9seau')
       }
     })()
-  }, [addNotification, toggleWifiLocal])
+  }, [addNotification])
 
   const handleBluetooth = useCallback(() => {
     void (async () => {
@@ -89,10 +72,7 @@ export const QuickSettings: React.FC = () => {
         const current = await NativeBridge.readBluetoothStatus()
         if (current?.error) throw new Error(current.error)
         const wasPowered = !!current?.powered
-        setBtOn(!wasPowered)
-        try {
-          await NativeBridge.openWindowsSettings('bluetooth')
-        } catch { /* ignore */ }
+        await NativeBridge.openWindowsSettings('bluetooth')
         addNotification(
           'Bluetooth',
           wasPowered
@@ -100,19 +80,12 @@ export const QuickSettings: React.FC = () => {
             : 'Param\u00e8tres Bluetooth ouverts \u2014 activez l\u2019adaptateur dans Windows.',
           'Bluetooth',
         )
-        setTimeout(async () => {
-          try {
-            const bt = await NativeBridge.readBluetoothStatus()
-            if (bt && !bt.error) setBtOn(!!bt.powered)
-          } catch { /* ignore */ }
-        }, 2500)
-      } catch {
-        toggleBluetoothLocal()
-        setBtOn(prev => !prev)
-        addNotification('Bluetooth', 'Moteur natif indisponible \u2014 \u00e9tat local uniquement.', 'Bluetooth')
+      } catch (error) {
+        addNotification('Bluetooth \u2014 op\u00e9ration refus\u00e9e',
+          error instanceof Error ? error.message : String(error), 'Bluetooth')
       }
     })()
-  }, [addNotification, toggleBluetoothLocal])
+  }, [addNotification])
 
   if (!isActionCenterOpen) return null
 
@@ -120,34 +93,18 @@ export const QuickSettings: React.FC = () => {
     {
       id: 'wifi',
       name: 'Wi-Fi',
-      desc: wifiOn ? 'Connect\u00e9' : 'D\u00e9sactiv\u00e9',
-      active: wifiOn,
+      desc: wifiOn === null ? '\u00c9tat inconnu' : wifiOn ? 'Connect\u00e9' : 'D\u00e9sactiv\u00e9',
+      active: wifiOn === true,
       onClick: handleWifi,
       icon: wifiOn ? 'wifi' : 'wifi-off',
     },
     {
       id: 'bluetooth',
       name: 'Bluetooth',
-      desc: btOn ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9',
-      active: btOn,
+      desc: btOn === null ? '\u00c9tat inconnu' : btOn ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9',
+      active: btOn === true,
       onClick: handleBluetooth,
       icon: 'sliders',
-    },
-    {
-      id: 'nightlight',
-      name: '\u00c9clairage nocturne',
-      desc: nightLight ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9',
-      active: nightLight,
-      onClick: toggleNightLight,
-      icon: 'moon',
-    },
-    {
-      id: 'batterysaver',
-      name: '\u00c9co batterie',
-      desc: batterySaver ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9',
-      active: batterySaver,
-      onClick: toggleBatterySaver,
-      icon: 'battery-charging',
     },
   ]
 
@@ -212,23 +169,6 @@ export const QuickSettings: React.FC = () => {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FluentIcon name="sun" size={17} />
-          <label style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 62 }}>Luminosit\u00e9</span>
-            <input
-              aria-label="Luminosit\u00e9"
-              type="range"
-              min="0"
-              max="100"
-              value={brightness}
-              onChange={e => setBrightness(Number(e.target.value))}
-              style={{ flex: 1, accentColor: 'var(--win-accent)', cursor: 'pointer' }}
-            />
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 32 }}>{brightness}%</span>
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             type="button"
             onClick={toggleMute}
@@ -279,7 +219,7 @@ export const QuickSettings: React.FC = () => {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
           <FluentIcon name="battery" size={16} />
-          <span>\u00c9tat de la batterie simul\u00e9 \u00b7 94 %</span>
+          <span>Batterie : état non disponible</span>
         </div>
 
         <button

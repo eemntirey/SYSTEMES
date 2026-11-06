@@ -4,21 +4,18 @@ import { FluentIcon } from '../common/FluentIcon'
 import { WALLPAPERS } from '../../data/constants'
 import { NativeBridge } from '../../services/NativeBridge'
 
-type SectionId = 'home' | 'system' | 'bluetooth' | 'network' | 'personalization' | 'apps' | 'accounts' | 'time' | 'gaming' | 'accessibility' | 'privacy' | 'update' | 'about'
+type SectionId = 'home' | 'system' | 'bluetooth' | 'network' | 'personalization' | 'apps' | 'accounts' | 'time' | 'update' | 'about'
 type NavItem = { id: SectionId; label: string; description: string; icon: string }
 
 const NAV: NavItem[] = [
   { id: 'home', label: 'Accueil', description: 'Vue d’ensemble', icon: 'home' },
-  { id: 'system', label: 'Système', description: 'Affichage, son, notifications, alimentation', icon: 'monitor' },
+  { id: 'system', label: 'Système', description: 'Affichage et son', icon: 'monitor' },
   { id: 'bluetooth', label: 'Bluetooth et appareils', description: 'Bluetooth et périphériques', icon: 'bluetooth' },
-  { id: 'network', label: 'Réseau et Internet', description: 'Wi-Fi, mode avion et partage de connexion', icon: 'wifi' },
-  { id: 'personalization', label: 'Personnalisation', description: 'Arrière-plan, couleurs, écran de verrouillage', icon: 'palette' },
+  { id: 'network', label: 'Réseau et Internet', description: 'Wi-Fi et Bluetooth', icon: 'wifi' },
+  { id: 'personalization', label: 'Personnalisation', description: 'Arrière-plan et couleurs', icon: 'palette' },
   { id: 'apps', label: 'Applications', description: 'Applications intégrées et paramètres', icon: 'grid' },
-  { id: 'accounts', label: 'Comptes', description: 'Profil et synchronisation', icon: 'user' },
+  { id: 'accounts', label: 'Comptes', description: 'Profil local', icon: 'user' },
   { id: 'time', label: 'Heure et langue', description: 'Date, heure et région', icon: 'clock' },
-  { id: 'gaming', label: 'Jeux', description: 'Mode Jeu et captures', icon: 'gamepad-2' },
-  { id: 'accessibility', label: 'Accessibilité', description: 'Vision, audition et interaction', icon: 'accessibility' },
-  { id: 'privacy', label: 'Confidentialité et sécurité', description: 'Autorisations et données', icon: 'shield-check' },
   { id: 'update', label: 'Windows Update', description: 'Préférences de mise à jour', icon: 'refresh-cw' },
   { id: 'about', label: 'Informations système', description: 'Version et environnement', icon: 'info' },
 ]
@@ -80,50 +77,33 @@ export const SettingsApp: React.FC = () => {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
             {[
-              { id: 'system' as const, title: 'Écran', detail: `Luminosité : ${s.brightness}%`, icon: 'monitor' },
+              { id: 'system' as const, title: 'Affichage', detail: 'Échelle du texte et son', icon: 'monitor' },
               { id: 'network' as const, title: 'Réseau', detail: s.wifiEnabled ? 'Wi-Fi activé' : 'Wi-Fi désactivé', icon: 'wifi' },
               { id: 'bluetooth' as const, title: 'Bluetooth', detail: s.bluetoothEnabled ? 'Activé' : 'Désactivé', icon: 'bluetooth' },
               { id: 'personalization' as const, title: 'Personnalisation', detail: s.theme === 'dark' ? 'Mode sombre' : 'Mode clair', icon: 'palette' },
             ].map(card => <button key={card.id} type="button" onClick={() => go(card.id)} style={{ ...panel, margin: 0, padding: 16, textAlign: 'left', cursor: 'pointer', color: 'var(--text-primary)' }}><FluentIcon name={card.icon} size={22} color="var(--win-accent)" /><div style={{ marginTop: 12, fontSize: 14, fontWeight: 650 }}>{card.title}</div><div style={{ ...muted, marginTop: 4 }}>{card.detail}</div></button>)}
           </div>
-          <Group title="Paramètres recommandés">
-            <Row title="Mode nuit" description="Réduit la lumière bleue de l’écran simulé." control={toggle(s.nightLight, s.toggleNightLight, 'Mode nuit')} />
-            <Row title="Économiseur de batterie" description="Préférence d’économie d’énergie." control={toggle(s.batterySaver, s.toggleBatterySaver, 'Économiseur de batterie')} last />
-          </Group>
           <Group title="Toutes les catégories">{NAV.filter(item => item.id !== 'home').map((item, i, all) => <Row key={item.id} title={item.label} description={item.description} icon={item.icon} control={<button type="button" style={button} onClick={() => go(item.id)}>Ouvrir</button>} last={i === all.length - 1} />)}</Group>
         </>
       case 'system':
         return <>
           <Group title="Affichage">
-            <Row title="Luminosité" description="Luminosité de l’affichage simulé." control={<Range label="Luminosité" value={s.brightness} onChange={s.setBrightness} />} />
             <Row title="Échelle du texte" control={choose(String(s.fontSize), v => s.setFontSize(Number(v)), [['90','90 %'],['100','100 %'],['110','110 %'],['125','125 %'],['150','150 %']], 'Échelle du texte')} />
-            <Row title="Résolution" description="Résolution logique de l’environnement." control={choose(s.resolution, s.setResolution, [['1280x720','1280 × 720'],['1366x768','1366 × 768'],['1600x900','1600 × 900'],['1920x1080','1920 × 1080'],['2560x1440','2560 × 1440']], 'Résolution')} />
-            <Row title="Fréquence de rafraîchissement" control={choose(s.refreshRate, s.setRefreshRate, [['60Hz','60 Hz'],['75Hz','75 Hz'],['120Hz','120 Hz'],['144Hz','144 Hz']], 'Fréquence')} last />
           </Group>
           <Group title="Son">
             <Row title="Volume général" control={<Range label="Volume" value={s.volume} onChange={s.setVolume} />} />
             <Row title="Son" description={s.isMuted ? 'Son coupé' : 'Son activé'} control={<button style={button} onClick={s.toggleMute}>{s.isMuted ? 'Réactiver' : 'Couper le son'}</button>} last />
-          </Group>
-          <Group title="Notifications et concentration">
-            <Row title="Notifications" control={toggle(s.notificationsEnabled, s.toggleNotifications, 'Notifications')} />
-            <Row title="Ne pas déranger" control={toggle(s.focusAssist, () => s.setFocusAssist(!s.focusAssist), 'Ne pas déranger')} last />
-          </Group>
-          <Group title="Alimentation">
-            <Row title="Économiseur de batterie" control={toggle(s.batterySaver, s.toggleBatterySaver, 'Économiseur de batterie')} />
-            <Row title="Mode nuit" control={toggle(s.nightLight, s.toggleNightLight, 'Mode nuit')} last />
           </Group>
         </>
       case 'bluetooth':
         return <Group title="Appareils">
           <Row title="Bluetooth" description="Active ou désactive le Bluetooth dans SYSTEMES." control={toggle(s.bluetoothEnabled, s.toggleBluetooth, 'Bluetooth')} />
           <Row title="Périphériques associés" description="La gestion des appareils physiques nécessite une intégration système non disponible." control={<span style={muted}>Non connecté au matériel</span>} />
-          <Row title="Ajouter un appareil" description="Association d’un appareil physique indisponible dans cette simulation." control={<button style={button} disabled>Indisponible</button>} last />
+          <Row title="Ajouter un appareil" description="Association d’un appareil physique non disponible dans SYSTEMES." control={<button style={button} disabled>Indisponible</button>} last />
         </Group>
       case 'network':
         return <Group title="Réseau et Internet">
-          <Row title="Wi-Fi" description="État du réseau simulé." control={toggle(s.wifiEnabled, s.toggleWifi, 'Wi-Fi')} />
-          <Row title="Mode avion" description="Préférence réseau locale." control={toggle(s.airplaneMode, s.toggleAirplaneMode, 'Mode avion')} />
-          <Row title="Point d’accès mobile" description="Fonction de partage simulée, sans connexion réelle." control={toggle(s.mobileHotspot, s.toggleMobileHotspot, 'Point d’accès mobile')} last />
+          <Row title="Wi-Fi" description="État de l’adaptateur Wi-Fi Windows." control={toggle(s.wifiEnabled, s.toggleWifi, 'Wi-Fi')} />
         </Group>
       case 'personalization':
         return <>
@@ -134,10 +114,6 @@ export const SettingsApp: React.FC = () => {
           </Group>
           <Group title="Arrière-plan"><div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 12 }}>{WALLPAPERS.map(wp => <button key={wp.id} type="button" aria-label={`Fond d’écran ${wp.id}`} onClick={() => s.setWallpaper(wp)} style={{ height: 76, borderRadius: 6, border: s.wallpaper.id === wp.id ? '3px solid var(--win-accent)' : '1px solid var(--window-border)', backgroundImage: `url("${wp.url}")`, backgroundSize: 'cover', backgroundPosition: 'center', cursor: 'pointer' }} />)}</div></Group>
           <Group title="Couleur d’accentuation"><div style={{ padding: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>{ACCENTS.map(color => <button key={color} type="button" aria-label={`Couleur ${color}`} aria-pressed={s.accentColor.toLowerCase() === color} onClick={() => { s.setAccentColor(color); document.documentElement.style.setProperty('--win-accent', color) }} style={{ width: 30, height: 30, borderRadius: '50%', border: s.accentColor.toLowerCase() === color ? '3px solid var(--text-primary)' : '2px solid transparent', background: color, cursor: 'pointer' }} />)}</div></Group>
-          <Group title="Écran de verrouillage">
-            <Row title="Arrière-plan de l’écran de verrouillage" control={toggle(s.lockScreenBackground, s.toggleLockScreenBackground, 'Arrière-plan de verrouillage')} />
-            <Row title="État des applications" control={toggle(s.lockScreenAppStatus, s.toggleLockScreenAppStatus, 'État des applications')} last />
-          </Group>
         </>
       case 'apps':
         return <>
@@ -147,53 +123,13 @@ export const SettingsApp: React.FC = () => {
       case 'accounts':
         return <>
           <div style={{ ...panel, padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--win-accent)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 22 }}>U</div><div><div style={{ fontSize: 17, fontWeight: 650 }}>Utilisateur</div><div style={muted}>Compte local · Session actuelle</div></div></div>
-          <Group title="Synchronisation"><Row title="Synchroniser les paramètres" description="Préférence locale ; aucun compte cloud n’est connecté." control={toggle(s.syncSettings, s.toggleSyncSettings, 'Synchronisation')} last /></Group>
         </>
       case 'time':
         return <>
           <div style={{ ...panel, padding: 22, textAlign: 'center' }}><div style={{ fontSize: 42, fontWeight: 300, fontVariantNumeric: 'tabular-nums' }}>{new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div><div style={muted}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div></div>
-          <Group title="Date et heure">
-            <Row title="Définir l’heure automatiquement" control={toggle(s.setTimeAutomatically, s.toggleSetTimeAutomatically, 'Heure automatique')} />
-            <Row title="Définir le fuseau horaire automatiquement" control={toggle(s.setTimeZoneAutomatically, s.toggleSetTimeZoneAutomatically, 'Fuseau horaire automatique')} last />
-          </Group>
           <Group title="Langue et région">
             <Row title="Pays ou région" control={choose(region, setRegion, [['MG','Madagascar'],['FR','France'],['US','États-Unis'],['GB','Royaume-Uni'],['DE','Allemagne']], 'Pays ou région')} />
             <Row title="Langue d’affichage" control={choose(language, setLanguage, [['fr','Français'],['en','English']], 'Langue')} last />
-          </Group>
-        </>
-      case 'gaming':
-        return <Group title="Jeux">
-          <Row title="Xbox Game Bar" control={toggle(s.gameBarEnabled, s.toggleGameBar, 'Xbox Game Bar')} />
-          <Row title="Mode Jeu" description="Préférence d’optimisation de l’environnement simulé." control={toggle(s.gameModeEnabled, s.toggleGameMode, 'Mode Jeu')} />
-          <Row title="Enregistrement audio" control={toggle(s.audioRecordingEnabled, s.toggleAudioRecording, 'Enregistrement audio')} />
-          <Row title="Planification GPU matérielle" description="Préférence enregistrée, sans effet sur le GPU réel." control={toggle(s.hardwareGpuScheduling, s.toggleHardwareGpuScheduling, 'Planification GPU')} />
-          <Row title="Taux de rafraîchissement variable" control={toggle(s.vrrEnabled, s.toggleVRR, 'VRR')} last />
-        </Group>
-      case 'accessibility':
-        return <>
-          <Group title="Vision">
-            <Row title="Taille du texte" control={<Range label="Taille du texte" min={90} max={150} value={s.fontSize} onChange={s.setFontSize} />} />
-            <Row title="Loupe" control={toggle(s.magnifierEnabled, s.toggleMagnifier, 'Loupe')} />
-            <Row title="Filtres de couleur" control={toggle(s.colorFilterEnabled, s.toggleColorFilter, 'Filtres de couleur')} />
-            <Row title="Contraste élevé" control={toggle(s.highContrastEnabled, s.toggleHighContrast, 'Contraste élevé')} last />
-          </Group>
-          <Group title="Audition et interaction">
-            <Row title="Sous-titres" control={toggle(s.captionsEnabled, s.toggleCaptions, 'Sous-titres')} />
-            <Row title="Alertes audio" control={toggle(s.audioAlertsEnabled, s.toggleAudioAlerts, 'Alertes audio')} />
-            <Row title="Accès vocal" control={toggle(s.voiceAccessEnabled, s.toggleVoiceAccess, 'Accès vocal')} last />
-          </Group>
-        </>
-      case 'privacy':
-        return <>
-          <Group title="Autorisations des applications">
-            <Row title="Localisation" description="Préférence de permission dans la simulation." control={toggle(s.locationEnabled, () => s.setLocationEnabled(!s.locationEnabled), 'Localisation')} />
-            <Row title="Caméra" control={toggle(s.cameraEnabled, () => s.setCameraEnabled(!s.cameraEnabled), 'Caméra')} />
-            <Row title="Microphone" control={toggle(s.micEnabled, () => s.setMicEnabled(!s.micEnabled), 'Microphone')} last />
-          </Group>
-          <Group title="Données et diagnostics">
-            <Row title="Données de diagnostic" description="Aucune donnée n’est transmise depuis cet écran." control={toggle(s.diagnosticData, () => s.setDiagnosticData(!s.diagnosticData), 'Données de diagnostic')} />
-            <Row title="Expériences personnalisées" control={toggle(s.personalizedExperiences, s.togglePersonalizedExperiences, 'Expériences personnalisées')} />
-            <Row title="Historique des activités" control={toggle(s.activityHistory, s.toggleActivityHistory, 'Historique des activités')} last />
           </Group>
         </>
       case 'update':
