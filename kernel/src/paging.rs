@@ -26,6 +26,7 @@ pub enum PagingError {
     OverlappingRegions,
     WriteExecuteViolation,
     PermissionMismatch,
+    WriteProtectUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +49,21 @@ impl PagePermissions {
         }
     }
     pub const fn is_write_execute(self) -> bool { matches!(self, Self::ReadWriteExecute) }
+}
+
+/// Enable supervisor-mode write protection so CR0.WP enforces read-only PTEs.
+pub fn enable_write_protect() -> Result<(), PagingError> {
+    let current: u64;
+    // SAFETY: Reading CR0 is permitted in ring 0.
+    unsafe { core::arch::asm!("mov {}, cr0", out(reg) current, options(nomem, nostack, preserves_flags)); }
+    let updated = current | (1 << 16);
+    // SAFETY: Setting CR0.WP makes supervisor writes respect read-only page entries.
+    unsafe { core::arch::asm!("mov cr0, {}", in(reg) updated, options(nostack, preserves_flags)); }
+    let verified: u64;
+    // SAFETY: Read back CR0 to fail closed if WP did not latch.
+    unsafe { core::arch::asm!("mov {}, cr0", out(reg) verified, options(nomem, nostack, preserves_flags)); }
+    if verified & (1 << 16) == 0 { return Err(PagingError::WriteProtectUnavailable); }
+    Ok(())
 }
 
 pub fn enable_nx() -> Result<(), PagingError> {
@@ -154,6 +170,8 @@ unsafe fn ensure_4k_table(
         }
         // Parent must permit both permissions; leaf entries enforce W^X.
         unsafe { pde_ptr.write(table_frame | PRESENT | WRITABLE); }
+        // SAFETY: Invalidate any cached 2 MiB translation before using the new 4 KiB table.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
         Ok(table)
     } else {
         if pde & PRESENT == 0 { return Err(PagingError::InvalidRegion); }
@@ -173,6 +191,8 @@ pub unsafe fn protect_regions(
             let index = ((address >> 12) & 0x1ff) as usize;
             // SAFETY: The page table has 512 entries and index is in 0..512.
             unsafe { table.add(index).write((address & ADDRESS_MASK) | region.permissions.flags()); }
+            // SAFETY: Flush a stale translation so the new permission takes effect immediately.
+            unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
             address += PAGE_SIZE;
         }
     }

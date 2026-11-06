@@ -144,6 +144,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR3 verification failed\\r\\n") };
         halt();
     }
+    if systemes_kernel::paging::enable_write_protect().is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR0.WP activation failed\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: CR0.WP supervisor write protection enabled\\r\\n"); }
     if unsafe { systemes_kernel::paging::verify_regions(page_table_root, &kernel_regions) }.is_err() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X page-table verification failed\\r\\n"); }
         halt();
@@ -179,6 +184,39 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-nx-execute-test")]
+    {
+        let test_frame = match frame_allocator.allocate_frame() {
+            Some(address) => address,
+            None => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test frame unavailable\\r\\n"); } halt(); }
+        };
+        let test_end = match test_frame.checked_add(systemes_kernel::memory::PAGE_SIZE) {
+            Some(end) if test_frame < systemes_kernel::paging::IDENTITY_MAP_BYTES => end,
+            _ => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid NX test frame\\r\\n"); } halt(); }
+        };
+        let test_region = [MemoryRegion { start: test_frame, end: test_end, permissions: PagePermissions::ReadWriteNoExecute }];
+        if unsafe { systemes_kernel::paging::protect_regions(&mut frame_allocator, page_table_root, &test_region) }.is_err()
+            || unsafe { systemes_kernel::paging::verify_regions(page_table_root, &test_region) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test mapping verification failed\\r\\n"); }
+            halt();
+        }
+        // SAFETY: The allocated identity-mapped frame is deliberately RW+NX for this fault test.
+        unsafe { core::ptr::write_volatile(test_frame as *mut u8, 0xC3); }
+        unsafe { debug_write(b"SYSTEMES_TEST: attempting instruction fetch from NX page\\r\\n"); }
+        // SAFETY: This call must fault with #PF(P=1, I/D=1), error code 0x11.
+        let test_function: extern "C" fn() = unsafe { core::mem::transmute(test_frame as usize) };
+        test_function();
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX execution was not blocked\\r\\n"); }
+        halt();
+    }
+    #[cfg(feature = "qemu-rx-write-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: attempting write to RX kernel text\\r\\n"); }
+        // SAFETY: This deliberate volatile write must fault with #PF(P=1, W/R=1), error code 0x3.
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of!(__text_start) as *mut u8, 0x90); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: RX text write was not blocked\\r\\n"); }
+        halt();
+    }
     #[cfg(feature = "qemu-exception-test")]
     {
         // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
