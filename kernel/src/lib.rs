@@ -6,6 +6,8 @@
 //! dependencies. The UEFI loader will populate BootInfo before transferring control.
 
 pub mod acpi;
+pub mod apic;
+pub mod clock;
 pub mod heap;
 pub mod interrupts;
 pub mod memory;
