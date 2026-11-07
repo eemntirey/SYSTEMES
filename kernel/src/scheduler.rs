@@ -66,6 +66,8 @@ static mut TASKS: [Task; MAX_TASKS] = [const { Task::new() }; MAX_TASKS];
 static TASK_COUNT: AtomicUsize = AtomicUsize::new(1);
 static CURRENT_TASK: AtomicUsize = AtomicUsize::new(0);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static PREEMPTIVE_ENABLED: AtomicBool = AtomicBool::new(false);
+static PREEMPTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn task_ptr(index: usize) -> *mut Task {
     // SAFETY: Callers validate index against TASK_COUNT/MAX_TASKS. The task table
@@ -171,8 +173,7 @@ fn select_next(current: usize, states: &[TaskState]) -> Option<usize> {
     None
 }
 
-/// Called by the software-yield interrupt gate. Returns the stack to restore.
-pub fn on_yield(saved_rsp: usize) -> usize {
+fn schedule(saved_rsp: usize, count_preemption: bool) -> usize {
     if !INITIALIZED.load(Ordering::Acquire) {
         return saved_rsp;
     }
@@ -182,7 +183,7 @@ pub fn on_yield(saved_rsp: usize) -> usize {
         return saved_rsp;
     }
 
-    // SAFETY: The yield interrupt gate clears IF; this scheduler is single-core.
+    // SAFETY: Both software-yield and timer gates clear IF; scheduler state is single-core.
     unsafe {
         let current_task = task_ptr(current);
         if (*current_task).state.load(Ordering::Acquire) != TaskState::Exited as u8 {
@@ -198,12 +199,77 @@ pub fn on_yield(saved_rsp: usize) -> usize {
             let next_task = task_ptr(next);
             let next_rsp = (*next_task).saved_rsp.load(Ordering::Acquire);
             if next_rsp != 0 {
+                if count_preemption && next != current {
+                    PREEMPTION_COUNT.fetch_add(1, Ordering::Relaxed);
+                }
                 CURRENT_TASK.store(next, Ordering::Release);
                 return next_rsp;
             }
         }
     }
     saved_rsp
+}
+
+/// Called by the software-yield interrupt gate. Returns the stack to restore.
+pub fn on_yield(saved_rsp: usize) -> usize {
+    schedule(saved_rsp, false)
+}
+
+/// Called by the Local APIC timer interrupt when automatic preemption is enabled.
+pub fn on_timer(saved_rsp: usize) -> usize {
+    if !PREEMPTIVE_ENABLED.load(Ordering::Acquire) {
+        return saved_rsp;
+    }
+    schedule(saved_rsp, true)
+}
+
+/// Enable timer-driven preemption after all task contexts are initialized.
+pub fn enable_preemption() {
+    PREEMPTIVE_ENABLED.store(true, Ordering::Release);
+}
+
+/// Number of timer interrupts that switched to a different runnable task.
+pub fn preemption_count() -> usize {
+    PREEMPTION_COUNT.load(Ordering::Acquire)
+}
+
+fn irq_save_disable() -> usize {
+    let flags: usize;
+    // SAFETY: RFLAGS is readable and CLI is valid at ring 0.
+    unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) flags, options(nomem)); }
+    flags
+}
+
+fn irq_restore(flags: usize) {
+    if flags & (1 << 9) != 0 {
+        // SAFETY: Restore the prior IF state after the scheduler state transition.
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+}
+
+/// Reset the scheduler after every non-boot task has exited.
+pub fn reset_after_all_tasks_exit() -> bool {
+    let flags = irq_save_disable();
+    if !INITIALIZED.load(Ordering::Acquire) || CURRENT_TASK.load(Ordering::Acquire) != 0 {
+        irq_restore(flags);
+        return false;
+    }
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    for index in 1..count {
+        // SAFETY: Index is bounded by TASK_COUNT and interrupts are disabled.
+        let state = unsafe { (*task_ptr(index)).state.load(Ordering::Acquire) };
+        if state != TaskState::Exited as u8 {
+            irq_restore(flags);
+            return false;
+        }
+    }
+    PREEMPTIVE_ENABLED.store(false, Ordering::Release);
+    PREEMPTION_COUNT.store(0, Ordering::Release);
+    TASK_COUNT.store(1, Ordering::Release);
+    CURRENT_TASK.store(0, Ordering::Release);
+    INITIALIZED.store(false, Ordering::Release);
+    irq_restore(flags);
+    true
 }
 
 /// Yield voluntarily to the next runnable kernel task.
@@ -283,9 +349,10 @@ mod qemu_test {
             if all_exited { break; }
             yield_now();
         }
-        current_task() == TaskId(0)
+        let valid = current_task() == TaskId(0)
             && COUNTS.iter().all(|count| count.load(Ordering::Acquire) == 5)
-            && (1..=3).all(|index| switch_count(TaskId(index)).unwrap_or(0) > 0)
+            && (1..=3).all(|index| switch_count(TaskId(index)).unwrap_or(0) > 0);
+        reset_after_all_tasks_exit() && valid
     }
 }
 
@@ -314,4 +381,58 @@ mod tests {
         assert_eq!(select_next(4, &[TaskState::Runnable]), None);
         assert_eq!(select_next(0, &[TaskState::Blocked, TaskState::Exited]), None);
     }
+}
+
+
+#[cfg(feature = "qemu-preemptive-scheduler-test")]
+mod preemptive_qemu_test {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    const TASK_RUNTIME_TICKS: u64 = 5;
+    static COMPLETED: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
+
+    fn consume_five_timer_ticks() {
+        let start = crate::clock::ticks();
+        while crate::clock::ticks().wrapping_sub(start) < TASK_RUNTIME_TICKS {
+            core::hint::spin_loop();
+        }
+    }
+
+    // These entries never call yield_now; only the Local APIC timer can switch them.
+    extern "C" fn worker_a() {
+        consume_five_timer_ticks();
+        COMPLETED[0].fetch_add(1, Ordering::Release);
+    }
+    extern "C" fn worker_b() {
+        consume_five_timer_ticks();
+        COMPLETED[1].fetch_add(1, Ordering::Release);
+    }
+    extern "C" fn worker_c() {
+        consume_five_timer_ticks();
+        COMPLETED[2].fetch_add(1, Ordering::Release);
+    }
+
+    pub fn run() -> bool {
+        for completed in &COMPLETED { completed.store(0, Ordering::Relaxed); }
+        if initialize(&[worker_a, worker_b, worker_c]).is_err() || !validate_initial_contexts() {
+            return false;
+        }
+        enable_preemption();
+        loop {
+            let all_exited = (1..=3).all(|index| task_state(TaskId(index)) == Some(TaskState::Exited));
+            if all_exited { break; }
+            core::hint::spin_loop();
+        }
+        let valid = current_task() == TaskId(0)
+            && COMPLETED.iter().all(|count| count.load(Ordering::Acquire) == 1)
+            && (1..=3).all(|index| switch_count(TaskId(index)).unwrap_or(0) > 0)
+            && preemption_count() >= 3;
+        reset_after_all_tasks_exit() && valid
+    }
+}
+
+#[cfg(feature = "qemu-preemptive-scheduler-test")]
+pub fn run_preemptive_qemu_test() -> bool {
+    preemptive_qemu_test::run()
 }

@@ -287,14 +287,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             // SAFETY: The calibrated Local APIC timer is enabled and will wake HLT.
             unsafe { asm!("hlt", options(nomem, nostack)); }
         }
-        // SAFETY: Stop further timer delivery before inspecting the final counters.
-        unsafe { asm!("cli", options(nomem, nostack)); }
         if systemes_kernel::clock::ticks() < 3 || systemes_kernel::clock::now_millis() < 30 {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: monotonic clock did not advance with APIC ticks\\r\\n"); }
             halt();
         }
-        unsafe { systemes_kernel::apic::stop_local_timer(); }
         unsafe { debug_write(b"SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced\\r\\n"); }
+        if !cfg!(feature = "qemu-preemptive-scheduler-test") {
+            // SAFETY: No preemptive test follows, so the timer can be stopped after this proof.
+            unsafe { asm!("cli", options(nomem, nostack)); }
+            unsafe { systemes_kernel::apic::stop_local_timer(); }
+        }
     }
     #[cfg(feature = "qemu-cooperative-scheduler-test")]
     {
@@ -305,6 +307,19 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_TEST: cooperative scheduler switched three kernel tasks\r\n"); }
         unsafe { debug_write(b"SYSTEMES_TEST: all cooperative tasks exited and returned to boot task\r\n"); }
     }
+    #[cfg(feature = "qemu-preemptive-scheduler-test")]
+    {
+        if !systemes_kernel::scheduler::run_preemptive_qemu_test() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: timer-driven preemption test failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preempted non-yielding tasks\r\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: three CPU-bound tasks completed under timer preemption\r\n"); }
+        // SAFETY: All test tasks exited; stop the periodic source before the exception test.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        unsafe { systemes_kernel::apic::stop_local_timer(); }
+    }
+
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
         loop {

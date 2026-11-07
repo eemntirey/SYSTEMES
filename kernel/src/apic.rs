@@ -215,7 +215,7 @@ pub extern "C" fn systemes_apic_timer_dispatch(vector: u64, saved_rsp: usize) ->
                 // SAFETY: Timer IRQ executes only after the UC-mapped LAPIC is enabled.
                 unsafe { lapic_write(base, LAPIC_EOI, 0); }
             }
-            saved_rsp
+            crate::scheduler::on_timer(saved_rsp)
         }
         0x41 => crate::scheduler::on_yield(saved_rsp),
         _ => saved_rsp,

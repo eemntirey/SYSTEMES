@@ -10,7 +10,7 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Mémoire virtuelle : tables de pages x86_64 à quatre niveaux, activation NX, CR0.WP et protections RX / R-NX / RW-NX
 - ACPI : découverte RSDP UEFI et analyse MADT (Local APIC, IOAPIC et overrides ISA)
 - Temps : timer Local APIC calibré sur PIT channel 2 et horloge monotone 100 Hz
-- Ordonnancement : tâches noyau coopératives, changement de contexte via interruption logicielle 0x41
+- Ordonnancement : tâches noyau coopératives via 0x41 et préemption par timer Local APIC 0x40
 - CPU : GDT, IDT et gestionnaires d'exceptions CPU 0 à 31
 - Diagnostic : port debug QEMU `0xE9`
 
@@ -20,7 +20,7 @@ Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frame
 
 La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF ainsi que les fautes matérielles attendues pour les violations NX et l'écriture dans une page RX.
 
-Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages et le verrouillage SMP restent hors périmètre. La MADT ne consomme ici que les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; les enregistrements x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 ; l'horloge monotone avance sur chaque IRQ timer avec une résolution initiale de 10 ms. L'ordonnanceur actuel est coopératif : les tâches partagent l'espace noyau et cèdent explicitement le processeur ; la préemption automatique n'est pas encore livrée.
+Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages et le verrouillage SMP restent hors périmètre. La MADT ne consomme ici que les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; les enregistrements x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 ; l'horloge monotone avance sur chaque IRQ timer avec une résolution initiale de 10 ms. Les tâches partagent l'espace noyau. L'ordonnanceur prend en charge le yield coopératif et la préemption par timer ; le changement de contexte reste mono-cœur et la sauvegarde FPU/SIMD par tâche est traitée séparément.
 
 ## Limites actuelles
 
