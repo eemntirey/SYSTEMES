@@ -113,6 +113,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\\r\\n"); }
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
+    if !systemes_kernel::interrupts::verify_task_register() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\r\n"); }
+        halt();
+    }
+    if !systemes_kernel::interrupts::verify_ist_configuration() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TSS stacks or IDT IST routing invalid\r\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\r\n") };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
     if !systemes_kernel::interrupts::verify_local_apic_gates() {
@@ -281,6 +290,20 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-ist-nmi-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 2 through IST2\r\n"); }
+        unsafe { asm!("int 2"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: IST2 test interrupt returned\r\n"); }
+        halt();
+    }
+    #[cfg(feature = "qemu-ist-machine-check-test")]
+    {
+        unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 18 through IST3\r\n"); }
+        unsafe { asm!("int 18"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: IST3 test interrupt returned\r\n"); }
+        halt();
+    }
     #[cfg(feature = "qemu-apic-clock-test")]
     {
         while systemes_kernel::clock::ticks() < 3 {
@@ -316,6 +339,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preempted non-yielding tasks\r\n"); }
         unsafe { debug_write(b"SYSTEMES_TEST: three CPU-bound tasks completed under timer preemption\r\n"); }
 
+    }
+
+    #[cfg(feature = "qemu-task-sleep-test")]
+    {
+        if !systemes_kernel::scheduler::run_task_sleep_qemu_test() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: task sleep/wakeup test failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: blocked task slept for four monotonic ticks\r\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: timer woke the blocked task at its deadline\r\n"); }
     }
 
     #[cfg(feature = "qemu-fpu-context-test")]

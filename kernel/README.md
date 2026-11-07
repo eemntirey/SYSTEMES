@@ -12,20 +12,21 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Temps : timer Local APIC calibré sur PIT channel 2 et horloge monotone 100 Hz
 - Ordonnancement : tâches noyau coopératives via 0x41 et préemption par timer Local APIC 0x40
 - Contexte FPU/SIMD : sauvegarde/restauration x87/MMX/SSE par tâche avec FXSAVE64/FXRSTOR64 (512 octets alignés sur 16 octets)
-- CPU : GDT, IDT et gestionnaires d'exceptions CPU 0 à 31
+- Cycle de vie des tâches : états Runnable/Blocked/Exited, sommeil sur horloge monotone et réveil par échéance ou événement
+- CPU : GDT et IDT propres au noyau, TSS x86_64 chargé dans TR=0x18, RSP0 dédié et piles IST1/IST2/IST3 pour #DF/NMI/#MC
 - Diagnostic : port debug QEMU `0xE9`
 
 ## Capacités présentes dans le code
 
-Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT et son IDT, construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le heap noyau après activation du mapping RW/NX, analyse la MADT ACPI fournie par le RSDP UEFI et initialise le framebuffer GOP lorsqu'il est disponible.
+Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT, son TSS et son IDT, charge TR=0x18, vérifie RSP0 et le routage IST, puis construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le heap noyau après activation du mapping RW/NX, analyse la MADT ACPI fournie par le RSDP UEFI et initialise le framebuffer GOP lorsqu'il est disponible.
 
-La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF ainsi que les fautes matérielles attendues pour les violations NX et l'écriture dans une page RX.
+La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF, les violations NX/RX et les commutations de pile IST2/IST3. Les scénarios `int 2` et `int 18` sont des interruptions logicielles qui valident les portes IDT et le mécanisme IST ; ils ne simulent pas un NMI électrique ni une véritable Machine Check.
 
-Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages et le verrouillage SMP restent hors périmètre. La MADT ne consomme ici que les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; les enregistrements x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 ; l'horloge monotone avance sur chaque IRQ timer avec une résolution initiale de 10 ms. Les tâches partagent l'espace noyau. L'ordonnanceur prend en charge le yield coopératif et la préemption par timer ; le changement de contexte reste mono-cœur et la sauvegarde FPU/SIMD par tâche est traitée séparément.
+Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages reste hors périmètre. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. L'ordonnanceur prend en charge yield coopératif, préemption timer, sommeil sur échéance et blocage/réveil événementiel ; les tâches partagent l'espace noyau et le changement de contexte reste mono-cœur. Le contexte x87/MMX/SSE est isolé par tâche via FXSAVE64/FXRSTOR64. Les tests IST2/IST3 ne remplacent pas des tests matériels réels de NMI/Machine Check ; aucun Double Fault matériel réel n'est déclenché.
 
 ## Limites actuelles
 
-Ce noyau n'est pas encore un système d'exploitation généraliste. Le code présent ne fournit pas encore un ordonnanceur préemptif intégré à cette branche, le démarrage SMP, Ring 3, les appels système, le chargeur ELF, les processus utilisateur, le VFS, les pilotes de stockage/réseau, ni un environnement graphique natif complet. Ces capacités doivent être implémentées et validées séparément avant d'être annoncées comme disponibles.
+Ce noyau n'est pas encore un système d'exploitation généraliste. Les fondations mono-cœur de mémoire, interruptions, horloge, ordonnanceur préemptif, contexte FPU/SIMD et cycle de vie des tâches sont présentes et testées sous QEMU. Il manque encore le démarrage SMP et la cohérence inter-cœurs, Ring 3, les appels système, le chargeur ELF, les processus et l'IPC utilisateur, le VFS, les pilotes de stockage et de réseau, un environnement graphique natif, ainsi que l'installateur et le mécanisme de mise à jour. Ces capacités ne doivent pas être annoncées comme disponibles avant leur implémentation et validation.
 
 Un démarrage réussi sous QEMU/OVMF ne prouve pas la compatibilité avec un PC physique. La validation matérielle doit être consignée séparément.
 

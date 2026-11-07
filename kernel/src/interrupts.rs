@@ -7,14 +7,47 @@ use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
+const TSS_SELECTOR: u16 = 0x18;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
+const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
-static GDT: [u64; 3] = [
+static mut GDT: [u64; 5] = [
     0,
-    0x00AF_9A00_0000_FFFF, // Ring 0, present, executable, 64-bit code.
-    0x00CF_9200_0000_FFFF, // Ring 0, present, writable data.
+    0x00AF_9A00_0000_FFFF,
+    0x00CF_9200_0000_FFFF,
+    0,
+    0,
 ];
+
+#[repr(C, packed)]
+struct TaskStateSegment {
+    reserved0: u32, rsp0: u64, rsp1: u64, rsp2: u64, reserved1: u64,
+    ist1: u64, ist2: u64, ist3: u64, ist4: u64, ist5: u64, ist6: u64, ist7: u64,
+    reserved2: u64, reserved3: u16, iomap_base: u16,
+}
+
+#[repr(align(4096))]
+struct InterruptStack([u8; INTERRUPT_STACK_SIZE]);
+
+static mut TSS: TaskStateSegment = TaskStateSegment {
+    reserved0: 0, rsp0: 0, rsp1: 0, rsp2: 0, reserved1: 0,
+    ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0,
+    reserved2: 0, reserved3: 0, iomap_base: core::mem::size_of::<TaskStateSegment>() as u16,
+};
+static mut PRIVILEGE_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+static mut DOUBLE_FAULT_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+static mut NMI_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+static mut MACHINE_CHECK_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+
+const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
+    let low = (limit as u64 & 0xFFFF)
+        | ((base & 0x00FF_FFFF) << 16)
+        | (0x89u64 << 40)
+        | ((((limit as u64) >> 16) & 0x0F) << 48)
+        | (((base >> 24) & 0xFF) << 56);
+    [low, base >> 32]
+}
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -45,11 +78,11 @@ impl IdtEntry {
         reserved: 0,
     };
 
-    const fn interrupt_gate(handler: u64) -> Self {
+    const fn interrupt_gate(handler: u64, ist: u8) -> Self {
         Self {
             offset_low: handler as u16,
             selector: KERNEL_CODE_SELECTOR,
-            ist: 0,
+            ist: ist & 0x07,
             attributes: EXCEPTION_GATE_ATTRIBUTES,
             offset_middle: (handler >> 16) as u16,
             offset_high: (handler >> 32) as u32,
@@ -62,6 +95,7 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
+    fn systemes_load_tr();
     fn systemes_isr0();
     fn systemes_isr1();
     fn systemes_isr2();
@@ -113,6 +147,13 @@ systemes_load_gdt:
     mov ds, ax
     mov es, ax
     mov ss, ax
+    ret
+
+.global systemes_load_tr
+.type systemes_load_tr, @function
+systemes_load_tr:
+    mov ax, 0x18
+    ltr ax
     ret
 
 .global systemes_isr0
@@ -426,6 +467,36 @@ systemes_exception_common:
     jmp .Lsystemes_exception_halt
 "#);
 
+/// Return true only when the processor loaded the kernel's 64-bit TSS selector.
+pub fn verify_task_register() -> bool {
+    let selector: u16;
+    // SAFETY: STR is available at CPL0 and reads the current task-register selector.
+    unsafe { asm!("str {0:x}", out(reg) selector, options(nomem, nostack, preserves_flags)); }
+    selector == TSS_SELECTOR
+}
+
+/// Validate the live TSS stack pointers and the IST selectors installed in the IDT.
+pub fn verify_ist_configuration() -> bool {
+    let tss = addr_of!(TSS);
+    let idt = addr_of!(IDT) as *const IdtEntry;
+    let rsp0 = unsafe { core::ptr::addr_of!((*tss).rsp0).read_unaligned() };
+    let ist1 = unsafe { core::ptr::addr_of!((*tss).ist1).read_unaligned() };
+    let ist2 = unsafe { core::ptr::addr_of!((*tss).ist2).read_unaligned() };
+    let ist3 = unsafe { core::ptr::addr_of!((*tss).ist3).read_unaligned() };
+    let iomap_base = unsafe { core::ptr::addr_of!((*tss).iomap_base).read_unaligned() };
+    let df_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(8)).ist).read_unaligned() };
+    let nmi_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(2)).ist).read_unaligned() };
+    let mc_gate_ist = unsafe { core::ptr::addr_of!((*idt.add(18)).ist).read_unaligned() };
+
+    let aligned_stack = |top: u64| top != 0 && top & 0x0F == 0;
+    aligned_stack(rsp0)
+        && aligned_stack(ist1)
+        && aligned_stack(ist2)
+        && aligned_stack(ist3)
+        && iomap_base == core::mem::size_of::<TaskStateSegment>() as u16
+        && (df_gate_ist, nmi_gate_ist, mc_gate_ist) == (1, 2, 3)
+}
+
 /// Verify the Local APIC timer, cooperative-yield and spurious-vector IDT gates.
 pub fn verify_local_apic_gates() -> bool {
     let idt = addr_of!(IDT) as *const IdtEntry;
@@ -468,12 +539,35 @@ pub unsafe fn initialize() {
     // SAFETY: This runs during single-core boot before the kernel enables IRQs.
     unsafe { asm!("cli", options(nomem, nostack)) };
 
+    // Initialize independent emergency stacks before exposing IST-backed gates.
+    let rsp0_top = unsafe { addr_of_mut!(PRIVILEGE_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let df_top = unsafe { addr_of_mut!(DOUBLE_FAULT_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let nmi_top = unsafe { addr_of_mut!(NMI_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let mc_top = unsafe { addr_of_mut!(MACHINE_CHECK_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let tss = addr_of_mut!(TSS);
+    unsafe {
+        core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(rsp0_top);
+        core::ptr::addr_of_mut!((*tss).ist1).write_unaligned(df_top);
+        core::ptr::addr_of_mut!((*tss).ist2).write_unaligned(nmi_top);
+        core::ptr::addr_of_mut!((*tss).ist3).write_unaligned(mc_top);
+        core::ptr::addr_of_mut!((*tss).iomap_base).write_unaligned(core::mem::size_of::<TaskStateSegment>() as u16);
+    }
+
+    let tss_base = tss as u64;
+    let [tss_low, tss_high] = encode_tss_descriptor(tss_base, (core::mem::size_of::<TaskStateSegment>() - 1) as u32);
+    let gdt = addr_of_mut!(GDT).cast::<u64>();
+    unsafe {
+        gdt.add(3).write(tss_low);
+        gdt.add(4).write(tss_high);
+    }
     let gdt_pointer = DescriptorTablePointer {
-        limit: (core::mem::size_of_val(&GDT) - 1) as u16,
-        base: addr_of!(GDT) as u64,
+        limit: (core::mem::size_of::<[u64; 5]>() - 1) as u16,
+        base: gdt as u64,
     };
-    // SAFETY: The GDT and pointer remain valid for the duration of this call.
+    // SAFETY: GDT/TSS are static, identity-mapped, and remain alive for the kernel lifetime.
     unsafe { systemes_load_gdt(&gdt_pointer) };
+    // SAFETY: The TSS descriptor at selector 0x18 is present and references the static TSS.
+    unsafe { systemes_load_tr() };
 
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
         systemes_isr0 as *const () as usize,
@@ -511,15 +605,16 @@ pub unsafe fn initialize() {
     ];
     let idt = addr_of_mut!(IDT) as *mut IdtEntry;
     for (vector, handler) in handlers.iter().enumerate() {
+        let ist = match vector { 2 => 2, 8 => 1, 18 => 3, _ => 0 };
         // SAFETY: Each index is below EXCEPTION_VECTOR_COUNT and IDT has 256 entries.
-        unsafe { idt.add(vector).write(IdtEntry::interrupt_gate(*handler as u64)) };
+        unsafe { idt.add(vector).write(IdtEntry::interrupt_gate(*handler as u64, ist)) };
     }
 
     // Local APIC timer and spurious vectors are installed above the exception range.
     unsafe {
-        idt.add(0x40).write(IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64));
-        idt.add(0x41).write(IdtEntry::interrupt_gate(systemes_scheduler_yield as *const () as usize as u64));
-        idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64));
+        idt.add(0x40).write(IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64, 0));
+        idt.add(0x41).write(IdtEntry::interrupt_gate(systemes_scheduler_yield as *const () as usize as u64, 0));
+        idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0));
     }
 
     let idt_pointer = DescriptorTablePointer {
@@ -538,6 +633,34 @@ pub unsafe fn initialize() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> ! {
+    #[cfg(feature = "qemu-ist-nmi-test")]
+    if vector == 2 {
+        let rsp: u64;
+        unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
+        let start = unsafe { addr_of!(NMI_STACK.0) as *const u8 as u64 };
+        let end = start + INTERRUPT_STACK_SIZE as u64;
+        unsafe {
+            if rsp >= start && rsp < end {
+                debug_write(b"SYSTEMES_TEST: IST2 NMI stack switch verified\r\n");
+            } else {
+                debug_write(b"SYSTEMES_KERNEL_FAIL: IST2 stack switch missing\r\n");
+            }
+        }
+    }
+    #[cfg(feature = "qemu-ist-machine-check-test")]
+    if vector == 18 {
+        let rsp: u64;
+        unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
+        let start = unsafe { addr_of!(MACHINE_CHECK_STACK.0) as *const u8 as u64 };
+        let end = start + INTERRUPT_STACK_SIZE as u64;
+        unsafe {
+            if rsp >= start && rsp < end {
+                debug_write(b"SYSTEMES_TEST: IST3 machine-check stack switch verified\r\n");
+            } else {
+                debug_write(b"SYSTEMES_KERNEL_FAIL: IST3 stack switch missing\r\n");
+            }
+        }
+    }
     unsafe {
         debug_write(b"SYSTEMES_EXCEPTION: vector=0x");
         debug_hex(vector);
@@ -575,7 +698,7 @@ mod tests {
 
     #[test]
     fn encodes_a_64_bit_ring_zero_interrupt_gate() {
-        let entry = IdtEntry::interrupt_gate(0x1234_5678_9ABC_DEF0);
+        let entry = IdtEntry::interrupt_gate(0x1234_5678_9ABC_DEF0, 3);
         let low = unsafe { addr_of!(entry.offset_low).read_unaligned() };
         let middle = unsafe { addr_of!(entry.offset_middle).read_unaligned() };
         let high = unsafe { addr_of!(entry.offset_high).read_unaligned() };
@@ -585,9 +708,36 @@ mod tests {
         let selector = unsafe { addr_of!(entry.selector).read_unaligned() };
         let reserved = unsafe { addr_of!(entry.reserved).read_unaligned() };
         assert_eq!(selector, KERNEL_CODE_SELECTOR);
-        assert_eq!(entry.ist, 0);
+        assert_eq!(entry.ist, 3);
         assert_eq!(entry.attributes, EXCEPTION_GATE_ATTRIBUTES);
         assert_eq!(reserved, 0);
+    }
+
+    #[test]
+    fn encodes_a_present_available_64_bit_tss_descriptor() {
+        let [low, high] = encode_tss_descriptor(0x1234_5678_9ABC_DEF0, 103);
+        assert_eq!(high, 0x1234_5678);
+        assert_eq!(low & 0xFFFF, 103);
+        assert_eq!((low >> 40) & 0xFF, 0x89);
+        assert_eq!((low >> 56) & 0xFF, 0x9A);
+    }
+
+    #[test]
+    fn tss_layout_matches_the_64_bit_architectural_format() {
+        assert_eq!(core::mem::size_of::<TaskStateSegment>(), 104);
+        assert_eq!(core::mem::offset_of!(TaskStateSegment, rsp0), 4);
+        assert_eq!(core::mem::offset_of!(TaskStateSegment, ist1), 36);
+        assert_eq!(core::mem::offset_of!(TaskStateSegment, ist2), 44);
+        assert_eq!(core::mem::offset_of!(TaskStateSegment, ist3), 52);
+        assert_eq!(core::mem::offset_of!(TaskStateSegment, iomap_base), 102);
+    }
+
+    #[test]
+    fn critical_exception_vectors_use_distinct_ist_slots() {
+        let df = IdtEntry::interrupt_gate(0x1000, 1);
+        let nmi = IdtEntry::interrupt_gate(0x2000, 2);
+        let mc = IdtEntry::interrupt_gate(0x3000, 3);
+        assert_eq!((df.ist, nmi.ist, mc.ist), (1, 2, 3));
     }
 
     #[test]

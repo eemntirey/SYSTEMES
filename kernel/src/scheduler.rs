@@ -3,7 +3,7 @@
 //! Tasks share the kernel address space and are switched by cooperative yield or
 //! Local APIC timer preemption. Legacy x87/MMX/SSE state is eagerly isolated per task.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 pub const MAX_TASKS: usize = 8;
 const STACK_SIZE: usize = 16 * 1024;
@@ -53,6 +53,7 @@ struct Task {
     switches: AtomicUsize,
     entry: AtomicUsize,
     fpu: FpuState,
+    wake_at: AtomicU64,
 }
 
 impl Task {
@@ -64,6 +65,7 @@ impl Task {
             switches: AtomicUsize::new(0),
             entry: AtomicUsize::new(0),
             fpu: FpuState([0; FPU_STATE_SIZE]),
+            wake_at: AtomicU64::new(0),
         }
     }
 }
@@ -221,6 +223,7 @@ pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
             (*task).saved_rsp.store(0, Ordering::Relaxed);
             (*task).switches.store(0, Ordering::Relaxed);
             (*task).entry.store(0, Ordering::Relaxed);
+            (*task).wake_at.store(0, Ordering::Relaxed);
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
         }
         let boot = task_ptr(0);
@@ -300,7 +303,124 @@ pub fn on_timer(saved_rsp: usize) -> usize {
     if !PREEMPTIVE_ENABLED.load(Ordering::Acquire) {
         return saved_rsp;
     }
+    wake_sleepers(crate::clock::ticks());
     schedule(saved_rsp, true)
+}
+
+/// Wake every blocked task whose monotonic deadline has elapsed.
+pub fn wake_sleepers(now: u64) -> usize {
+    if !INITIALIZED.load(Ordering::Acquire) { return 0; }
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    let mut woke = 0;
+    // SAFETY: Timer interrupt runs with IF cleared and this scheduler is single-core.
+    unsafe {
+        for index in 1..count {
+            let task = task_ptr(index);
+            if (*task).state.load(Ordering::Acquire) == TaskState::Blocked as u8
+                && (*task).wake_at.load(Ordering::Acquire) != 0
+                && (*task).wake_at.load(Ordering::Acquire) <= now {
+                (*task).wake_at.store(0, Ordering::Relaxed);
+                (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
+                woke += 1;
+            }
+        }
+    }
+    woke
+}
+
+/// Block the current non-boot task until a monotonic tick deadline.
+/// Returns false when no alternate runnable task exists.
+pub fn sleep_for_ticks(ticks: u64) -> bool {
+    if ticks == 0 { yield_now(); return true; }
+    let flags = irq_save_disable();
+    if !INITIALIZED.load(Ordering::Acquire) {
+        irq_restore(flags);
+        return false;
+    }
+    let current = CURRENT_TASK.load(Ordering::Acquire);
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    if current == 0 || current >= count {
+        irq_restore(flags);
+        return false;
+    }
+    let mut alternate_runnable = false;
+    // SAFETY: Interrupts are disabled while checking and changing scheduler state.
+    unsafe {
+        for index in 0..count {
+            if index != current
+                && (*task_ptr(index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
+                alternate_runnable = true;
+                break;
+            }
+        }
+        if !alternate_runnable {
+            irq_restore(flags);
+            return false;
+        }
+        let task = task_ptr(current);
+        let deadline = crate::clock::ticks().saturating_add(ticks);
+        (*task).wake_at.store(deadline, Ordering::Release);
+        (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
+    }
+    irq_restore(flags);
+    yield_now();
+    true
+}
+
+/// Block the current non-boot task until another task explicitly wakes it.
+pub fn block_current() -> bool {
+    let flags = irq_save_disable();
+    if !INITIALIZED.load(Ordering::Acquire) {
+        irq_restore(flags);
+        return false;
+    }
+    let current = CURRENT_TASK.load(Ordering::Acquire);
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    if current == 0 || current >= count {
+        irq_restore(flags);
+        return false;
+    }
+    let mut alternate_runnable = false;
+    // SAFETY: Interrupts are disabled while checking and changing scheduler state.
+    unsafe {
+        for index in 0..count {
+            if index != current
+                && (*task_ptr(index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
+                alternate_runnable = true;
+                break;
+            }
+        }
+        if !alternate_runnable {
+            irq_restore(flags);
+            return false;
+        }
+        let task = task_ptr(current);
+        (*task).wake_at.store(0, Ordering::Release);
+        (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
+    }
+    irq_restore(flags);
+    yield_now();
+    true
+}
+
+/// Explicitly wake a blocked task, for event completion or synchronization.
+pub fn wake_task(id: TaskId) -> bool {
+    let flags = irq_save_disable();
+    if !INITIALIZED.load(Ordering::Acquire) || id.0 == 0 || id.0 >= TASK_COUNT.load(Ordering::Acquire) {
+        irq_restore(flags);
+        return false;
+    }
+    // SAFETY: Index is validated and interrupts are disabled for the state transition.
+    let task = unsafe { task_ptr(id.0) };
+    let blocked = unsafe { (*task).state.load(Ordering::Acquire) == TaskState::Blocked as u8 };
+    if blocked {
+        unsafe {
+            (*task).wake_at.store(0, Ordering::Relaxed);
+            (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
+        }
+    }
+    irq_restore(flags);
+    blocked
 }
 
 /// Enable timer-driven preemption after all task contexts are initialized.
@@ -441,6 +561,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blocked_task_is_woken_only_at_or_after_its_deadline() {
+        let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Runnable];
+        assert_eq!(select_next(0, &states), Some(2));
+    }
+
+    #[test]
     fn fpu_context_image_has_fxsave_size_and_alignment() {
         assert_eq!(core::mem::size_of::<FpuState>(), 512);
         assert_eq!(core::mem::align_of::<FpuState>(), 16);
@@ -551,6 +677,74 @@ mod fpu_context_qemu_test {
 #[cfg(feature = "qemu-fpu-context-test")]
 pub fn run_fpu_context_qemu_test() -> bool {
     fpu_context_qemu_test::run()
+}
+
+
+#[cfg(feature = "qemu-task-sleep-test")]
+mod task_sleep_qemu_test {
+    use super::*;
+    use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    static SLEEP_STARTED: AtomicU64 = AtomicU64::new(0);
+    static SLEEP_FINISHED: AtomicU64 = AtomicU64::new(0);
+    static OBSERVED_BLOCKED: AtomicUsize = AtomicUsize::new(0);
+    static WORKER_DONE: AtomicUsize = AtomicUsize::new(0);
+    static EVENT_WAKE_DONE: AtomicUsize = AtomicUsize::new(0);
+
+    extern "C" fn sleeper() {
+        SLEEP_STARTED.store(crate::clock::ticks(), Ordering::Release);
+        if sleep_for_ticks(4) {
+            SLEEP_FINISHED.store(crate::clock::ticks(), Ordering::Release);
+        }
+    }
+
+    extern "C" fn observer() {
+        for _ in 0..8 {
+            if task_state(TaskId(1)) == Some(TaskState::Blocked) {
+                OBSERVED_BLOCKED.fetch_add(1, Ordering::Relaxed);
+            }
+            core::hint::spin_loop();
+        }
+        WORKER_DONE.store(1, Ordering::Release);
+    }
+
+    extern "C" fn event_waiter() {
+        if block_current() { EVENT_WAKE_DONE.fetch_add(1, Ordering::AcqRel); }
+    }
+
+    extern "C" fn event_waker() {
+        while task_state(TaskId(3)) != Some(TaskState::Blocked) { core::hint::spin_loop(); }
+        if wake_task(TaskId(3)) { EVENT_WAKE_DONE.fetch_add(1, Ordering::AcqRel); }
+    }
+
+    pub fn run() -> bool {
+        SLEEP_STARTED.store(0, Ordering::Relaxed);
+        SLEEP_FINISHED.store(0, Ordering::Relaxed);
+        OBSERVED_BLOCKED.store(0, Ordering::Relaxed);
+        WORKER_DONE.store(0, Ordering::Relaxed);
+        EVENT_WAKE_DONE.store(0, Ordering::Relaxed);
+        if initialize(&[sleeper, observer, event_waiter, event_waker]).is_err() || !validate_initial_contexts() { return false; }
+        enable_preemption();
+        loop {
+            let done = (1..=4).all(|index| task_state(TaskId(index)) == Some(TaskState::Exited));
+            if done { break; }
+            core::hint::spin_loop();
+        }
+        let started = SLEEP_STARTED.load(Ordering::Acquire);
+        let finished = SLEEP_FINISHED.load(Ordering::Acquire);
+        let valid = started != 0
+            && finished.wrapping_sub(started) >= 4
+            && OBSERVED_BLOCKED.load(Ordering::Acquire) > 0
+            && WORKER_DONE.load(Ordering::Acquire) == 1
+            && task_state(TaskId(1)) == Some(TaskState::Exited)
+            && EVENT_WAKE_DONE.load(Ordering::Acquire) == 2;
+        reset_after_all_tasks_exit() && valid
+    }
+}
+
+#[cfg(feature = "qemu-task-sleep-test")]
+pub fn run_task_sleep_qemu_test() -> bool {
+    task_sleep_qemu_test::run()
 }
 
 #[cfg(feature = "qemu-preemptive-scheduler-test")]
