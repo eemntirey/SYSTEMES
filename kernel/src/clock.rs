@@ -21,6 +21,12 @@ pub fn on_timer_interrupt() {
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Address of the atomic tick counter for short architecture-level polling loops.
+/// The returned pointer is valid for the kernel lifetime and is read-only to callers.
+pub fn tick_counter_address() -> usize {
+    core::ptr::addr_of!(TICKS) as usize
+}
+
 /// Number of elapsed monotonic clock ticks.
 #[inline]
 pub fn ticks() -> u64 {
