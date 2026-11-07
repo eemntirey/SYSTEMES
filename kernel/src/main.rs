@@ -219,10 +219,29 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
     }
 
+    #[cfg(feature = "qemu-acpi-madt-test")]
+    let mut acpi_madt_discovered = false;
     if boot.acpi_rsdp_address != 0 {
-        unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n") };
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\\r\\n"); }
+        // SAFETY: The RSDP address comes from the UEFI configuration table and the
+        // active kernel identity map covers the firmware ACPI tables below 512 GiB.
+        match unsafe { systemes_kernel::acpi::discover_madt(boot.acpi_rsdp_address) } {
+            Ok(madt) if madt.local_apic_address != 0
+                && madt.local_apic_count > 0 && madt.io_apic_count > 0 => {
+                unsafe { debug_write(b"SYSTEMES: ACPI MADT parsed; Local APIC and IOAPIC topology discovered\\r\\n"); }
+                #[cfg(feature = "qemu-acpi-madt-test")]
+                { acpi_madt_discovered = true; }
+            }
+            Ok(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT incomplete; APIC topology unavailable\\r\\n"); },
+            Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT unavailable or invalid\\r\\n"); },
+        }
     } else {
-        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\r\n") };
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\\r\\n"); }
+    }
+    #[cfg(feature = "qemu-acpi-madt-test")]
+    if !acpi_madt_discovered {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU ACPI MADT discovery test failed\\r\\n"); }
+        halt();
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };

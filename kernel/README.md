@@ -8,16 +8,17 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Mémoire physique : analyse des descripteurs UEFI et allocation/libération de frames de 4 Kio
 - Heap noyau : allocateur global first-fit de 1 Mio, alignement, libération et coalescence des blocs
 - Mémoire virtuelle : tables de pages x86_64 à quatre niveaux, activation NX, CR0.WP et protections RX / R-NX / RW-NX
+- ACPI : découverte RSDP UEFI et analyse MADT (Local APIC, IOAPIC et overrides ISA)
 - CPU : GDT, IDT et gestionnaires d'exceptions CPU 0 à 31
 - Diagnostic : port debug QEMU `0xE9`
 
 ## Capacités présentes dans le code
 
-Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT et son IDT, construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le heap noyau après activation du mapping RW/NX, puis le framebuffer GOP lorsqu'il est disponible et signale la découverte de l'ACPI RSDP.
+Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT et son IDT, construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le heap noyau après activation du mapping RW/NX, analyse la MADT ACPI fournie par le RSDP UEFI et initialise le framebuffer GOP lorsqu'il est disponible.
 
 La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF ainsi que les fautes matérielles attendues pour les violations NX et l'écriture dans une page RX.
 
-Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages et le verrouillage SMP restent hors périmètre.
+Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages et le verrouillage SMP restent hors périmètre. La MADT ne consomme ici que les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; les enregistrements x2APIC et le démarrage des AP ne sont pas livrés.
 
 ## Limites actuelles
 
