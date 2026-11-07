@@ -95,6 +95,7 @@ unsafe extern "C" {
     fn systemes_isr30();
     fn systemes_isr31();
     fn systemes_lapic_timer();
+    fn systemes_scheduler_yield();
     fn systemes_apic_spurious();
 }
 
@@ -331,6 +332,25 @@ systemes_isr31:
 .global systemes_lapic_timer
 .type systemes_lapic_timer, @function
 systemes_lapic_timer:
+    push 0
+    push 64
+    jmp systemes_irq_common
+
+.global systemes_scheduler_yield
+.type systemes_scheduler_yield, @function
+systemes_scheduler_yield:
+    push 0
+    push 65
+    jmp systemes_irq_common
+
+.global systemes_apic_spurious
+.type systemes_apic_spurious, @function
+systemes_apic_spurious:
+    iretq
+
+.global systemes_irq_common
+.type systemes_irq_common, @function
+systemes_irq_common:
     cld
     push rax
     push rbx
@@ -347,10 +367,11 @@ systemes_lapic_timer:
     push r13
     push r14
     push r15
-    mov r12, rsp
+    mov rdi, qword ptr [rsp + 120]
+    mov rsi, rsp
     and rsp, -16
     call systemes_apic_timer_dispatch
-    mov rsp, r12
+    mov rsp, rax
     pop r15
     pop r14
     pop r13
@@ -366,11 +387,7 @@ systemes_lapic_timer:
     pop rcx
     pop rbx
     pop rax
-    iretq
-
-.global systemes_apic_spurious
-.type systemes_apic_spurious, @function
-systemes_apic_spurious:
+    add rsp, 16
     iretq
 
 .global systemes_exception_common
@@ -402,10 +419,11 @@ systemes_exception_common:
     jmp .Lsystemes_exception_halt
 "#);
 
-/// Verify the Local APIC timer and spurious-vector IDT gates.
+/// Verify the Local APIC timer, cooperative-yield and spurious-vector IDT gates.
 pub fn verify_local_apic_gates() -> bool {
     let idt = addr_of!(IDT) as *const IdtEntry;
     let timer = unsafe { &*idt.add(0x40) };
+    let yield_gate = unsafe { &*idt.add(0x41) };
     let spurious = unsafe { &*idt.add(0xFF) };
     let timer_selector = unsafe { addr_of!(timer.selector).read_unaligned() };
     let timer_attributes = unsafe { addr_of!(timer.attributes).read_unaligned() };
@@ -413,6 +431,12 @@ pub fn verify_local_apic_gates() -> bool {
     let timer_middle = unsafe { addr_of!(timer.offset_middle).read_unaligned() };
     let timer_high = unsafe { addr_of!(timer.offset_high).read_unaligned() };
     let timer_handler = timer_low as u64 | ((timer_middle as u64) << 16) | ((timer_high as u64) << 32);
+    let yield_selector = unsafe { addr_of!(yield_gate.selector).read_unaligned() };
+    let yield_attributes = unsafe { addr_of!(yield_gate.attributes).read_unaligned() };
+    let yield_low = unsafe { addr_of!(yield_gate.offset_low).read_unaligned() };
+    let yield_middle = unsafe { addr_of!(yield_gate.offset_middle).read_unaligned() };
+    let yield_high = unsafe { addr_of!(yield_gate.offset_high).read_unaligned() };
+    let yield_handler = yield_low as u64 | ((yield_middle as u64) << 16) | ((yield_high as u64) << 32);
     let spurious_selector = unsafe { addr_of!(spurious.selector).read_unaligned() };
     let spurious_attributes = unsafe { addr_of!(spurious.attributes).read_unaligned() };
     let spurious_low = unsafe { addr_of!(spurious.offset_low).read_unaligned() };
@@ -422,10 +446,14 @@ pub fn verify_local_apic_gates() -> bool {
     timer_selector == KERNEL_CODE_SELECTOR
         && timer_attributes == EXCEPTION_GATE_ATTRIBUTES
         && timer_handler != 0
+        && yield_selector == KERNEL_CODE_SELECTOR
+        && yield_attributes == EXCEPTION_GATE_ATTRIBUTES
+        && yield_handler != 0
         && spurious_selector == KERNEL_CODE_SELECTOR
         && spurious_attributes == EXCEPTION_GATE_ATTRIBUTES
         && spurious_handler != 0
 }
+
 
 /// Install a private ring-0 GDT and gates for all architecturally defined
 /// exception vectors 0..31. Hardware interrupts remain disabled.
@@ -483,6 +511,7 @@ pub unsafe fn initialize() {
     // Local APIC timer and spurious vectors are installed above the exception range.
     unsafe {
         idt.add(0x40).write(IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64));
+        idt.add(0x41).write(IdtEntry::interrupt_gate(systemes_scheduler_yield as *const () as usize as u64));
         idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64));
     }
 
