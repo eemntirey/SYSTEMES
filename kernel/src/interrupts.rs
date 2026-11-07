@@ -2,27 +2,56 @@
 //!
 //! The kernel remains in the UEFI-provided long-mode environment. This module
 //! installs its own GDT and IDT, then dispatches the Local APIC timer and task-yield vector.
+//! It also configures SYSCALL/SYSRET for fast Ring 3 transitions.
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::console::{debug_hex, debug_write};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
+const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const TSS_SELECTOR: u16 = 0x18;
+const USER_DATA_SELECTOR: u16 = 0x28;
+const USER_CODE_SELECTOR: u16 = 0x30;
+const USER_DATA_RPL3: u16 = USER_DATA_SELECTOR | 3;
+const USER_CODE_RPL3: u16 = USER_CODE_SELECTOR | 3;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
+const USER_INTERRUPT_GATE_ATTRIBUTES: u8 = 0xEE;
+const USER_DATA_DESCRIPTOR: u64 = 0x00CF_F200_0000_FFFF;
+const USER_CODE_DESCRIPTOR: u64 = 0x00AF_FA00_0000_FFFF;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
+const USER_EXIT_VECTOR: u64 = 0x80;
+
+/// SYSCALL/SYSRET MSRs
+const MSR_STAR: u32 = 0xC000_0081;
+const MSR_LSTAR: u32 = 0xC000_0082;
+const MSR_CSTAR: u32 = 0xC000_0083;
+const MSR_SFMASK: u32 = 0xC000_0084;
+
+/// STAR layout: bits 63:48 = SYSRET CS/SS, bits 47:32 = SYSCALL CS/SS
+/// SYSCALL loads CS from STAR[47:32], SS from STAR[47:32] + 8
+/// SYSRET loads CS from STAR[63:48], SS from STAR[63:48] + 8
+const STAR_VALUE: u64 = ((USER_CODE_RPL3 as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
+
+/// SFMASK: clear IF (bit 9) on syscall entry
+const SFMASK_VALUE: u64 = 1 << 9;
+
+pub(crate) const RING3_TEST_MAGIC: u64 = 0x5233_5F54_4553_5421;
 
 /// Vector raised by the INT3 instruction.
 pub const BREAKPOINT_VECTOR: u64 = 3;
 
-static mut GDT: [u64; 5] = [
+static mut GDT: [u64; 7] = [
     0,
     0x00AF_9A00_0000_FFFF,
     0x00CF_9200_0000_FFFF,
     0,
     0,
+    USER_DATA_DESCRIPTOR,
+    USER_CODE_DESCRIPTOR,
 ];
 
 #[repr(C, packed)]
@@ -44,6 +73,12 @@ static mut PRIVILEGE_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_
 static mut DOUBLE_FAULT_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut NMI_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut MACHINE_CHECK_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
+static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
+
+#[unsafe(no_mangle)]
+static mut SYSTEMES_RING3_SAVED_KERNEL_RSP: u64 = 0;
 
 const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
     let low = (limit as u64 & 0xFFFF)
@@ -84,11 +119,19 @@ impl IdtEntry {
     };
 
     const fn interrupt_gate(handler: u64, ist: u8) -> Self {
+        Self::gate(handler, ist, EXCEPTION_GATE_ATTRIBUTES)
+    }
+
+    const fn user_interrupt_gate(handler: u64) -> Self {
+        Self::gate(handler, 0, USER_INTERRUPT_GATE_ATTRIBUTES)
+    }
+
+    const fn gate(handler: u64, ist: u8, attributes: u8) -> Self {
         Self {
             offset_low: handler as u16,
             selector: KERNEL_CODE_SELECTOR,
             ist: ist & 0x07,
-            attributes: EXCEPTION_GATE_ATTRIBUTES,
+            attributes,
             offset_middle: (handler >> 16) as u16,
             offset_high: (handler >> 32) as u32,
             reserved: 0,
@@ -137,6 +180,9 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
     fn systemes_load_tr();
+    #[cfg(feature = "qemu-ring3-test")]
+    fn systemes_enter_ring3(user_rip: u64, user_rsp: u64);
+    fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
     fn systemes_isr1();
     fn systemes_isr2();
@@ -172,6 +218,9 @@ unsafe extern "C" {
     fn systemes_lapic_timer();
     fn systemes_scheduler_yield();
     fn systemes_apic_spurious();
+    fn systemes_user_exit();
+    fn systemes_syscall_entry();
+    fn systemes_sysret_exit();
 }
 
 global_asm!(r#"
@@ -179,21 +228,42 @@ global_asm!(r#"
 .type systemes_load_gdt, @function
 systemes_load_gdt:
     lgdt [rdi]
-    push 0x08
+    push {kernel_code_selector}
     lea rax, [rip + .Lsystemes_reload_cs]
     push rax
     retfq
 .Lsystemes_reload_cs:
-    mov ax, 0x10
+    mov ax, {kernel_data_selector}
     mov ds, ax
     mov es, ax
     mov ss, ax
     ret
 
+.global systemes_enter_ring3
+.type systemes_enter_ring3, @function
+systemes_enter_ring3:
+    mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
+    push {user_data_selector}
+    push rsi
+    push 0x02
+    push {user_code_selector}
+    push rdi
+    iretq
+
+.global systemes_ring3_exit_trampoline
+.type systemes_ring3_exit_trampoline, @function
+systemes_ring3_exit_trampoline:
+    mov ax, {kernel_data_selector}
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]
+    ret
+
 .global systemes_load_tr
 .type systemes_load_tr, @function
 systemes_load_tr:
-    mov ax, 0x18
+    mov ax, {tss_selector}
     ltr ax
     ret
 
@@ -411,6 +481,47 @@ systemes_isr31:
     push 31
     jmp systemes_exception_common
 
+.global systemes_user_exit
+.type systemes_user_exit, @function
+systemes_user_exit:
+    push 0
+    push 128
+    jmp systemes_exception_common
+
+.global systemes_syscall_entry
+.type systemes_syscall_entry, @function
+systemes_syscall_entry:
+    swapgs
+    mov qword ptr [rsp], rdi
+    mov qword ptr [rsp + 8], rsi
+    mov qword ptr [rsp + 16], rdx
+    mov qword ptr [rsp + 24], rcx
+    mov qword ptr [rsp + 32], r8
+    mov qword ptr [rsp + 40], r9
+    mov qword ptr [rsp + 48], r10
+    mov qword ptr [rsp + 56], r11
+    mov qword ptr [rsp + 64], r12
+    mov qword ptr [rsp + 72], r13
+    mov qword ptr [rsp + 80], r14
+    mov qword ptr [rsp + 88], r15
+    mov qword ptr [rsp + 96], rbp
+    lea rbp, [rsp + 104]
+    mov qword ptr [rsp + 104], rbx
+    mov qword ptr [rsp + 112], rax
+    mov rax, rsp
+    and rsp, -16
+    push rax
+    call systemes_syscall_dispatch
+    pop rax
+    mov rsp, rax
+    swapgs
+    sysretq
+
+.global systemes_sysret_exit
+.type systemes_sysret_exit, @function
+systemes_sysret_exit:
+    ret
+
 .global systemes_lapic_timer
 .type systemes_lapic_timer, @function
 systemes_lapic_timer:
@@ -522,7 +633,13 @@ systemes_exception_common:
     pop rax
     add rsp, 16
     iretq
-"#);
+"#,
+    kernel_code_selector = const KERNEL_CODE_SELECTOR,
+    kernel_data_selector = const KERNEL_DATA_SELECTOR,
+    tss_selector = const TSS_SELECTOR,
+    user_data_selector = const USER_DATA_RPL3,
+    user_code_selector = const USER_CODE_RPL3,
+);
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
 pub fn verify_task_register() -> bool {
@@ -589,6 +706,47 @@ pub fn verify_local_apic_gates() -> bool {
         && spurious_handler != 0
 }
 
+/// Verify that the user descriptors and the DPL3 exit gate are installed.
+pub fn verify_ring3_configuration() -> bool {
+    let gdt = addr_of!(GDT).cast::<u64>();
+    let idt = addr_of!(IDT) as *const IdtEntry;
+    // SAFETY: GDT entries 5/6 are the user data/code descriptors.
+    let user_data = unsafe { gdt.add(5).read() };
+    let user_code = unsafe { gdt.add(6).read() };
+    // SAFETY: IDT vector 0x80 is initialized during interrupt setup.
+    let gate = unsafe { &*idt.add(USER_EXIT_VECTOR as usize) };
+    let selector = unsafe { addr_of!(gate.selector).read_unaligned() };
+    let attributes = unsafe { addr_of!(gate.attributes).read_unaligned() };
+    let low = unsafe { addr_of!(gate.offset_low).read_unaligned() };
+    let middle = unsafe { addr_of!(gate.offset_middle).read_unaligned() };
+    let high = unsafe { addr_of!(gate.offset_high).read_unaligned() };
+    let handler = low as u64 | ((middle as u64) << 16) | ((high as u64) << 32);
+
+    user_data == USER_DATA_DESCRIPTOR
+        && user_code == USER_CODE_DESCRIPTOR
+        && selector == KERNEL_CODE_SELECTOR
+        && attributes == USER_INTERRUPT_GATE_ATTRIBUTES
+        && handler != 0
+}
+
+/// Enter a mapped ring-3 test context and return through its DPL3 interrupt.
+///
+/// # Safety
+///
+/// The caller must have installed the kernel GDT/IDT/TSS, mapped `user_rip`
+/// executable and `user_rsp` writable in the active address space, and disabled
+/// interrupts. The user code must issue the expected `int 0x80` exit.
+#[cfg(feature = "qemu-ring3-test")]
+pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
+    RING3_EXIT_VALIDATED.store(false, Ordering::Release);
+    RING3_EXPECTED_USER_RSP.store(user_rsp, Ordering::Release);
+    RING3_ACTIVE.store(true, Ordering::Release);
+    // SAFETY: The caller guarantees valid user mappings and a configured TSS.
+    unsafe { systemes_enter_ring3(user_rip, user_rsp) };
+    RING3_ACTIVE.store(false, Ordering::Release);
+    RING3_EXIT_VALIDATED.load(Ordering::Acquire)
+}
+
 
 /// Install a private ring-0 GDT and gates for all architecturally defined
 /// exception vectors 0..31. Hardware interrupts remain disabled.
@@ -618,7 +776,7 @@ pub unsafe fn initialize() {
         gdt.add(4).write(tss_high);
     }
     let gdt_pointer = DescriptorTablePointer {
-        limit: (core::mem::size_of::<[u64; 5]>() - 1) as u16,
+        limit: (core::mem::size_of::<[u64; 7]>() - 1) as u16,
         base: gdt as u64,
     };
     // SAFETY: GDT/TSS are static, identity-mapped, and remain alive for the kernel lifetime.
@@ -672,6 +830,7 @@ pub unsafe fn initialize() {
         idt.add(0x40).write(IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64, 0));
         idt.add(0x41).write(IdtEntry::interrupt_gate(systemes_scheduler_yield as *const () as usize as u64, 0));
         idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0));
+        idt.add(USER_EXIT_VECTOR as usize).write(IdtEntry::user_interrupt_gate(systemes_user_exit as *const () as usize as u64));
     }
 
     let idt_pointer = DescriptorTablePointer {
@@ -688,13 +847,14 @@ pub unsafe fn initialize() {
     };
 }
 
-/// Dispatch one CPU exception. Only INT3 is resumable: the stub returns to the
-/// restored frame and executes `iretq`. Every other exception remains fatal.
+/// Dispatch CPU exceptions. INT3 resumes unchanged; the dedicated Ring 3 test
+/// exit rewrites its frame to a controlled kernel trampoline. Other exceptions
+/// remain fatal.
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_exception_dispatch(
     vector: u64,
     error_code: u64,
-    _frame: *mut ExceptionFrame,
+    frame: *mut ExceptionFrame,
 ) {
     #[cfg(feature = "qemu-ist-nmi-test")]
     if vector == 2 {
@@ -725,6 +885,36 @@ pub extern "C" fn systemes_exception_dispatch(
         }
     }
 
+    if vector == USER_EXIT_VECTOR && RING3_ACTIVE.load(Ordering::Acquire) {
+        if let Some(frame_ref) = unsafe { frame.as_mut() } {
+            let privilege_frame = frame.cast::<u64>();
+            // A CPL3 interrupt frame appends the interrupted RSP and SS after RFLAGS.
+            let user_rsp = unsafe { privilege_frame.add(20).read() };
+            let user_ss = unsafe { privilege_frame.add(21).read() };
+            if error_code == 0
+                && valid_ring3_exit_frame(
+                    frame_ref,
+                    user_rsp,
+                    user_ss,
+                    RING3_EXPECTED_USER_RSP.load(Ordering::Acquire),
+                )
+            {
+                frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+                frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
+                frame_ref.rflags = 0x02;
+                RING3_ACTIVE.store(false, Ordering::Release);
+                RING3_EXIT_VALIDATED.store(true, Ordering::Release);
+                unsafe {
+                    debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\r\n");
+                }
+                return;
+            }
+        }
+        unsafe {
+            debug_write(b"SYSTEMES_KERNEL_FAIL: invalid Ring 3 exit frame\r\n");
+        }
+    }
+
     unsafe {
         debug_write(b"SYSTEMES_EXCEPTION: vector=0x");
         debug_hex(vector);
@@ -746,6 +936,20 @@ pub extern "C" fn systemes_exception_dispatch(
             asm!("hlt", options(nomem, nostack));
         }
     }
+}
+
+fn valid_ring3_exit_frame(
+    frame: &ExceptionFrame,
+    user_rsp: u64,
+    user_ss: u64,
+    expected_user_rsp: u64,
+) -> bool {
+    frame.rax == RING3_TEST_MAGIC
+        && frame.cs == USER_CODE_RPL3 as u64
+        && user_ss == USER_DATA_RPL3 as u64
+        && user_rsp == expected_user_rsp
+        && frame.rflags & 0x2 != 0
+        && frame.rflags & (1 << 9) == 0
 }
 
 #[cfg(test)]
@@ -794,6 +998,42 @@ mod tests {
         let nmi = IdtEntry::interrupt_gate(0x2000, 2);
         let mc = IdtEntry::interrupt_gate(0x3000, 3);
         assert_eq!((df.ist, nmi.ist, mc.ist), (1, 2, 3));
+    }
+
+    #[test]
+    fn ring3_exit_gate_is_dpl3_and_uses_kernel_code() {
+        let entry = IdtEntry::user_interrupt_gate(0x1234_5678_9ABC_DEF0);
+        let selector = unsafe { addr_of!(entry.selector).read_unaligned() };
+        assert_eq!(selector, KERNEL_CODE_SELECTOR);
+        assert_eq!(entry.attributes, USER_INTERRUPT_GATE_ATTRIBUTES);
+        assert_eq!(entry.ist, 0);
+    }
+
+    #[test]
+    fn ring3_segments_have_dpl3_and_expected_code_data_types() {
+        assert_eq!((USER_CODE_DESCRIPTOR >> 45) & 3, 3);
+        assert_eq!((USER_DATA_DESCRIPTOR >> 45) & 3, 3);
+        assert_ne!(USER_CODE_DESCRIPTOR & (1 << 43), 0);
+        assert_ne!(USER_DATA_DESCRIPTOR & (1 << 41), 0);
+        assert_eq!(USER_CODE_RPL3 & 3, 3);
+        assert_eq!(USER_DATA_RPL3 & 3, 3);
+    }
+
+    #[test]
+    fn ring3_exit_frame_requires_user_selectors_expected_stack_and_magic() {
+        let mut frame = ExceptionFrame {
+            r15: 0, r14: 0, r13: 0, r12: 0, r11: 0, r10: 0, r9: 0, r8: 0,
+            rbp: 0, rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0,
+            rax: RING3_TEST_MAGIC, vector: USER_EXIT_VECTOR, error_code: 0,
+            rip: 0x8000_0000_0011, cs: USER_CODE_RPL3 as u64, rflags: 0x02,
+        };
+        assert!(valid_ring3_exit_frame(&frame, 0x8000_0000_2FF0, USER_DATA_RPL3 as u64, 0x8000_0000_2FF0));
+
+        frame.cs = KERNEL_CODE_SELECTOR as u64;
+        assert!(!valid_ring3_exit_frame(&frame, 0x8000_0000_2FF0, USER_DATA_RPL3 as u64, 0x8000_0000_2FF0));
+        frame.cs = USER_CODE_RPL3 as u64;
+        frame.rflags |= 1 << 9;
+        assert!(!valid_ring3_exit_frame(&frame, 0x8000_0000_2FF0, USER_DATA_RPL3 as u64, 0x8000_0000_2FF0));
     }
 
     #[test]

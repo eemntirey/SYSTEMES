@@ -5,6 +5,8 @@
 //! device mappings stay visible after a CR3 switch. User leaves always carry
 //! the U/S bit; writable-executable user pages are not representable.
 
+#[cfg(feature = "qemu-ring3-test")]
+use crate::interrupts::RING3_TEST_MAGIC;
 use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
 use crate::paging::{page_table_indices, IDENTITY_MAP_BYTES};
 
@@ -41,8 +43,14 @@ pub enum AddressSpaceError {
     SmepUnavailable,
     SmapDidNotBlock,
     SmepDidNotBlock,
+    Ring3TransitionFailed,
+    Ring3StackWriteMismatch,
 }
 
+#[cfg(feature = "qemu-ring3-test")]
+const RING3_CODE_ADDRESS: u64 = USER_BASE + 0x4000;
+#[cfg(feature = "qemu-ring3-test")]
+const RING3_STACK_ADDRESS: u64 = USER_BASE + 0x5000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserPagePermissions {
     ReadOnlyExecute,
@@ -275,6 +283,110 @@ pub unsafe fn read_cr3() -> u64 {
 pub unsafe fn write_cr3(root: u64) {
     // SAFETY: The caller guarantees a valid PML4 root.
     unsafe { core::arch::asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags)) };
+}
+
+/// Boot-time proof of user execution, user-stack access, and a controlled
+/// DPL3 interrupt return to the kernel through the TSS privilege stack.
+///
+/// # Safety
+///
+/// Must run after the kernel page tables and TSS/IDT are active. The caller
+/// must ensure no other CPU can use the global test transition state.
+#[cfg(feature = "qemu-ring3-test")]
+pub unsafe fn run_qemu_ring3_test(
+    allocator: &mut PhysicalFrameAllocator,
+    kernel_root: u64,
+) -> Result<(), AddressSpaceError> {
+    let code_frame = allocator
+        .allocate_frame()
+        .ok_or(AddressSpaceError::OutOfFrames)?;
+    let stack_frame = allocator
+        .allocate_frame()
+        .ok_or(AddressSpaceError::OutOfFrames)?;
+    if code_frame % PAGE_SIZE != 0 || stack_frame % PAGE_SIZE != 0 {
+        return Err(AddressSpaceError::InvalidFrameAlignment);
+    }
+    if code_frame >= IDENTITY_MAP_BYTES || stack_frame >= IDENTITY_MAP_BYTES {
+        return Err(AddressSpaceError::FrameOutsideIdentityWindow);
+    }
+
+    let mut code = [0u8; 17];
+    code[0] = 0x48;
+    code[1] = 0xB8;
+    code[2..10].copy_from_slice(&RING3_TEST_MAGIC.to_le_bytes());
+    code[10..15].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF8]);
+    code[15..17].copy_from_slice(&[0xCD, 0x80]);
+    // SAFETY: Both are freshly allocated identity-accessible frames.
+    unsafe {
+        core::ptr::write_bytes(code_frame as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(stack_frame as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, code.len());
+    }
+
+    // SAFETY: The kernel root is active and the allocator owns free frames.
+    let mut space = unsafe { AddressSpace::create(allocator, kernel_root)? };
+    // SAFETY: The virtual addresses and backing frames were validated above.
+    unsafe {
+        space.map_user_page(
+            allocator,
+            RING3_CODE_ADDRESS,
+            code_frame,
+            UserPagePermissions::ReadOnlyExecute,
+        )?;
+        space.map_user_page(
+            allocator,
+            RING3_STACK_ADDRESS,
+            stack_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )?;
+        space.verify_user_mapping(
+            RING3_CODE_ADDRESS,
+            code_frame,
+            UserPagePermissions::ReadOnlyExecute,
+        )?;
+        space.verify_user_mapping(
+            RING3_STACK_ADDRESS,
+            stack_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )?;
+    }
+
+    let user_rsp = RING3_STACK_ADDRESS + PAGE_SIZE - 16;
+    let previous_root = unsafe { read_cr3() };
+    let previous_flags: u64;
+    // SAFETY: This test is single-core and must not be preempted while swapping CR3.
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) previous_flags, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("cli", options(nomem, nostack));
+        write_cr3(space.root());
+    }
+
+    let transition_result = if cr3_root(unsafe { read_cr3() }) != space.root() {
+        Err(AddressSpaceError::Cr3Mismatch)
+    } else if !unsafe {
+        crate::interrupts::enter_ring3_test_context(RING3_CODE_ADDRESS, user_rsp)
+    } {
+        Err(AddressSpaceError::Ring3TransitionFailed)
+    } else {
+        let stack_value = {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            // SAFETY: The ring-3 program wrote this word in its mapped user stack.
+            unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+        };
+        if stack_value == RING3_TEST_MAGIC {
+            Ok(())
+        } else {
+            Err(AddressSpaceError::Ring3StackWriteMismatch)
+        }
+    };
+
+    // SAFETY: Restore the original address space before resuming normal boot.
+    unsafe { write_cr3(previous_root) };
+    if previous_flags & (1 << 9) != 0 {
+        // SAFETY: The previous root is restored and the caller had interrupts enabled.
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+    transition_result
 }
 
 #[cfg(feature = "qemu-address-space-test")]

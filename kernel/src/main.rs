@@ -115,6 +115,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\r\n"); }
         halt();
     }
+    if !systemes_kernel::interrupts::verify_ring3_configuration() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 GDT or DPL3 interrupt gate invalid\r\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: user GDT descriptors and DPL3 exit gate verified\r\n"); }
     // SAFETY: UEFI identity mappings remain active while the new page tables are built.
     let page_table_root = match unsafe {
         systemes_kernel::paging::build_identity_map(&mut frame_allocator)
@@ -289,6 +294,19 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-ring3-test")]
+    match unsafe {
+        systemes_kernel::address_space::run_qemu_ring3_test(&mut frame_allocator, page_table_root)
+    } {
+        Ok(()) => unsafe {
+            debug_write(b"SYSTEMES_TEST: Ring 3 code executed with user CS and writable user stack\r\n");
+            debug_write(b"SYSTEMES_TEST: Ring 3 user stack write verified\r\n");
+        },
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 transition test failed\r\n"); }
+            halt();
+        }
+    }
     #[cfg(feature = "qemu-address-space-test")]
     {
         let interrupt_flag: u64;

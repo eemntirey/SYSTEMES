@@ -16,8 +16,12 @@ Ordre de travail :
 6. Hygiène debug (CRLF réels, console factorisée) — livrée (PR #58, #59).
 7. Exceptions reprenables (#BP avec `iretq`) — livrée (PR #60).
 8. Espaces d'adressage par processus — livrés (PR #61) ; SMEP/SMAP et helpers uaccess — livrés dans cette PR.
-9. Ring 3, SYSCALL/SYSRET, processus (D/E) — prochaine capacité.
-10. Chargeur de programmes et shell texte utilisateur (F).
+9. T9 — GDT user et transition Ring 3/Ring 0 — en cours : test QEMU dédié, validation CI requise.
+10. T10 — SYSCALL/SYSRET et ABI contrôlée.
+11. T11 — chargeur ELF, init et processus utilisateur.
+12. T12 — console native et shell texte.
+13. T13 — pilote de stockage virtio-blk.
+14. T14 — VFS.
 
 SMP complet reste différé jusqu'à validation des étapes A à F. Pour chaque PR : vérifier le HEAD exact, tous les check-runs et la CI complète.
 
