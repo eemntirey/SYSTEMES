@@ -9,6 +9,7 @@ pub const MAX_TASKS: usize = 8;
 const STACK_SIZE: usize = 16 * 1024;
 const YIELD_VECTOR: usize = 0x41;
 const KERNEL_CODE_SELECTOR: usize = 0x08;
+const KERNEL_DATA_SELECTOR: usize = 0x10;
 const INITIAL_RFLAGS: usize = 0x202;
 const SAVED_REGISTER_COUNT: usize = 15;
 const INTERRUPT_FRAME_WORDS: usize = SAVED_REGISTER_COUNT + 7;
@@ -77,6 +78,8 @@ fn build_initial_context(task: *mut Task) -> usize {
     unsafe {
         let stack = core::ptr::addr_of_mut!((*task).stack.0).cast::<u8>();
         let top = stack.add(STACK_SIZE) as usize;
+        let fake_return = (top - 8) as *mut usize;
+        fake_return.write(task_returned as usize);
         let frame = (top - 8 - INTERRUPT_FRAME_WORDS * core::mem::size_of::<usize>()) as *mut usize;
         for index in 0..SAVED_REGISTER_COUNT {
             frame.add(index).write(0);
@@ -86,9 +89,9 @@ fn build_initial_context(task: *mut Task) -> usize {
         frame.add(17).write(task_bootstrap as usize);
         frame.add(18).write(KERNEL_CODE_SELECTOR);
         frame.add(19).write(INITIAL_RFLAGS);
-        // Same-CPL IRETQ leaves RSP at this word; it is the task's synthetic return address.
-        frame.add(20).write(task_returned as usize);
-        frame.add(21).write(0);
+        // Long-mode IRETQ restores the synthetic RSP and SS words after RFLAGS.
+        frame.add(20).write(top - 8);
+        frame.add(21).write(KERNEL_DATA_SELECTOR);
         frame as usize
     }
 }
@@ -246,7 +249,8 @@ pub fn validate_initial_contexts() -> bool {
                 && frame.add(17).read() == task_bootstrap as usize
                 && frame.add(18).read() == KERNEL_CODE_SELECTOR
                 && frame.add(19).read() == INITIAL_RFLAGS
-                && frame.add(20).read() == task_returned as usize
+                && frame.add(20).read() != 0
+                && frame.add(21).read() == KERNEL_DATA_SELECTOR
         };
         if !valid { return false; }
     }
