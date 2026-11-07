@@ -12,6 +12,7 @@ qemu-rx-write-test = []
 qemu-heap-test = []
 qemu-acpi-madt-test = []
 qemu-apic-clock-test = []
+qemu-cooperative-scheduler-test = []
 
 [lib]
 path = "src/lib.rs"
