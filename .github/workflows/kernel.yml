@@ -120,6 +120,12 @@ jobs:
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
           grep -q 'SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified' build/uefi/debug.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
+          grep -q 'SYSTEMES: breakpoint handled, execution resumed' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: breakpoint returned to caller through iretq' build/uefi/debug.log
+          if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
+            echo "Kernel reported a failure marker"
+            exit 1
+          fi
       - name: Upload boot evidence
         if: always()
         uses: actions/upload-artifact@v4

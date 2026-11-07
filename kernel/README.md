@@ -14,6 +14,7 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Contexte FPU/SIMD : sauvegarde/restauration x87/MMX/SSE par tâche avec FXSAVE64/FXRSTOR64 (512 octets alignés sur 16 octets)
 - Cycle de vie des tâches : états Runnable/Blocked/Exited, sommeil sur horloge monotone et réveil par échéance ou événement
 - CPU : GDT et IDT propres au noyau, TSS x86_64 chargé dans TR=0x18, RSP0 dédié et piles IST1/IST2/IST3 pour #DF/NMI/#MC
+- Exceptions : #BP reprenable (le CPU sauvegarde l'adresse suivant `INT3` ; le handler restaure le contexte et exécute `iretq`) ; #PF/#GP/#DF restent fatales et tracées
 - Diagnostic : module console partagé (port QEMU `0xE9`, formatage hexadécimal/décimal testé hôte), sauts de ligne CRLF réels (la CI rejette les séquences littérales `\r\n`)
 
 ## Capacités présentes dans le code
@@ -22,7 +23,7 @@ Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frame
 
 La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF, les violations NX/RX et les commutations de pile IST2/IST3. Les scénarios `int 2` et `int 18` sont des interruptions logicielles qui valident les portes IDT et le mécanisme IST ; ils ne simulent pas un NMI électrique ni une véritable Machine Check.
 
-Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages reste hors périmètre. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. L'ordonnanceur prend en charge yield coopératif, préemption timer, sommeil sur échéance et blocage/réveil événementiel ; les tâches partagent l'espace noyau et le changement de contexte reste mono-cœur. Le contexte x87/MMX/SSE est isolé par tâche via FXSAVE64/FXRSTOR64. Les tests IST2/IST3 ne remplacent pas des tests matériels réels de NMI/Machine Check ; aucun Double Fault matériel réel n'est déclenché.
+Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages reste hors périmètre. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. L'ordonnanceur prend en charge yield coopératif, préemption timer, sommeil sur échéance et blocage/réveil événementiel ; les tâches partagent l'espace noyau et le changement de contexte reste mono-cœur. Le contexte x87/MMX/SSE est isolé par tâche via FXSAVE64/FXRSTOR64. Les tests IST2/IST3 ne remplacent pas des tests matériels réels de NMI/Machine Check ; aucun Double Fault matériel réel n'est déclenché. Seul le #BP déclenché par `INT3` est reprenable ; les autres exceptions restent fatales et le retour depuis Ring 3 n'est pas encore implémenté.
 
 ## Limites actuelles
 

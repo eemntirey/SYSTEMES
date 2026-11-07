@@ -14,6 +14,9 @@ const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 
+/// Vector raised by the INT3 instruction.
+pub const BREAKPOINT_VECTOR: u64 = 3;
+
 static mut GDT: [u64; 5] = [
     0,
     0x00AF_9A00_0000_FFFF,
@@ -91,6 +94,42 @@ impl IdtEntry {
             reserved: 0,
         }
     }
+}
+
+/// Register frame saved by the exception stubs for same-privilege (ring 0)
+/// exceptions. The CPU pushes RIP/CS/RFLAGS; the stub adds the vector and a
+/// synthetic error code so every vector shares one layout.
+#[repr(C)]
+pub struct ExceptionFrame {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rbp: u64,
+    pub rdi: u64,
+    pub rsi: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub vector: u64,
+    pub error_code: u64,
+    pub rip: u64,
+    pub cs: u64,
+    pub rflags: u64,
+}
+
+/// Return true only for the one exception vector the handler resumes.
+///
+/// `INT3` is a trap: the CPU saves the address of the instruction following
+/// the opcode, so resuming requires restoring the frame and executing `iretq`
+/// without modifying RIP.
+pub const fn is_resumable_exception(vector: u64) -> bool {
+    vector == BREAKPOINT_VECTOR
 }
 
 static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
@@ -459,14 +498,30 @@ systemes_exception_common:
     push r13
     push r14
     push r15
+    mov r12, rsp
     mov rdi, qword ptr [rsp + 120]
     mov rsi, qword ptr [rsp + 128]
+    mov rdx, r12
     and rsp, -16
     call systemes_exception_dispatch
-.Lsystemes_exception_halt:
-    cli
-    hlt
-    jmp .Lsystemes_exception_halt
+    mov rsp, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
+    iretq
 "#);
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
@@ -633,8 +688,14 @@ pub unsafe fn initialize() {
     };
 }
 
+/// Dispatch one CPU exception. Only INT3 is resumable: the stub returns to the
+/// restored frame and executes `iretq`. Every other exception remains fatal.
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> ! {
+pub extern "C" fn systemes_exception_dispatch(
+    vector: u64,
+    error_code: u64,
+    _frame: *mut ExceptionFrame,
+) {
     #[cfg(feature = "qemu-ist-nmi-test")]
     if vector == 2 {
         let rsp: u64;
@@ -663,12 +724,23 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
             }
         }
     }
+
     unsafe {
         debug_write(b"SYSTEMES_EXCEPTION: vector=0x");
         debug_hex(vector);
         debug_write(b" error=0x");
         debug_hex(error_code);
         debug_write(b"\r\n");
+    }
+
+    if is_resumable_exception(vector) {
+        // The frame is not modified: INT3 is a trap, so the saved RIP already
+        // points to the instruction following the 0xCC opcode.
+        unsafe { debug_write(b"SYSTEMES: breakpoint handled, execution resumed\r\n"); }
+        return;
+    }
+
+    unsafe {
         asm!("cli", options(nomem, nostack));
         loop {
             asm!("hlt", options(nomem, nostack));
@@ -732,6 +804,27 @@ mod tests {
         for vector in [0, 1, 2, 3, 4, 5, 6, 7, 9, 15, 16, 18, 19, 20, 31] {
             assert!(!has_cpu_error_code(vector));
         }
+    }
+
+    #[test]
+    fn resumes_only_the_breakpoint_vector() {
+        assert_eq!(BREAKPOINT_VECTOR, 3);
+        assert!(is_resumable_exception(BREAKPOINT_VECTOR));
+        for vector in [0, 1, 2, 6, 8, 13, 14, 18, 31] {
+            assert!(!is_resumable_exception(vector));
+        }
+    }
+
+    #[test]
+    fn exception_frame_matches_the_assembly_layout() {
+        assert_eq!(core::mem::size_of::<ExceptionFrame>(), 20 * 8);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, r15), 0);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, rax), 112);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, vector), 120);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, error_code), 128);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, rip), 136);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, cs), 144);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, rflags), 152);
     }
 }
 
