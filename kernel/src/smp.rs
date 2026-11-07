@@ -222,7 +222,7 @@ pub fn register_madt_topology(
     Ok(registry.count())
 }
 
-/// Read this processor's APIC ID, preferring CPUID topology leaf 0xB.
+/// Read this processor's full-width APIC ID, preferring CPUID topology leaf 0xB.
 #[cfg(target_arch = "x86_64")]
 pub fn current_apic_id() -> u32 {
     let maximum = unsafe { core::arch::x86_64::__cpuid(0) }.eax;
