@@ -8,8 +8,9 @@ Le socle mémoire A est prioritaire : l'allocateur de frames et le heap dynamiqu
 
 Ordre de travail :
 
-1. Heap dynamique du noyau (capacité mémoire A encore absente de `main`).
-2. Timer Local APIC calibré et horloge monotone (B).
+1. Heap dynamique du noyau (A) — intégré dans `main` par la PR #49.
+2. Découverte ACPI/MADT — prérequis matériel du Local APIC, sans activer encore les interruptions APIC.
+3. Timer Local APIC calibré et horloge monotone (B).
 3. Ordonnanceur préemptif et isolation FPU/SIMD (C), après ses prérequis APIC.
 4. Ring 3, SYSCALL/SYSRET et processus (D/E).
 5. Shell texte utilisateur (F).
