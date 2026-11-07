@@ -76,6 +76,7 @@ pub enum SmpError {
     BootstrapAlreadyRegistered,
     InvalidLogicalId,
     InvalidStateTransition,
+    BootstrapNotFound,
 }
 
 pub struct CpuRegistry {
@@ -199,6 +200,41 @@ impl Drop for RegistrationGuard<'_> {
     fn drop(&mut self) { self.0.store(false, Ordering::Release); }
 }
 
+/// Populate the fixed registry from MADT Processor Local APIC and x2APIC
+/// records. Only processors marked enabled or online-capable are retained.
+/// The bootstrap APIC ID must be present and marked enabled.
+pub fn register_madt_topology(
+    registry: &CpuRegistry,
+    madt: &crate::acpi::MadtInfo,
+    bootstrap_apic_id: u32,
+) -> Result<usize, SmpError> {
+    let mut bootstrap_seen = false;
+    for entry in madt.local_apics.iter().take(madt.local_apic_count) {
+        let enabled = entry.flags & 0x1 != 0;
+        let online_capable = entry.flags & 0x2 != 0;
+        if !enabled && !online_capable { continue; }
+        let is_bootstrap = entry.apic_id == bootstrap_apic_id;
+        if is_bootstrap {
+            if !enabled { return Err(SmpError::BootstrapNotFound); }
+            bootstrap_seen = true;
+        }
+        registry.register(entry.apic_id, is_bootstrap)?;
+    }
+    if !bootstrap_seen { return Err(SmpError::BootstrapNotFound); }
+    Ok(registry.count())
+}
+
+/// Read this processor's APIC ID, preferring CPUID topology leaf 0xB.
+#[cfg(target_arch = "x86_64")]
+pub fn current_apic_id() -> u32 {
+    let maximum = unsafe { core::arch::x86_64::__cpuid(0) }.eax;
+    if maximum >= 0x0B {
+        let topology = unsafe { core::arch::x86_64::__cpuid_count(0x0B, 0) };
+        if topology.ebx != 0 { return topology.edx; }
+    }
+    (unsafe { core::arch::x86_64::__cpuid(1) }.ebx >> 24) & 0xFF
+}
+
 pub static CPU_REGISTRY: CpuRegistry = CpuRegistry::new();
 
 #[cfg(test)]
@@ -215,6 +251,41 @@ mod tests {
         assert_eq!(registry.find_by_apic_id(2), Some(1));
         assert_eq!(registry.cpu(0).unwrap().state(), CpuState::Online);
         assert_eq!(registry.cpu(1).unwrap().state(), CpuState::Discovered);
+    }
+
+    #[test]
+    fn registers_only_enabled_or_online_capable_madt_processors() {
+        let registry = CpuRegistry::new();
+        let mut madt = crate::acpi::MadtInfo {
+            local_apic_address: 0xFEE0_0000, flags: 1,
+            local_apics: [crate::acpi::LocalApic::default(); crate::acpi::MAX_LOCAL_APICS],
+            local_apic_count: 3,
+            io_apics: [crate::acpi::IoApic::default(); crate::acpi::MAX_IO_APICS],
+            io_apic_count: 0,
+            overrides: [crate::acpi::InterruptOverride::default(); crate::acpi::MAX_ISO],
+            override_count: 0,
+        };
+        madt.local_apics[0] = crate::acpi::LocalApic { processor_uid: 0, apic_id: 0, flags: 1 };
+        madt.local_apics[1] = crate::acpi::LocalApic { processor_uid: 1, apic_id: 0x1234, flags: 2 };
+        madt.local_apics[2] = crate::acpi::LocalApic { processor_uid: 2, apic_id: 7, flags: 0 };
+        assert_eq!(register_madt_topology(&registry, &madt, 0), Ok(2));
+        assert_eq!(registry.find_by_apic_id(0x1234), Some(1));
+        assert_eq!(registry.find_by_apic_id(7), None);
+    }
+
+    #[test]
+    fn madt_topology_requires_the_bootstrap_processor() {
+        let registry = CpuRegistry::new();
+        let madt = crate::acpi::MadtInfo {
+            local_apic_address: 0xFEE0_0000, flags: 1,
+            local_apics: [crate::acpi::LocalApic::default(); crate::acpi::MAX_LOCAL_APICS],
+            local_apic_count: 1,
+            io_apics: [crate::acpi::IoApic::default(); crate::acpi::MAX_IO_APICS],
+            io_apic_count: 0,
+            overrides: [crate::acpi::InterruptOverride::default(); crate::acpi::MAX_ISO],
+            override_count: 0,
+        };
+        assert_eq!(register_madt_topology(&registry, &madt, 3), Err(SmpError::BootstrapNotFound));
     }
 
     #[test]
