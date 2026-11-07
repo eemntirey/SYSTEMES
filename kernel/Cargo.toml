@@ -19,6 +19,8 @@ qemu-preemptive-scheduler-test = []
 qemu-fpu-context-test = []
 qemu-task-sleep-test = []
 qemu-address-space-test = []
+qemu-smap-violation-test = []
+qemu-smep-violation-test = []
 
 [lib]
 path = "src/lib.rs"

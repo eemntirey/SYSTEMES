@@ -13,10 +13,11 @@ Ordre de travail :
 3. Timer Local APIC calibré et horloge monotone — livré (PR #51).
 4. Ordonnanceur coopératif puis préemptif, isolation FPU/SIMD — livrés (PR #52, #53, #54).
 5. TSS/IST et sommeil/réveil des tâches noyau — livrés (PR #57).
-6. Hygiène debug (CRLF réels, console factorisée) — PR #58 puis T1.
-7. Exceptions reprenables (#BP avec `iretq`) — prochaine capacité.
-8. Espaces d'adressage par processus, Ring 3, SYSCALL/SYSRET, processus (D/E).
-9. Chargeur de programmes et shell texte utilisateur (F).
+6. Hygiène debug (CRLF réels, console factorisée) — livrée (PR #58, #59).
+7. Exceptions reprenables (#BP avec `iretq`) — livrée (PR #60).
+8. Espaces d'adressage par processus — livrés (PR #61) ; SMEP/SMAP et helpers uaccess — livrés dans cette PR.
+9. Ring 3, SYSCALL/SYSRET, processus (D/E) — prochaine capacité.
+10. Chargeur de programmes et shell texte utilisateur (F).
 
 SMP complet reste différé jusqu'à validation des étapes A à F. Pour chaque PR : vérifier le HEAD exact, tous les check-runs et la CI complète.
 

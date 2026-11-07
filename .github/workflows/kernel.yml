@@ -83,7 +83,7 @@ jobs:
           cp "$variables" build/uefi/OVMF_VARS.fd
           file "$firmware" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 20s qemu-system-x86_64 -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          timeout 20s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
@@ -125,6 +125,8 @@ jobs:
           grep -q 'SYSTEMES: process address space created' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user page mapped with U/S and survived CR3 switch' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: kernel identity mapping shared by the process address space' build/uefi/debug.log
+          grep -q 'SYSTEMES: supervisor access protection smep=1 smap=1' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user page access succeeded with SMAP enabled and AC scoped' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1
@@ -171,6 +173,18 @@ jobs:
             expected_vector: '0000000000000012'
             expected_error: '0000000000000000'
             expected_test: 'SYSTEMES_TEST: IST3 machine-check stack switch verified'
+          - label: SMAP must block supervisor read of a user page
+            feature: qemu-smap-violation-test
+            expected_vector: '000000000000000E'
+            expected_error: '0000000000000001'
+            expected_test: 'SYSTEMES_TEST: attempting unguarded supervisor read of a user page'
+            cpu: '-cpu max'
+          - label: SMEP must block supervisor execution of a user page
+            feature: qemu-smep-violation-test
+            expected_vector: '000000000000000E'
+            expected_error: '0000000000000011'
+            expected_test: 'SYSTEMES_TEST: attempting supervisor execution of a user page'
+            cpu: '-cpu max'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -222,7 +236,7 @@ jobs:
           test -n "$variables"
           cp "$variables" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 20s qemu-system-x86_64 -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-memory-fault.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          timeout 20s qemu-system-x86_64 ${{ matrix.cpu }} -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-memory-fault.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
