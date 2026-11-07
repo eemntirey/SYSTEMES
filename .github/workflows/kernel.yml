@@ -112,6 +112,10 @@ jobs:
           grep -q 'SYSTEMES_TEST: blocked task slept for four monotonic ticks' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: timer woke the blocked task at its deadline' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
+          if grep -qF '\r\n' build/uefi/debug.log; then
+            echo "debug log contains literal backslash-r-backslash-n escapes"
+            exit 1
+          fi
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
           grep -q 'SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified' build/uefi/debug.log

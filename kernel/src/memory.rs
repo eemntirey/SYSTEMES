@@ -130,7 +130,7 @@ impl PhysicalFrameAllocator {
             end: address.checked_add(PAGE_SIZE).ok_or(FrameFreeError::AddressNotManaged)?,
         };
         if !self.managed[..self.managed_count].iter().any(|range| {
-            address >= range.start && frame.end <= range.end
+            range.contains(address) && frame.end <= range.end
         }) {
             return Err(FrameFreeError::AddressNotManaged);
         }

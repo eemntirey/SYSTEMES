@@ -85,7 +85,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     let mut frame_allocator = match PhysicalFrameAllocator::from_uefi_memory_map(memory_map, descriptor_size) {
         Ok(allocator) => allocator,
         Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid UEFI memory descriptors\\r\\n") };
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid UEFI memory descriptors\r\n") };
             halt();
         }
     };
@@ -93,24 +93,24 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     let test_frame = match frame_allocator.allocate_frame() {
         Some(address) => address,
         None => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: no conventional memory frames\\r\\n") };
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: no conventional memory frames\r\n") };
             halt();
         }
     };
     if frame_allocator.free_frame(test_frame).is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame release failed\\r\\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame release failed\r\n") };
         halt();
     }
     if frame_allocator.free_pages() != initial_free_pages {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame accounting mismatch\\r\\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: physical frame accounting mismatch\r\n") };
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\r\n") };
     if systemes_kernel::paging::enable_nx().is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU does not support NX\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU does not support NX\r\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\r\n"); }
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
     if !systemes_kernel::interrupts::verify_task_register() {
@@ -122,10 +122,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\r\n") };
-    unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
-    unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: GDT initialized\r\n") };
+    unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\r\n") };
     if !systemes_kernel::interrupts::verify_local_apic_gates() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\r\n"); }
         halt();
     }
     // SAFETY: UEFI identity mappings remain active while the new page tables are built.
@@ -134,7 +134,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     } {
         Ok(root) => root,
         Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: page-table allocation failed\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: page-table allocation failed\r\n"); }
             halt();
         }
     };
@@ -146,44 +146,44 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     ];
     // SAFETY: The inherited UEFI identity map is active and linker bounds are page aligned.
     if unsafe { systemes_kernel::paging::protect_regions(&mut frame_allocator, page_table_root, &kernel_regions) }.is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X section mapping failed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X section mapping failed\r\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES: kernel code RX, rodata R-NX, data and BSS RW-NX\r\n"); }
     // SAFETY: The new PML4 identity-maps boot data, stack, descriptors and framebuffer.
     unsafe { asm!("mov cr3, {}", in(reg) page_table_root, options(nostack, preserves_flags)) };
     let active_cr3: u64;
     // SAFETY: Reading CR3 is valid in ring 0 on x86_64.
     unsafe { asm!("mov {}, cr3", out(reg) active_cr3, options(nomem, nostack, preserves_flags)) };
     if (active_cr3 & 0x000F_FFFF_FFFF_F000) != page_table_root {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR3 verification failed\\r\\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR3 verification failed\r\n") };
         halt();
     }
     if systemes_kernel::paging::enable_write_protect().is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR0.WP activation failed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CR0.WP activation failed\r\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: CR0.WP supervisor write protection enabled\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES: CR0.WP supervisor write protection enabled\r\n"); }
     if unsafe { systemes_kernel::paging::verify_regions(page_table_root, &kernel_regions) }.is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X page-table verification failed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: W^X page-table verification failed\r\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\r\n") };
     if systemes_kernel::heap::initialize().is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap initialization failed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap initialization failed\r\n"); }
         halt();
     }
     if !systemes_kernel::heap::is_initialized() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap state invalid\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap state invalid\r\n"); }
         halt();
     }
-    unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\r\n"); }
     #[cfg(feature = "qemu-heap-test")]
     {
         let layout = match core::alloc::Layout::from_size_align(128, 64) {
             Ok(layout) => layout,
             Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid heap test layout\\r\\n"); }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid heap test layout\r\n"); }
                 halt();
             }
         };
@@ -191,25 +191,25 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         // SAFETY: The global allocator has been initialized and this layout is valid.
         let allocation = unsafe { alloc::alloc::alloc(layout) };
         if allocation.is_null() {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test allocation failed\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test allocation failed\r\n"); }
             halt();
         }
         // SAFETY: The allocation contains 128 writable bytes and remains live here.
         unsafe { allocation.write(0x5A); }
         // SAFETY: The allocation is still live and contains the byte written above.
         if unsafe { allocation.read() } != 0x5A {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test data mismatch\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test data mismatch\r\n"); }
             halt();
         }
         // SAFETY: Return the exact pointer with the original layout.
         unsafe { alloc::alloc::dealloc(allocation, layout); }
         if systemes_kernel::heap::free_bytes() != initial_free {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test coalescing failed\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test coalescing failed\r\n"); }
             halt();
         }
-        unsafe { debug_write(b"SYSTEMES_TEST: dynamic heap allocation, alignment and free coalescing verified\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: dynamic heap allocation, alignment and free coalescing verified\r\n"); }
     }
-    unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\\r\\n") };
+    unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\r\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
             0 => 0x00_20_C0_70u32, // GOP PixelRedGreenBlueReserved8BitPerColor
@@ -311,10 +311,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             unsafe { asm!("hlt", options(nomem, nostack)); }
         }
         if systemes_kernel::clock::ticks() < 3 || systemes_kernel::clock::now_millis() < 30 {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: monotonic clock did not advance with APIC ticks\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: monotonic clock did not advance with APIC ticks\r\n"); }
             halt();
         }
-        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced\r\n"); }
         if !cfg!(feature = "qemu-preemptive-scheduler-test") {
             // SAFETY: No preemptive test follows, so the timer can be stopped after this proof.
             unsafe { asm!("cli", options(nomem, nostack)); }
@@ -375,40 +375,40 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     {
         let test_frame = match frame_allocator.allocate_frame() {
             Some(address) => address,
-            None => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test frame unavailable\\r\\n"); } halt(); }
+            None => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test frame unavailable\r\n"); } halt(); }
         };
         let test_end = match test_frame.checked_add(systemes_kernel::memory::PAGE_SIZE) {
             Some(end) if test_frame < systemes_kernel::paging::IDENTITY_MAP_BYTES => end,
-            _ => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid NX test frame\\r\\n"); } halt(); }
+            _ => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid NX test frame\r\n"); } halt(); }
         };
         let test_region = [MemoryRegion { start: test_frame, end: test_end, permissions: PagePermissions::ReadWriteNoExecute }];
         if unsafe { systemes_kernel::paging::protect_regions(&mut frame_allocator, page_table_root, &test_region) }.is_err()
             || unsafe { systemes_kernel::paging::verify_regions(page_table_root, &test_region) }.is_err() {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test mapping verification failed\\r\\n"); }
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test mapping verification failed\r\n"); }
             halt();
         }
         // SAFETY: The allocated identity-mapped frame is deliberately RW+NX for this fault test.
         unsafe { core::ptr::write_volatile(test_frame as *mut u8, 0xC3); }
-        unsafe { debug_write(b"SYSTEMES_TEST: attempting instruction fetch from NX page\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: attempting instruction fetch from NX page\r\n"); }
         // SAFETY: This call must fault with #PF(P=1, I/D=1), error code 0x11.
         let test_function: extern "C" fn() = unsafe { core::mem::transmute(test_frame as usize) };
         test_function();
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX execution was not blocked\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX execution was not blocked\r\n"); }
         halt();
     }
     #[cfg(feature = "qemu-rx-write-test")]
     {
-        unsafe { debug_write(b"SYSTEMES_TEST: attempting write to RX kernel text\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: attempting write to RX kernel text\r\n"); }
         // SAFETY: This deliberate volatile write must fault with #PF(P=1, W/R=1), error code 0x3.
         unsafe { core::ptr::write_volatile(core::ptr::addr_of!(__text_start) as *mut u8, 0x90); }
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: RX text write was not blocked\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: RX text write was not blocked\r\n"); }
         halt();
     }
     #[cfg(feature = "qemu-exception-test")]
     {
         // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
         unsafe { asm!("int3", options(nomem, nostack)) };
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\\r\\n") };
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\r\n") };
         halt();
     }
     halt();
