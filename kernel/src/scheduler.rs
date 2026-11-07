@@ -1,7 +1,7 @@
-//! Cooperative single-core kernel task scheduler for x86_64.
+//! Single-core kernel task scheduler for x86_64.
 //!
-//! Tasks share the kernel address space and switch only at explicit yield points.
-//! Preemptive scheduling is a separate follow-up capability.
+//! Tasks share the kernel address space and are switched by cooperative yield or
+//! Local APIC timer preemption. Legacy x87/MMX/SSE state is eagerly isolated per task.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
@@ -439,6 +439,12 @@ mod qemu_test {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fpu_context_image_has_fxsave_size_and_alignment() {
+        assert_eq!(core::mem::size_of::<FpuState>(), 512);
+        assert_eq!(core::mem::align_of::<FpuState>(), 16);
+    }
 
     #[test]
     fn task_states_have_stable_kernel_values() {
