@@ -277,6 +277,35 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-address-space-test")]
+    {
+        let interrupt_flag: u64;
+        // SAFETY: Save the interrupt state and keep the CR3 test non-preemptible.
+        unsafe {
+            asm!("pushfq; pop {}", out(reg) interrupt_flag, options(nomem, nostack, preserves_flags));
+            asm!("cli", options(nomem, nostack));
+        }
+        let result = unsafe {
+            systemes_kernel::address_space::run_qemu_address_space_test(&mut frame_allocator, page_table_root)
+        };
+        // SAFETY: Restore the interrupt flag captured before the test.
+        unsafe {
+            if interrupt_flag & (1 << 9) != 0 {
+                asm!("sti", options(nomem, nostack));
+            }
+        }
+        match result {
+            Ok(()) => {
+                unsafe { debug_write(b"SYSTEMES: process address space created\r\n"); }
+                unsafe { debug_write(b"SYSTEMES_TEST: user page mapped with U/S and survived CR3 switch\r\n"); }
+                unsafe { debug_write(b"SYSTEMES_TEST: kernel identity mapping shared by the process address space\r\n"); }
+            }
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: address space test failed\r\n"); }
+                halt();
+            }
+        }
+    }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
         unsafe { debug_write(b"SYSTEMES_TEST: invoke vector 2 through IST2\r\n"); }
