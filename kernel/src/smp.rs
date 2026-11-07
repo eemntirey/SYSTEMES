@@ -1,359 +1,267 @@
-//! Multiprocessor topology and per-CPU startup state.
+//! SMP topology and per-CPU lifecycle primitives for x86_64.
 //!
-//! This module is the software foundation for K2.11. It deliberately does not
-//! claim that an AP is running merely because firmware listed it: APs move to
-//! `Online` only after the future trampoline/entry path completes its handshake.
-//! The actual INIT/SIPI trampoline and per-CPU descriptor-table installation are
-//! separate steps and must be wired before SMP is enabled.
+//! This is the SMP data-plane foundation only. It does not send INIT/SIPI IPIs
+//! or claim secondary CPUs are running; AP trampoline and per-CPU descriptor
+//! initialization remain explicit follow-up work.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-
-use crate::acpi::MadtInfo;
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 pub const MAX_CPUS: usize = 64;
 
-const STATE_ABSENT: u8 = 0;
-const STATE_DISCOVERED: u8 = 1;
-const STATE_STARTING: u8 = 2;
-const STATE_ONLINE: u8 = 3;
-const STATE_FAILED: u8 = 4;
-
-/// Lifecycle state of one logical processor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum CpuState {
-    Absent = STATE_ABSENT,
-    Discovered = STATE_DISCOVERED,
-    Starting = STATE_STARTING,
-    Online = STATE_ONLINE,
-    Failed = STATE_FAILED,
+    Empty = 0,
+    Discovered = 1,
+    Prepared = 2,
+    Starting = 3,
+    Online = 4,
+    Failed = 5,
 }
 
 impl CpuState {
     fn from_raw(value: u8) -> Self {
         match value {
-            STATE_DISCOVERED => Self::Discovered,
-            STATE_STARTING => Self::Starting,
-            STATE_ONLINE => Self::Online,
-            STATE_FAILED => Self::Failed,
-            _ => Self::Absent,
+            1 => Self::Discovered,
+            2 => Self::Prepared,
+            3 => Self::Starting,
+            4 => Self::Online,
+            5 => Self::Failed,
+            _ => Self::Empty,
         }
     }
 }
 
-/// Firmware-provided identity for a processor which ACPI marks as enabled.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CpuDescriptor {
-    pub processor_uid: u8,
-    pub apic_id: u8,
-}
-
-/// A bounded, validated view of the enabled processors in the MADT.
-///
-/// The BSP is always placed at index zero. Remaining processors retain their
-/// firmware order, making indices stable for a given MADT.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CpuTopology {
-    cpus: [CpuDescriptor; MAX_CPUS],
-    len: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TopologyError {
-    EmptyMadt,
-    TooManyCpus,
-    MissingBootstrapProcessor,
-    DuplicateApicId,
-}
-
-impl CpuTopology {
-    /// Build the boot-time CPU inventory from enabled MADT Local APIC records.
-    ///
-    /// Entries with only the ACPI "online capable" bit set are not started:
-    /// hot-plug support is not implemented yet.
-    pub fn from_madt(madt: &MadtInfo, bsp_apic_id: u8) -> Result<Self, TopologyError> {
-        if madt.local_apic_count == 0 {
-            return Err(TopologyError::EmptyMadt);
-        }
-
-        let mut topology = Self {
-            cpus: [CpuDescriptor::default(); MAX_CPUS],
-            len: 0,
-        };
-        let mut bsp = None;
-        // Track every enabled APIC ID, including the BSP which is held aside
-        // until the inventory is reordered. Checking only `topology.cpus`
-        // misses duplicates of the BSP itself.
-        let mut seen_apic_ids = [false; 256];
-
-        for entry in madt.local_apics.iter().take(madt.local_apic_count) {
-            // MADT Local APIC flags bit 0 means enabled. Bit 1 alone means
-            // online-capable and is intentionally excluded until hot-plug exists.
-            if entry.flags & 1 == 0 {
-                continue;
-            }
-
-            let seen = &mut seen_apic_ids[entry.apic_id as usize];
-            if *seen {
-                return Err(TopologyError::DuplicateApicId);
-            }
-            *seen = true;
-            if topology.len == MAX_CPUS {
-                return Err(TopologyError::TooManyCpus);
-            }
-
-            let descriptor = CpuDescriptor {
-                processor_uid: entry.processor_uid,
-                apic_id: entry.apic_id,
-            };
-            if entry.apic_id == bsp_apic_id {
-                bsp = Some(descriptor);
-            } else {
-                topology.cpus[topology.len] = descriptor;
-                topology.len += 1;
-            }
-        }
-
-        let bsp = bsp.ok_or(TopologyError::MissingBootstrapProcessor)?;
-        if topology.len == MAX_CPUS {
-            return Err(TopologyError::TooManyCpus);
-        }
-        for index in (1..=topology.len).rev() {
-            topology.cpus[index] = topology.cpus[index - 1];
-        }
-        topology.cpus[0] = bsp;
-        topology.len += 1;
-
-        Ok(topology)
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    pub fn bsp(&self) -> CpuDescriptor {
-        self.cpus[0]
-    }
-
-    pub fn get(&self, index: usize) -> Option<CpuDescriptor> {
-        if index < self.len {
-            Some(self.cpus[index])
-        } else {
-            None
-        }
-    }
-
-    pub fn application_processors(&self) -> &[CpuDescriptor] {
-        &self.cpus[1..self.len]
-    }
-}
-
-struct CpuSlot {
-    apic_id: AtomicU8,
+#[repr(C, align(64))]
+pub struct CpuLocal {
+    apic_id: AtomicU32,
+    logical_id: AtomicU32,
     state: AtomicU8,
+    startup_error: AtomicU32,
 }
 
-impl CpuSlot {
+impl CpuLocal {
     const fn new() -> Self {
         Self {
-            apic_id: AtomicU8::new(0),
-            state: AtomicU8::new(STATE_ABSENT),
+            apic_id: AtomicU32::new(u32::MAX),
+            logical_id: AtomicU32::new(u32::MAX),
+            state: AtomicU8::new(CpuState::Empty as u8),
+            startup_error: AtomicU32::new(0),
         }
+    }
+
+    pub fn apic_id(&self) -> Option<u32> {
+        let id = self.apic_id.load(Ordering::Acquire);
+        (id != u32::MAX).then_some(id)
+    }
+
+    pub fn logical_id(&self) -> Option<usize> {
+        let id = self.logical_id.load(Ordering::Acquire);
+        (id != u32::MAX).then_some(id as usize)
+    }
+
+    pub fn state(&self) -> CpuState {
+        CpuState::from_raw(self.state.load(Ordering::Acquire))
+    }
+
+    pub fn startup_error(&self) -> u32 {
+        self.startup_error.load(Ordering::Acquire)
     }
 }
 
-/// Atomic per-CPU lifecycle registry shared by the BSP and AP entry paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SmpError {
+    CapacityExceeded,
+    DuplicateApicId,
+    BootstrapAlreadyRegistered,
+    InvalidLogicalId,
+    InvalidStateTransition,
+}
+
 pub struct CpuRegistry {
-    initialization_claimed: AtomicBool,
-    initialized: AtomicBool,
-    slots: [CpuSlot; MAX_CPUS],
-    count: AtomicU8,
+    cpus: [CpuLocal; MAX_CPUS],
+    count: AtomicUsize,
+    registration_lock: AtomicBool,
+    bootstrap_logical_id: AtomicUsize,
 }
 
 impl CpuRegistry {
     pub const fn new() -> Self {
         Self {
-            initialization_claimed: AtomicBool::new(false),
-            initialized: AtomicBool::new(false),
-            slots: [const { CpuSlot::new() }; MAX_CPUS],
-            count: AtomicU8::new(0),
+            cpus: [const { CpuLocal::new() }; MAX_CPUS],
+            count: AtomicUsize::new(0),
+            registration_lock: AtomicBool::new(false),
+            bootstrap_logical_id: AtomicUsize::new(usize::MAX),
         }
     }
 
-    /// Publish the validated topology. The BSP is marked online; APs remain
-    /// discovered until their startup handshake succeeds.
-    pub fn initialize(&self, topology: &CpuTopology) -> Result<(), RegistryError> {
-        if topology.is_empty() || topology.len() > MAX_CPUS {
-            return Err(RegistryError::InvalidTopology);
+    fn lock_registration(&self) -> RegistrationGuard<'_> {
+        while self.registration_lock.compare_exchange(
+            false, true, Ordering::Acquire, Ordering::Relaxed
+        ).is_err() {
+            core::hint::spin_loop();
         }
-        self.initialization_claimed
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| RegistryError::AlreadyInitialized)?;
+        RegistrationGuard(&self.registration_lock)
+    }
 
-        for index in 0..topology.len() {
-            let descriptor = topology.get(index).ok_or(RegistryError::InvalidTopology)?;
-            self.slots[index].apic_id.store(descriptor.apic_id, Ordering::Relaxed);
-            self.slots[index].state.store(
-                if index == 0 { STATE_ONLINE } else { STATE_DISCOVERED },
-                Ordering::Relaxed,
-            );
+    /// Register one firmware-discovered processor. The BSP starts Online;
+    /// application processors start Discovered and require explicit transitions.
+    pub fn register(&self, apic_id: u32, bootstrap: bool) -> Result<usize, SmpError> {
+        let _guard = self.lock_registration();
+        let count = self.count.load(Ordering::Relaxed);
+
+        if bootstrap && self.bootstrap_logical_id.load(Ordering::Relaxed) != usize::MAX {
+            return Err(SmpError::BootstrapAlreadyRegistered);
         }
-        self.count.store(topology.len() as u8, Ordering::Relaxed);
-        self.initialized.store(true, Ordering::Release);
-        Ok(())
+        if self.cpus.iter().take(count).any(|cpu| {
+            cpu.apic_id.load(Ordering::Relaxed) == apic_id
+        }) {
+            return Err(SmpError::DuplicateApicId);
+        }
+        if count == MAX_CPUS {
+            return Err(SmpError::CapacityExceeded);
+        }
+
+        let cpu = &self.cpus[count];
+        cpu.apic_id.store(apic_id, Ordering::Relaxed);
+        cpu.logical_id.store(count as u32, Ordering::Relaxed);
+        cpu.startup_error.store(0, Ordering::Relaxed);
+        let initial = if bootstrap { CpuState::Online } else { CpuState::Discovered };
+        cpu.state.store(initial as u8, Ordering::Release);
+        self.count.store(count + 1, Ordering::Release);
+        if bootstrap {
+            self.bootstrap_logical_id.store(count, Ordering::Release);
+        }
+        Ok(count)
     }
 
     pub fn count(&self) -> usize {
-        if !self.initialized.load(Ordering::Acquire) {
-            0
-        } else {
-            self.count.load(Ordering::Acquire) as usize
+        self.count.load(Ordering::Acquire)
+    }
+
+    pub fn bootstrap_logical_id(&self) -> Option<usize> {
+        let id = self.bootstrap_logical_id.load(Ordering::Acquire);
+        (id != usize::MAX).then_some(id)
+    }
+
+    pub fn cpu(&self, logical_id: usize) -> Option<&CpuLocal> {
+        if logical_id >= self.count() { return None; }
+        self.cpus.get(logical_id)
+    }
+
+    pub fn find_by_apic_id(&self, apic_id: u32) -> Option<usize> {
+        self.cpus.iter().take(self.count()).position(|cpu| {
+            cpu.apic_id.load(Ordering::Acquire) == apic_id
+        })
+    }
+
+    pub fn mark_prepared(&self, id: usize) -> Result<(), SmpError> {
+        self.transition(id, CpuState::Discovered, CpuState::Prepared)
+    }
+
+    pub fn begin_startup(&self, id: usize) -> Result<(), SmpError> {
+        self.transition(id, CpuState::Prepared, CpuState::Starting)
+    }
+
+    pub fn mark_online(&self, id: usize) -> Result<(), SmpError> {
+        self.transition(id, CpuState::Starting, CpuState::Online)
+    }
+
+    pub fn mark_failed(&self, id: usize, error: u32) -> Result<(), SmpError> {
+        let cpu = self.cpu(id).ok_or(SmpError::InvalidLogicalId)?;
+        let state = cpu.state.load(Ordering::Acquire);
+        if state != CpuState::Discovered as u8
+            && state != CpuState::Prepared as u8
+            && state != CpuState::Starting as u8 {
+            return Err(SmpError::InvalidStateTransition);
         }
+        cpu.startup_error.store(error, Ordering::Relaxed);
+        cpu.state.compare_exchange(
+            state, CpuState::Failed as u8, Ordering::AcqRel, Ordering::Acquire
+        ).map(|_| ()).map_err(|_| SmpError::InvalidStateTransition)
     }
 
-    pub fn apic_id(&self, index: usize) -> Option<u8> {
-        if index >= self.count() {
-            return None;
-        }
-        Some(self.slots[index].apic_id.load(Ordering::Acquire))
-    }
-
-    pub fn state(&self, index: usize) -> CpuState {
-        if index >= self.count() {
-            return CpuState::Absent;
-        }
-        CpuState::from_raw(self.slots[index].state.load(Ordering::Acquire))
-    }
-
-    /// Claim an AP for startup. The BSP (index zero) cannot enter this path.
-    pub fn begin_startup(&self, index: usize) -> Result<(), RegistryError> {
-        if index == 0 || index >= self.count() {
-            return Err(RegistryError::InvalidCpuIndex);
-        }
-        self.slots[index]
-            .state
-            .compare_exchange(
-                STATE_DISCOVERED,
-                STATE_STARTING,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .map(|_| ())
-            .map_err(|_| RegistryError::InvalidStateTransition)
-    }
-
-    /// Complete the AP handshake after its stack, GDT/IDT and LAPIC are ready.
-    pub fn mark_online(&self, index: usize) -> Result<(), RegistryError> {
-        self.transition_ap(index, STATE_STARTING, STATE_ONLINE)
-    }
-
-    pub fn mark_failed(&self, index: usize) -> Result<(), RegistryError> {
-        self.transition_ap(index, STATE_STARTING, STATE_FAILED)
-    }
-
-    fn transition_ap(&self, index: usize, from: u8, to: u8) -> Result<(), RegistryError> {
-        if index == 0 || index >= self.count() {
-            return Err(RegistryError::InvalidCpuIndex);
-        }
-        self.slots[index]
-            .state
-            .compare_exchange(from, to, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| ())
-            .map_err(|_| RegistryError::InvalidStateTransition)
-    }
-
-    pub fn online_count(&self) -> usize {
-        (0..self.count())
-            .filter(|index| self.state(*index) == CpuState::Online)
-            .count()
+    fn transition(&self, id: usize, from: CpuState, to: CpuState) -> Result<(), SmpError> {
+        let cpu = self.cpu(id).ok_or(SmpError::InvalidLogicalId)?;
+        cpu.state.compare_exchange(
+            from as u8, to as u8, Ordering::AcqRel, Ordering::Acquire
+        ).map(|_| ()).map_err(|_| SmpError::InvalidStateTransition)
     }
 }
 
 impl Default for CpuRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RegistryError {
-    AlreadyInitialized,
-    InvalidTopology,
-    InvalidCpuIndex,
-    InvalidStateTransition,
+struct RegistrationGuard<'a>(&'a AtomicBool);
+
+impl Drop for RegistrationGuard<'_> {
+    fn drop(&mut self) { self.0.store(false, Ordering::Release); }
 }
 
-/// Global registry used by early boot and subsequent per-CPU initialization.
 pub static CPU_REGISTRY: CpuRegistry = CpuRegistry::new();
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acpi::{InterruptOverride, IoApic, LocalApic};
-
-    fn madt(entries: &[(u8, u8, u32)]) -> MadtInfo {
-        let mut info = MadtInfo {
-            local_apic_address: 0xFEE0_0000,
-            flags: 1,
-            local_apics: [LocalApic::default(); 64],
-            local_apic_count: entries.len(),
-            io_apics: [IoApic::default(); 8],
-            io_apic_count: 0,
-            overrides: [InterruptOverride::default(); 16],
-            override_count: 0,
-        };
-        for (index, (uid, apic_id, flags)) in entries.iter().copied().enumerate() {
-            info.local_apics[index] = LocalApic {
-                processor_uid: uid,
-                apic_id,
-                flags,
-            };
-        }
-        info
-    }
 
     #[test]
-    fn topology_places_bsp_first_and_excludes_disabled_processors() {
-        let info = madt(&[(0, 2, 1), (1, 7, 1), (2, 9, 0), (3, 11, 2)]);
-        let topology = CpuTopology::from_madt(&info, 7).unwrap();
-        assert_eq!(topology.len(), 2);
-        assert_eq!(topology.bsp().apic_id, 7);
-        assert_eq!(topology.get(1).unwrap().apic_id, 2);
-    }
-
-    #[test]
-    fn topology_rejects_missing_bsp_and_duplicate_apic_ids() {
-        let missing = madt(&[(0, 2, 1)]);
-        assert_eq!(
-            CpuTopology::from_madt(&missing, 7),
-            Err(TopologyError::MissingBootstrapProcessor)
-        );
-
-        let duplicate = madt(&[(0, 7, 1), (1, 7, 1)]);
-        assert_eq!(
-            CpuTopology::from_madt(&duplicate, 7),
-            Err(TopologyError::DuplicateApicId)
-        );
-    }
-
-    #[test]
-    fn registry_requires_a_valid_ap_startup_transition() {
-        let info = madt(&[(0, 2, 1), (1, 7, 1)]);
-        let topology = CpuTopology::from_madt(&info, 2).unwrap();
+    fn registers_bootstrap_and_secondary_processors() {
         let registry = CpuRegistry::new();
-        registry.initialize(&topology).unwrap();
+        assert_eq!(registry.register(0, true), Ok(0));
+        assert_eq!(registry.register(2, false), Ok(1));
+        assert_eq!(registry.count(), 2);
+        assert_eq!(registry.bootstrap_logical_id(), Some(0));
+        assert_eq!(registry.find_by_apic_id(2), Some(1));
+        assert_eq!(registry.cpu(0).unwrap().state(), CpuState::Online);
+        assert_eq!(registry.cpu(1).unwrap().state(), CpuState::Discovered);
+    }
 
-        assert_eq!(registry.online_count(), 1);
-        assert_eq!(registry.state(1), CpuState::Discovered);
-        assert_eq!(registry.mark_online(1), Err(RegistryError::InvalidStateTransition));
-        registry.begin_startup(1).unwrap();
-        assert_eq!(registry.state(1), CpuState::Starting);
-        registry.mark_online(1).unwrap();
-        assert_eq!(registry.online_count(), 2);
-        assert_eq!(registry.begin_startup(1), Err(RegistryError::InvalidStateTransition));
+    #[test]
+    fn rejects_duplicate_apic_ids_and_second_bootstrap() {
+        let registry = CpuRegistry::new();
+        assert_eq!(registry.register(7, true), Ok(0));
+        assert_eq!(registry.register(7, false), Err(SmpError::DuplicateApicId));
+        assert_eq!(registry.register(8, true), Err(SmpError::BootstrapAlreadyRegistered));
+        assert_eq!(registry.count(), 1);
+    }
+
+    #[test]
+    fn secondary_must_follow_the_startup_state_machine() {
+        let registry = CpuRegistry::new();
+        registry.register(0, true).unwrap();
+        let ap = registry.register(3, false).unwrap();
+        assert_eq!(registry.mark_online(ap), Err(SmpError::InvalidStateTransition));
+        registry.mark_prepared(ap).unwrap();
+        registry.begin_startup(ap).unwrap();
+        registry.mark_online(ap).unwrap();
+        assert_eq!(registry.cpu(ap).unwrap().state(), CpuState::Online);
+        assert_eq!(registry.mark_online(ap), Err(SmpError::InvalidStateTransition));
+    }
+
+    #[test]
+    fn records_startup_failure() {
+        let registry = CpuRegistry::new();
+        registry.register(0, true).unwrap();
+        let ap = registry.register(1, false).unwrap();
+        registry.mark_failed(ap, 0x10).unwrap();
+        assert_eq!(registry.cpu(ap).unwrap().state(), CpuState::Failed);
+        assert_eq!(registry.cpu(ap).unwrap().startup_error(), 0x10);
+    }
+
+    #[test]
+    fn rejects_invalid_logical_ids() {
+        let registry = CpuRegistry::new();
+        assert_eq!(registry.mark_prepared(0), Err(SmpError::InvalidLogicalId));
+        assert_eq!(registry.cpu(MAX_CPUS), None);
+    }
+
+    #[test]
+    fn enforces_fixed_registry_capacity() {
+        let registry = CpuRegistry::new();
+        for id in 0..MAX_CPUS as u32 {
+            registry.register(id, id == 0).unwrap();
+        }
+        assert_eq!(registry.register(1000, false), Err(SmpError::CapacityExceeded));
     }
 }
