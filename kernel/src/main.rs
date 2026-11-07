@@ -393,9 +393,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     #[cfg(feature = "qemu-exception-test")]
     {
-        // The CI boot test deliberately raises #BP to prove the installed IDT dispatches.
+        // The CI boot test deliberately raises #BP to prove the handler can
+        // advance RIP past INT3 and return through iretq.
+        unsafe { debug_write(b"SYSTEMES_TEST: invoking INT3 breakpoint\r\n"); }
         unsafe { asm!("int3", options(nomem, nostack)) };
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: breakpoint handler returned\r\n") };
+        unsafe { debug_write(b"SYSTEMES_TEST: breakpoint returned to caller through iretq\r\n"); }
         halt();
     }
     halt();
