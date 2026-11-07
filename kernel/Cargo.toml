@@ -11,6 +11,7 @@ qemu-nx-execute-test = []
 qemu-rx-write-test = []
 qemu-heap-test = []
 qemu-acpi-madt-test = []
+qemu-apic-clock-test = []
 
 [lib]
 path = "src/lib.rs"

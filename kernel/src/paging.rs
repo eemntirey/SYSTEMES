@@ -15,6 +15,8 @@ const FRAME_COUNT: usize = 2 + ENTRIES;
 const EFER_MSR: u32 = 0xC000_0080;
 const EFER_NXE: u64 = 1 << 11;
 const CPUID_NX: u32 = 1 << 20;
+const CPUID_PAT: u32 = 1 << 16;
+const IA32_PAT_MSR: u32 = 0x277;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PagingError {
@@ -27,6 +29,7 @@ pub enum PagingError {
     WriteExecuteViolation,
     PermissionMismatch,
     WriteProtectUnavailable,
+    PatUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -199,6 +202,55 @@ pub unsafe fn protect_regions(
     Ok(())
 }
 
+
+fn mmio_page_range(physical_address: u64, length: u64) -> Result<(u64, u64), PagingError> {
+    if length == 0 { return Err(PagingError::InvalidRegion); }
+    let page_start = physical_address & !(PAGE_SIZE - 1);
+    let end = physical_address.checked_add(length).ok_or(PagingError::InvalidRegion)?;
+    let page_end = end.checked_add(PAGE_SIZE - 1).ok_or(PagingError::InvalidRegion)? & !(PAGE_SIZE - 1);
+    if page_start >= IDENTITY_MAP_BYTES || page_end > IDENTITY_MAP_BYTES || page_end <= page_start {
+        return Err(PagingError::InvalidRegion);
+    }
+    Ok((page_start, page_end))
+}
+
+/// Identity-map an MMIO range using PAT entry 3, which must be uncacheable.
+/// PWT|PCD select the UC PAT entry when the PTE PAT bit is clear.
+pub unsafe fn map_mmio_uncached(
+    allocator: &mut PhysicalFrameAllocator,
+    root: u64,
+    physical_address: u64,
+    length: u64,
+) -> Result<*mut u8, PagingError> {
+    const PWT: u64 = 1 << 3;
+    const PCD: u64 = 1 << 4;
+    // SAFETY: CPUID leaf 1 is available on the x86_64 target.
+    if unsafe { __cpuid(1) }.edx & CPUID_PAT == 0 {
+        return Err(PagingError::PatUnsupported);
+    }
+    let pat_low: u32;
+    let pat_high: u32;
+    // SAFETY: IA32_PAT is an architectural MSR on CPUs advertising PAT.
+    unsafe { core::arch::asm!("rdmsr", in("ecx") IA32_PAT_MSR, out("eax") pat_low, out("edx") pat_high, options(nomem, nostack)); }
+    let pat = ((pat_high as u64) << 32) | pat_low as u64;
+    if (pat >> 24) & 0xFF != 0 {
+        return Err(PagingError::PatUnsupported);
+    }
+    let (page_start, page_end) = mmio_page_range(physical_address, length)?;
+    let mut address = page_start;
+    while address < page_end {
+        // SAFETY: Caller supplies the active kernel-owned identity map and frame allocator.
+        let table = unsafe { ensure_4k_table(allocator, root, address)? };
+        let index = ((address >> 12) & 0x1ff) as usize;
+        // SAFETY: The leaf table is kernel-owned; range is validated and mapping is RW/NX/UC.
+        unsafe { table.add(index).write((address & ADDRESS_MASK) | PRESENT | WRITABLE | NX | PWT | PCD); }
+        // SAFETY: Invalidate the prior WB identity translation before MMIO access.
+        unsafe { core::arch::asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags)); }
+        address += PAGE_SIZE;
+    }
+    Ok(physical_address as *mut u8)
+}
+
 /// Verify that each requested 4 KiB leaf maps the same physical page with exact W/NX bits.
 pub unsafe fn verify_regions(root: u64, regions: &[MemoryRegion]) -> Result<(), PagingError> {
     validate_regions(regions)?;
@@ -234,7 +286,13 @@ pub const fn is_identity_mapped(address: u64) -> bool { address < IDENTITY_MAP_B
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn lower_512_gib_identity_window_is_exact() {
+    #[test] fn mmio_range_rejects_zero_length_overflow_and_out_of_window() {
+        assert_eq!(mmio_page_range(0xFEE0_0000, 0), Err(PagingError::InvalidRegion));
+        assert_eq!(mmio_page_range(u64::MAX - 1, 8), Err(PagingError::InvalidRegion));
+        assert_eq!(mmio_page_range(IDENTITY_MAP_BYTES, PAGE_SIZE), Err(PagingError::InvalidRegion));
+        assert_eq!(mmio_page_range(0xFEE0_0001, 1), Ok((0xFEE0_0000, 0xFEE0_1000)));
+    }
+        #[test] fn lower_512_gib_identity_window_is_exact() {
         assert_eq!(IDENTITY_MAP_BYTES, 1u64 << 39);
         assert!(is_identity_mapped(IDENTITY_MAP_BYTES - 1));
         assert!(!is_identity_mapped(IDENTITY_MAP_BYTES));
