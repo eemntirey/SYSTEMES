@@ -317,6 +317,7 @@ pub fn wake_sleepers(now: u64) -> usize {
         for index in 1..count {
             let task = task_ptr(index);
             if (*task).state.load(Ordering::Acquire) == TaskState::Blocked as u8
+                && (*task).wake_at.load(Ordering::Acquire) != 0
                 && (*task).wake_at.load(Ordering::Acquire) <= now {
                 (*task).wake_at.store(0, Ordering::Relaxed);
                 (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
@@ -359,6 +360,42 @@ pub fn sleep_for_ticks(ticks: u64) -> bool {
         let task = task_ptr(current);
         let deadline = crate::clock::ticks().saturating_add(ticks);
         (*task).wake_at.store(deadline, Ordering::Release);
+        (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
+    }
+    irq_restore(flags);
+    yield_now();
+    true
+}
+
+/// Block the current non-boot task until another task explicitly wakes it.
+pub fn block_current() -> bool {
+    let flags = irq_save_disable();
+    if !INITIALIZED.load(Ordering::Acquire) {
+        irq_restore(flags);
+        return false;
+    }
+    let current = CURRENT_TASK.load(Ordering::Acquire);
+    let count = TASK_COUNT.load(Ordering::Acquire);
+    if current == 0 || current >= count {
+        irq_restore(flags);
+        return false;
+    }
+    let mut alternate_runnable = false;
+    // SAFETY: Interrupts are disabled while checking and changing scheduler state.
+    unsafe {
+        for index in 0..count {
+            if index != current
+                && (*task_ptr(index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
+                alternate_runnable = true;
+                break;
+            }
+        }
+        if !alternate_runnable {
+            irq_restore(flags);
+            return false;
+        }
+        let task = task_ptr(current);
+        (*task).wake_at.store(0, Ordering::Release);
         (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
     }
     irq_restore(flags);
@@ -652,6 +689,7 @@ mod task_sleep_qemu_test {
     static SLEEP_FINISHED: AtomicU64 = AtomicU64::new(0);
     static OBSERVED_BLOCKED: AtomicUsize = AtomicUsize::new(0);
     static WORKER_DONE: AtomicUsize = AtomicUsize::new(0);
+    static EVENT_WAKE_DONE: AtomicUsize = AtomicUsize::new(0);
 
     extern "C" fn sleeper() {
         SLEEP_STARTED.store(crate::clock::ticks(), Ordering::Release);
@@ -670,16 +708,25 @@ mod task_sleep_qemu_test {
         WORKER_DONE.store(1, Ordering::Release);
     }
 
+    extern "C" fn event_waiter() {
+        if block_current() { EVENT_WAKE_DONE.store(1, Ordering::Release); }
+    }
+
+    extern "C" fn event_waker() {
+        while task_state(TaskId(3)) != Some(TaskState::Blocked) { core::hint::spin_loop(); }
+        if wake_task(TaskId(3)) { EVENT_WAKE_DONE.fetch_add(1, Ordering::AcqRel); }
+    }
+
     pub fn run() -> bool {
         SLEEP_STARTED.store(0, Ordering::Relaxed);
         SLEEP_FINISHED.store(0, Ordering::Relaxed);
         OBSERVED_BLOCKED.store(0, Ordering::Relaxed);
         WORKER_DONE.store(0, Ordering::Relaxed);
-        if initialize(&[sleeper, observer]).is_err() || !validate_initial_contexts() { return false; }
+        EVENT_WAKE_DONE.store(0, Ordering::Relaxed);
+        if initialize(&[sleeper, observer, event_waiter, event_waker]).is_err() || !validate_initial_contexts() { return false; }
         enable_preemption();
         loop {
-            let done = task_state(TaskId(1)) == Some(TaskState::Exited)
-                && task_state(TaskId(2)) == Some(TaskState::Exited);
+            let done = (1..=4).all(|index| task_state(TaskId(index)) == Some(TaskState::Exited));
             if done { break; }
             core::hint::spin_loop();
         }
@@ -689,7 +736,8 @@ mod task_sleep_qemu_test {
             && finished.wrapping_sub(started) >= 4
             && OBSERVED_BLOCKED.load(Ordering::Acquire) > 0
             && WORKER_DONE.load(Ordering::Acquire) == 1
-            && task_state(TaskId(1)) == Some(TaskState::Exited);
+            && task_state(TaskId(1)) == Some(TaskState::Exited)
+            && EVENT_WAKE_DONE.load(Ordering::Acquire) == 2;
         reset_after_all_tasks_exit() && valid
     }
 }
