@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
@@ -154,6 +156,46 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\\r\\n") };
+    if systemes_kernel::heap::initialize().is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap initialization failed\\r\\n"); }
+        halt();
+    }
+    if !systemes_kernel::heap::is_initialized() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap state invalid\\r\\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\\r\\n"); }
+    #[cfg(feature = "qemu-heap-test")]
+    {
+        let layout = match core::alloc::Layout::from_size_align(128, 64) {
+            Ok(layout) => layout,
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid heap test layout\\r\\n"); }
+                halt();
+            }
+        };
+        let initial_free = systemes_kernel::heap::free_bytes();
+        // SAFETY: The global allocator has been initialized and this layout is valid.
+        let allocation = unsafe { alloc::alloc::alloc(layout) };
+        if allocation.is_null() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test allocation failed\\r\\n"); }
+            halt();
+        }
+        // SAFETY: The allocation contains 128 writable bytes and remains live here.
+        unsafe { allocation.write(0x5A); }
+        // SAFETY: The allocation is still live and contains the byte written above.
+        if unsafe { allocation.read() } != 0x5A {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test data mismatch\\r\\n"); }
+            halt();
+        }
+        // SAFETY: Return the exact pointer with the original layout.
+        unsafe { alloc::alloc::dealloc(allocation, layout); }
+        if systemes_kernel::heap::free_bytes() != initial_free {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: heap test coalescing failed\\r\\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: dynamic heap allocation, alignment and free coalescing verified\\r\\n"); }
+    }
     unsafe { debug_write(b"SYSTEMES: kernel-owned 4-level identity paging active\\r\\n") };
     if boot.framebuffer_address != 0 && boot.framebuffer_width > 0 && boot.framebuffer_height > 0 {
         let pixel = match boot.framebuffer_pixel_format {
