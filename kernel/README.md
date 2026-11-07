@@ -3,12 +3,13 @@
 Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il démarre via le chargeur UEFI et ne dépend d'aucun hôte Windows, navigateur ou runtime externe.
 
 - Cible : `x86_64-unknown-none`
-- Entrée : `_start(BootInfo*)`, ABI System V x86_64
+- Entrée : stub `_start` bascule vers une pile noyau dédiée de 64 Kio avant d'appeler `systemes_kernel_main(BootInfo*)`, ABI System V x86_64
 - Contrat de démarrage : structure `BootInfo` versionnée, carte mémoire UEFI, framebuffer GOP et adresse ACPI RSDP
 - Mémoire physique : analyse des descripteurs UEFI et allocation/libération de frames de 4 Kio
 - Heap noyau : allocateur global first-fit de 1 Mio, alignement, libération et coalescence des blocs
 - Mémoire virtuelle : tables de pages x86_64 à quatre niveaux, activation NX, CR0.WP et protections RX / R-NX / RW-NX
 - Espaces d'adressage : PML4 privé par processus, mapping noyau PML4[0] partagé, pages utilisateur U/S à partir de 512 Gio et bascule CR3 vérifiée
+- Protection superviseur : SMEP/SMAP activés si CPUID les expose, avec helpers `stac`/`clac` et `UserAccessGuard` pour des accès user strictement encadrés
 - ACPI : découverte RSDP UEFI et analyse MADT (Local APIC, IOAPIC et overrides ISA)
 - Temps : timer Local APIC calibré sur PIT channel 2 et horloge monotone 100 Hz
 - Ordonnancement : tâches noyau coopératives via 0x41 et préemption par timer Local APIC 0x40
@@ -16,15 +17,15 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Cycle de vie des tâches : états Runnable/Blocked/Exited, sommeil sur horloge monotone et réveil par échéance ou événement
 - CPU : GDT et IDT propres au noyau, TSS x86_64 chargé dans TR=0x18, RSP0 dédié et piles IST1/IST2/IST3 pour #DF/NMI/#MC
 - Exceptions : #BP reprenable (le CPU sauvegarde l'adresse suivant `INT3` ; le handler restaure le contexte et exécute `iretq`) ; #PF/#GP/#DF restent fatales et tracées
-- Diagnostic : module console partagé (port QEMU `0xE9`, formatage hexadécimal/décimal testé hôte), sauts de ligne CRLF réels (la CI rejette les séquences littérales `\r\n`)
+- Diagnostic : sortie vers le port QEMU `0xE9` et COM1 après détection par loopback; panic avec emplacement/message, exceptions avec RIP/CS/RFLAGS et adresse CR2 pour #PF; les sauts de ligne sont CRLF
 
 ## Capacités présentes dans le code
 
 Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT, son TSS et son IDT, charge TR=0x18, vérifie RSP0 et le routage IST, puis construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le heap noyau après activation du mapping RW/NX, analyse la MADT ACPI fournie par le RSDP UEFI et initialise le framebuffer GOP lorsqu'il est disponible.
 
-La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF, les violations NX/RX et les commutations de pile IST2/IST3. Les scénarios `int 2` et `int 18` sont des interruptions logicielles qui valident les portes IDT et le mécanisme IST ; ils ne simulent pas un NMI électrique ni une véritable Machine Check.
+La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF, les violations NX/RX et les commutations de pile IST2/IST3. L'entrée bascule sur une pile BSS noyau dédiée; elle n'a pas encore de page de garde. Les scénarios `int 2` et `int 18` sont des interruptions logicielles qui valident les portes IDT et le mécanisme IST ; ils ne simulent pas un NMI électrique ni une véritable Machine Check.
 
-Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages reste hors périmètre. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. L'ordonnanceur prend en charge yield coopératif, préemption timer, sommeil sur échéance et blocage/réveil événementiel ; les tâches partagent l'espace noyau et le changement de contexte reste mono-cœur. Le contexte x87/MMX/SSE est isolé par tâche via FXSAVE64/FXRSTOR64. Les tests IST2/IST3 ne remplacent pas des tests matériels réels de NMI/Machine Check ; aucun Double Fault matériel réel n'est déclenché. Seul le #BP déclenché par `INT3` est reprenable ; les autres exceptions restent fatales et le retour depuis Ring 3 n'est pas encore implémenté. Les espaces d'adressage privés partagent le mapping noyau et exposent des pages U/S, mais aucun code Ring 3 ne les utilise encore ; les tables de pages ne sont pas encore libérées et SMEP/SMAP ne sont pas activés.
+Le heap initial est limité à une arène statique de 1 Mio ; l'extension dynamique par pages reste hors périmètre. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. L'ordonnanceur prend en charge yield coopératif, préemption timer, sommeil sur échéance et blocage/réveil événementiel ; les tâches partagent l'espace noyau et le changement de contexte reste mono-cœur. Le contexte x87/MMX/SSE est isolé par tâche via FXSAVE64/FXRSTOR64. Les tests IST2/IST3 ne remplacent pas des tests matériels réels de NMI/Machine Check ; aucun Double Fault matériel réel n'est déclenché. Seul le #BP déclenché par `INT3` est reprenable ; les autres exceptions restent fatales et le retour depuis Ring 3 n'est pas encore implémenté. Les espaces d'adressage privés partagent le mapping noyau et exposent des pages U/S, mais aucun code Ring 3 ne les utilise encore ; les tables de pages ne sont pas encore libérées. SMEP/SMAP ne sont activés que si le CPU les expose (la CI utilise `-cpu max` pour les prouver ; le modèle QEMU par défaut ne les fournit pas). Les accès user ne sont pas encore validés par marche de tables ni par des fautes récupérables : un pointeur user non mappé reste fatal jusqu'à T10.
 
 ## Limites actuelles
 

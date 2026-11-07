@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use systemes_kernel::{console::debug_write, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
@@ -18,6 +18,23 @@ unsafe extern "C" {
     static __bss_end: u8;
 }
 
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".bss.boot_stack")]
+static mut SYSTEMES_BOOT_STACK: [u8; 64 * 1024] = [0; 64 * 1024];
+
+global_asm!(
+    r#"
+    .global _start
+    .type _start, @function
+_start:
+    cli
+    lea rsp, [rip + __boot_stack_top]
+    and rsp, -16
+    call systemes_kernel_main
+    ud2
+"#
+);
+
 fn halt() -> ! {
     loop {
         // SAFETY: A fatal boot error must stop execution without returning to the loader.
@@ -26,9 +43,15 @@ fn halt() -> ! {
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text._start")]
-pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
-    
+pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
+    let serial_available = unsafe { systemes_kernel::console::initialize_serial() };
+    unsafe {
+        debug_write(if serial_available {
+            b"SYSTEMES: COM1 serial console initialized\r\n"
+        } else {
+            b"SYSTEMES: COM1 unavailable; QEMU debug console only\r\n"
+        })
+    };
     unsafe { debug_write(b"SYSTEMES: kernel entry reached\r\n") };
 
     if info.is_null() {
@@ -156,6 +179,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\r\n") };
+    let supervisor_protection = match systemes_kernel::uaccess::enable() {
+        Ok(features) => features,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP/SMAP activation did not latch\r\n"); }
+            halt();
+        }
+    };
+    unsafe { debug_write(b"SYSTEMES: supervisor access protection smep=") };
+    unsafe { debug_write(if supervisor_protection.smep { b"1" } else { b"0" }) };
+    unsafe { debug_write(b" smap=") };
+    unsafe { debug_write(if supervisor_protection.smap { b"1" } else { b"0" }) };
+    unsafe { debug_write(b"\r\n") };
     if systemes_kernel::heap::initialize().is_err() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap initialization failed\r\n"); }
         halt();
@@ -299,12 +334,47 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 unsafe { debug_write(b"SYSTEMES: process address space created\r\n"); }
                 unsafe { debug_write(b"SYSTEMES_TEST: user page mapped with U/S and survived CR3 switch\r\n"); }
                 unsafe { debug_write(b"SYSTEMES_TEST: kernel identity mapping shared by the process address space\r\n"); }
+                if supervisor_protection.smap {
+                    unsafe { debug_write(b"SYSTEMES_TEST: user page access succeeded with SMAP enabled and AC scoped\r\n"); }
+                }
             }
             Err(_) => {
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: address space test failed\r\n"); }
                 halt();
             }
         }
+    }
+    #[cfg(feature = "qemu-smap-violation-test")]
+    {
+        // SAFETY: The deliberate fault below must not race a timer-driven context switch.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        match unsafe {
+            systemes_kernel::uaccess::run_qemu_smap_violation_test(&mut frame_allocator, page_table_root)
+        } {
+            Ok(()) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMAP fault expected but the read succeeded\r\n"); }
+            }
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMAP violation test setup failed\r\n"); }
+            }
+        }
+        halt();
+    }
+    #[cfg(feature = "qemu-smep-violation-test")]
+    {
+        // SAFETY: The deliberate fault below must not race a timer-driven context switch.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        match unsafe {
+            systemes_kernel::uaccess::run_qemu_smep_violation_test(&mut frame_allocator, page_table_root)
+        } {
+            Ok(()) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP fault expected but the call returned\r\n"); }
+            }
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP violation test setup failed\r\n"); }
+            }
+        }
+        halt();
     }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {
@@ -433,7 +503,20 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
+    if let Some(location) = info.location() {
+        unsafe {
+            debug_write(b"  at ");
+            debug_write(location.file().as_bytes());
+            debug_write(b":");
+            systemes_kernel::console::debug_dec(location.line() as u64);
+            debug_write(b"\r\n");
+        }
+    }
+    unsafe {
+        debug_write(b"  message: ");
+        systemes_kernel::console::debug_fmt(format_args!("{}\r\n", info.message()));
+    }
     halt();
 }
