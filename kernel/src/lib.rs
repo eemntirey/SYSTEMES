@@ -7,6 +7,7 @@
 
 pub mod acpi;
 pub mod apic;
+pub mod console;
 pub mod clock;
 pub mod heap;
 pub mod interrupts;

@@ -6,6 +6,8 @@
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
 
+use crate::console::{debug_hex, debug_write};
+
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const TSS_SELECTOR: u16 = 0x18;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
@@ -671,24 +673,6 @@ pub extern "C" fn systemes_exception_dispatch(vector: u64, error_code: u64) -> !
         loop {
             asm!("hlt", options(nomem, nostack));
         }
-    }
-}
-
-unsafe fn outb(value: u8) {
-    // SAFETY: Port 0xE9 is the QEMU debug console used by the boot workflow.
-    unsafe { asm!("out dx, al", in("dx") 0xE9u16, in("al") value, options(nomem, nostack, preserves_flags)) };
-}
-
-unsafe fn debug_write(bytes: &[u8]) {
-    for byte in bytes {
-        unsafe { outb(*byte) };
-    }
-}
-
-unsafe fn debug_hex(value: u64) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for shift in (0..16).rev() {
-        unsafe { outb(HEX[((value >> (shift * 4)) & 0xF) as usize]) };
     }
 }
 

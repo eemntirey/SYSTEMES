@@ -2,18 +2,21 @@
 
 Ce document décrit exclusivement les livraisons du système d'exploitation autonome. Il ne définit aucune édition Desktop/Host Windows ni aucun produit parallèle.
 
-## Priorité immédiate — terminer et stabiliser le socle noyau
+## Priorité immédiate — consolider le socle noyau
 
-Le socle mémoire A est prioritaire : l'allocateur de frames et le heap dynamique doivent être terminés avant les étapes timer/temps et ordonnanceur. La chaîne historique K2.7 → K2.10 contient des PR empilées sur un historique antérieur à la suppression de l'ancien environnement Windows ; elle ne doit pas être fusionnée directement dans `main` sans portage chirurgical des seuls changements noyau et revalidation.
+Le socle mémoire, interruptions et ordonnancement est livré dans `main`. Les branches historiques `feat/k2-7-*` à `feat/k2-11-*` sont périmées (empilées sur un historique antérieur à la suppression de l'ancien environnement Windows) et ne doivent pas être fusionnées : leurs capacités utiles ont été portées et revalidées dans des PR ciblées.
 
 Ordre de travail :
 
-1. Heap dynamique du noyau (A) — intégré dans `main` par la PR #49.
-2. Découverte ACPI/MADT — prérequis matériel du Local APIC, sans activer encore les interruptions APIC.
-3. Timer Local APIC calibré et horloge monotone (B).
-3. Ordonnanceur préemptif et isolation FPU/SIMD (C), après ses prérequis APIC.
-4. Ring 3, SYSCALL/SYSRET et processus (D/E).
-5. Shell texte utilisateur (F).
+1. Heap dynamique du noyau — livré (PR #49).
+2. Découverte ACPI/MADT — livrée (PR #50).
+3. Timer Local APIC calibré et horloge monotone — livré (PR #51).
+4. Ordonnanceur coopératif puis préemptif, isolation FPU/SIMD — livrés (PR #52, #53, #54).
+5. TSS/IST et sommeil/réveil des tâches noyau — livrés (PR #57).
+6. Hygiène debug (CRLF réels, console factorisée) — PR #58 puis T1.
+7. Exceptions reprenables (#BP avec `iretq`) — prochaine capacité.
+8. Espaces d'adressage par processus, Ring 3, SYSCALL/SYSRET, processus (D/E).
+9. Chargeur de programmes et shell texte utilisateur (F).
 
 SMP complet reste différé jusqu'à validation des étapes A à F. Pour chaque PR : vérifier le HEAD exact, tous les check-runs et la CI complète.
 
