@@ -16,6 +16,7 @@ qemu-apic-spurious-test = []
 qemu-ps2-input-test = []
 qemu-scheduler-test = []
 qemu-fpu-context-test = []
+qemu-smp-topology-test = []
 
 [lib]
 path = "src/lib.rs"

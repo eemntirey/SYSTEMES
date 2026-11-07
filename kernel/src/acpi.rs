@@ -28,8 +28,8 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
  
  #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
  pub struct LocalApic {
-     pub processor_uid: u8,
-     pub apic_id: u8,
+     pub processor_uid: u32,
+     pub apic_id: u32,
      pub flags: u32,
  }
  
@@ -119,9 +119,20 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
                  if info.local_apic_count == MAX_LOCAL_APICS { return Err(AcpiError::TooManyEntries); }
                  let index = info.local_apic_count;
                  info.local_apics[index] = LocalApic {
-                     processor_uid: entry[2],
-                     apic_id: entry[3],
+                     processor_uid: entry[2] as u32,
+                     apic_id: entry[3] as u32,
                      flags: u32::from_le_bytes([entry[4], entry[5], entry[6], entry[7]]),
+                 };
+                 info.local_apic_count += 1;
+             }
+             9 => {
+                 if length != 16 { return Err(AcpiError::MalformedMadtEntry); }
+                 if info.local_apic_count == MAX_LOCAL_APICS { return Err(AcpiError::TooManyEntries); }
+                 let index = info.local_apic_count;
+                 info.local_apics[index] = LocalApic {
+                     apic_id: u32::from_le_bytes([entry[4], entry[5], entry[6], entry[7]]),
+                     flags: u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]),
+                     processor_uid: u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]),
                  };
                  info.local_apic_count += 1;
              }
@@ -155,8 +166,7 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
                  };
                  info.override_count += 1;
              }
-             // NMI source, Local APIC NMI, address override and x2APIC records are
-             // intentionally not consumed until their semantics are implemented.
+             // NMI source and Local APIC NMI records are intentionally deferred.
              _ => {}
          }
          cursor += length;
@@ -272,6 +282,23 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
          assert_eq!(info.override_count, 1);
          assert_eq!(info.overrides[0].source, 0);
          assert_eq!(info.overrides[0].gsi, 2);
+     }
+
+     #[test]
+     fn parses_x2apic_records_with_full_width_ids() {
+         let mut bytes = [0u8; 60];
+         bytes[0..4].copy_from_slice(b"APIC");
+         bytes[4..8].copy_from_slice(&(60u32).to_le_bytes());
+         bytes[SDT_HEADER_SIZE..SDT_HEADER_SIZE + 4].copy_from_slice(&0xFEE0_0000u32.to_le_bytes());
+         bytes[SDT_HEADER_SIZE + 8..SDT_HEADER_SIZE + 24].copy_from_slice(&[
+             9, 16, 0, 0, 0x34, 0x12, 0, 0, 1, 0, 0, 0, 0x78, 0x56, 0, 0
+         ]);
+         checksum(&mut bytes, 9);
+         let info = parse_madt(&bytes).unwrap();
+         assert_eq!(info.local_apic_count, 1);
+         assert_eq!(info.local_apics[0].apic_id, 0x1234);
+         assert_eq!(info.local_apics[0].processor_uid, 0x5678);
+         assert_eq!(info.local_apics[0].flags, 1);
      }
 
      #[test]
