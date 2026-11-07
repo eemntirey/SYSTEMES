@@ -42,7 +42,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -120,9 +120,12 @@ jobs:
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
           grep -q 'SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified' build/uefi/debug.log
           grep -q 'SYSTEMES: user GDT descriptors and DPL3 exit gate verified' build/uefi/debug.log
+          grep -q 'SYSTEMES: SYSCALL/SYSRET configured with a dedicated kernel stack' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Ring 3 code executed with user CS and writable user stack' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Ring 3 user stack write verified' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: SYSCALL/SYSRET fast path executed' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: Syscall return value verified in user stack' build/uefi/debug.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
           grep -q 'SYSTEMES: breakpoint handled, execution resumed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: breakpoint returned to caller through iretq' build/uefi/debug.log

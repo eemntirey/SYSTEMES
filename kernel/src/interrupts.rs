@@ -25,20 +25,6 @@ const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 const USER_EXIT_VECTOR: u64 = 0x80;
 
-/// SYSCALL/SYSRET MSRs
-const MSR_STAR: u32 = 0xC000_0081;
-const MSR_LSTAR: u32 = 0xC000_0082;
-const MSR_CSTAR: u32 = 0xC000_0083;
-const MSR_SFMASK: u32 = 0xC000_0084;
-
-/// STAR layout: bits 63:48 = SYSRET CS/SS, bits 47:32 = SYSCALL CS/SS
-/// SYSCALL loads CS from STAR[47:32], SS from STAR[47:32] + 8
-/// SYSRET loads CS from STAR[63:48], SS from STAR[63:48] + 8
-const STAR_VALUE: u64 = ((USER_CODE_RPL3 as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
-
-/// SFMASK: clear IF (bit 9) on syscall entry
-const SFMASK_VALUE: u64 = 1 << 9;
-
 pub(crate) const RING3_TEST_MAGIC: u64 = 0x5233_5F54_4553_5421;
 
 /// Vector raised by the INT3 instruction.
@@ -73,6 +59,11 @@ static mut PRIVILEGE_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_
 static mut DOUBLE_FAULT_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut NMI_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
 static mut MACHINE_CHECK_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+#[unsafe(no_mangle)]
+static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
+    InterruptStack([0; INTERRUPT_STACK_SIZE]);
+#[unsafe(no_mangle)]
+static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
@@ -220,7 +211,6 @@ unsafe extern "C" {
     fn systemes_apic_spurious();
     fn systemes_user_exit();
     fn systemes_syscall_entry();
-    fn systemes_sysret_exit();
 }
 
 global_asm!(r#"
@@ -491,36 +481,46 @@ systemes_user_exit:
 .global systemes_syscall_entry
 .type systemes_syscall_entry, @function
 systemes_syscall_entry:
-    swapgs
-    mov qword ptr [rsp], rdi
-    mov qword ptr [rsp + 8], rsi
-    mov qword ptr [rsp + 16], rdx
-    mov qword ptr [rsp + 24], rcx
-    mov qword ptr [rsp + 32], r8
-    mov qword ptr [rsp + 40], r9
-    mov qword ptr [rsp + 48], r10
-    mov qword ptr [rsp + 56], r11
-    mov qword ptr [rsp + 64], r12
-    mov qword ptr [rsp + 72], r13
-    mov qword ptr [rsp + 80], r14
-    mov qword ptr [rsp + 88], r15
-    mov qword ptr [rsp + 96], rbp
-    lea rbp, [rsp + 104]
-    mov qword ptr [rsp + 104], rbx
-    mov qword ptr [rsp + 112], rax
-    mov rax, rsp
-    and rsp, -16
+    mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
+    lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
+    add rsp, {interrupt_stack_size}
+    push qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    mov rdi, rsp
     call systemes_syscall_dispatch
+    mov qword ptr [rsp + 112], rax
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
     pop rax
-    mov rsp, rax
-    swapgs
+    add rsp, 8
+    mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     sysretq
-
-.global systemes_sysret_exit
-.type systemes_sysret_exit, @function
-systemes_sysret_exit:
-    ret
 
 .global systemes_lapic_timer
 .type systemes_lapic_timer, @function
@@ -639,6 +639,7 @@ systemes_exception_common:
     tss_selector = const TSS_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
+    interrupt_stack_size = const INTERRUPT_STACK_SIZE,
 );
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
@@ -727,6 +728,88 @@ pub fn verify_ring3_configuration() -> bool {
         && selector == KERNEL_CODE_SELECTOR
         && attributes == USER_INTERRUPT_GATE_ATTRIBUTES
         && handler != 0
+}
+
+const MSR_EFER: u32 = 0xC000_0080;
+const MSR_STAR: u32 = 0xC000_0081;
+const MSR_LSTAR: u32 = 0xC000_0082;
+const MSR_SFMASK: u32 = 0xC000_0084;
+const EFER_SCE: u64 = 1;
+const STAR_VALUE: u64 =
+    (((USER_DATA_SELECTOR - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
+const SFMASK_VALUE: u64 =
+    (1 << 8) | (1 << 9) | (1 << 10) | (3 << 12) | (1 << 14) | (1 << 16) | (1 << 18);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyscallInitError {
+    UnsupportedByCpu,
+}
+
+/// Enable long-mode syscall entry and program the SYSCALL/SYSRET selectors.
+///
+/// # Safety
+///
+/// Must run at CPL0 after the kernel GDT is active and before user code can
+/// execute `SYSCALL`. This kernel currently uses one shared syscall stack and
+/// therefore supports only one CPU.
+pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
+    let maximum_extended_leaf = core::arch::x86_64::__cpuid(0x8000_0000).eax;
+    if maximum_extended_leaf < 0x8000_0001
+        || core::arch::x86_64::__cpuid(0x8000_0001).edx & (1 << 11) == 0
+    {
+        return Err(SyscallInitError::UnsupportedByCpu);
+    }
+
+    write_msr(MSR_STAR, STAR_VALUE);
+    write_msr(
+        MSR_LSTAR,
+        systemes_syscall_entry as *const () as usize as u64,
+    );
+    write_msr(MSR_SFMASK, SFMASK_VALUE);
+    let efer = read_msr(MSR_EFER);
+    write_msr(MSR_EFER, efer | EFER_SCE);
+    Ok(())
+}
+
+/// Confirm the enabled syscall bit and programmed selectors/entry mask.
+pub fn verify_syscall_configuration() -> bool {
+    let stack_start = addr_of!(SYSTEMES_SYSCALL_KERNEL_STACK) as *const u8 as usize;
+    let stack_top = stack_start + core::mem::size_of::<InterruptStack>();
+    read_msr(MSR_EFER) & EFER_SCE != 0
+        && read_msr(MSR_STAR) == STAR_VALUE
+        && read_msr(MSR_LSTAR) == systemes_syscall_entry as *const () as usize as u64
+        && read_msr(MSR_SFMASK) == SFMASK_VALUE
+        && stack_start != 0
+        && stack_top & 0x0F == 0
+}
+
+fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    // SAFETY: Callers pass architectural MSRs while running at CPL0.
+    unsafe {
+        asm!(
+            "rdmsr",
+            in("ecx") msr,
+            out("eax") low,
+            out("edx") high,
+            options(nomem, nostack)
+        )
+    };
+    ((high as u64) << 32) | low as u64
+}
+
+fn write_msr(msr: u32, value: u64) {
+    // SAFETY: Callers pass architectural MSRs while running at CPL0.
+    unsafe {
+        asm!(
+            "wrmsr",
+            in("ecx") msr,
+            in("eax") value as u32,
+            in("edx") (value >> 32) as u32,
+            options(nomem, nostack)
+        )
+    };
 }
 
 /// Enter a mapped ring-3 test context and return through its DPL3 interrupt.
@@ -1017,6 +1100,17 @@ mod tests {
         assert_ne!(USER_DATA_DESCRIPTOR & (1 << 41), 0);
         assert_eq!(USER_CODE_RPL3 & 3, 3);
         assert_eq!(USER_DATA_RPL3 & 3, 3);
+    }
+
+    #[test]
+    fn syscall_star_selectors_match_the_gdt_layout() {
+        let syscall_code = (STAR_VALUE >> 32) as u16;
+        let sysret_base = (STAR_VALUE >> 48) as u16;
+        assert_eq!(syscall_code, KERNEL_CODE_SELECTOR);
+        assert_eq!(syscall_code + 8, KERNEL_DATA_SELECTOR);
+        assert_eq!(sysret_base + 8, USER_DATA_SELECTOR);
+        assert_eq!(sysret_base + 16, USER_CODE_SELECTOR);
+        assert_eq!(SFMASK_VALUE & ((1 << 8) | (1 << 9) | (1 << 10)), (1 << 8) | (1 << 9) | (1 << 10));
     }
 
     #[test]

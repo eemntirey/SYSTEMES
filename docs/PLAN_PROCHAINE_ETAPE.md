@@ -16,8 +16,8 @@ Ordre de travail :
 6. Hygiène debug (CRLF réels, console factorisée) — livrée (PR #58, #59).
 7. Exceptions reprenables (#BP avec `iretq`) — livrée (PR #60).
 8. Espaces d'adressage par processus — livrés (PR #61) ; SMEP/SMAP et helpers uaccess — livrés dans cette PR.
-9. T9 — GDT user et transition Ring 3/Ring 0 — en cours : test QEMU dédié, validation CI requise.
-10. T10 — SYSCALL/SYSRET et ABI contrôlée.
+9. T9 — GDT user et transition Ring 3/Ring 0 — implémenté ; validation CI/QEMU requise.
+10. T10 — SYSCALL/SYSRET et ABI contrôlée — en cours : version d'ABI minimale, pile noyau dédiée mono-cœur et test QEMU.
 11. T11 — chargeur ELF, init et processus utilisateur.
 12. T12 — console native et shell texte.
 13. T13 — pilote de stockage virtio-blk.

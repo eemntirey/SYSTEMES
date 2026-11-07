@@ -45,12 +45,18 @@ pub enum AddressSpaceError {
     SmepDidNotBlock,
     Ring3TransitionFailed,
     Ring3StackWriteMismatch,
+    SyscallTransitionFailed,
+    SyscallReturnMismatch,
 }
 
 #[cfg(feature = "qemu-ring3-test")]
 const RING3_CODE_ADDRESS: u64 = USER_BASE + 0x4000;
 #[cfg(feature = "qemu-ring3-test")]
 const RING3_STACK_ADDRESS: u64 = USER_BASE + 0x5000;
+#[cfg(feature = "qemu-syscall-test")]
+const SYSCALL_CODE_ADDRESS: u64 = USER_BASE + 0x6000;
+#[cfg(feature = "qemu-syscall-test")]
+const SYSCALL_STACK_ADDRESS: u64 = USER_BASE + 0x7000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserPagePermissions {
     ReadOnlyExecute,
@@ -377,6 +383,121 @@ pub unsafe fn run_qemu_ring3_test(
             Ok(())
         } else {
             Err(AddressSpaceError::Ring3StackWriteMismatch)
+        }
+    };
+
+    // SAFETY: Restore the original address space before resuming normal boot.
+    unsafe { write_cr3(previous_root) };
+    if previous_flags & (1 << 9) != 0 {
+        // SAFETY: The previous root is restored and the caller had interrupts enabled.
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+    transition_result
+}
+
+/// Boot-time proof: SYSCALL/SYSRET fast path from Ring 3.
+///
+/// # Safety
+///
+/// Must run after the kernel page tables, TSS/IDT, and SYSCALL MSRs are active.
+/// The caller must ensure no other CPU can use the global test transition state.
+#[cfg(feature = "qemu-syscall-test")]
+pub unsafe fn run_qemu_syscall_test(
+    allocator: &mut PhysicalFrameAllocator,
+    kernel_root: u64,
+) -> Result<(), AddressSpaceError> {
+    let code_frame = allocator
+        .allocate_frame()
+        .ok_or(AddressSpaceError::OutOfFrames)?;
+    let stack_frame = allocator
+        .allocate_frame()
+        .ok_or(AddressSpaceError::OutOfFrames)?;
+    if code_frame % PAGE_SIZE != 0 || stack_frame % PAGE_SIZE != 0 {
+        return Err(AddressSpaceError::InvalidFrameAlignment);
+    }
+    if code_frame >= IDENTITY_MAP_BYTES || stack_frame >= IDENTITY_MAP_BYTES {
+        return Err(AddressSpaceError::FrameOutsideIdentityWindow);
+    }
+
+    let mut code = [0u8; 29];
+    code[0] = 0xB8;
+    code[1..5].copy_from_slice(&(crate::syscall::SYS_GET_API_VERSION as u32).to_le_bytes());
+    code[5..7].copy_from_slice(&[0x0F, 0x05]);
+    code[7..12].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF8]);
+    code[12] = 0x48;
+    code[13] = 0xB8;
+    code[14..22].copy_from_slice(&crate::interrupts::RING3_TEST_MAGIC.to_le_bytes());
+    code[22..27].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF0]);
+    code[27..29].copy_from_slice(&[0xCD, 0x80]);
+
+    // SAFETY: Both are freshly allocated identity-accessible frames.
+    unsafe {
+        core::ptr::write_bytes(code_frame as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(stack_frame as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, code.len());
+    }
+
+    // SAFETY: The kernel root is active and the allocator owns free frames.
+    let mut space = unsafe { AddressSpace::create(allocator, kernel_root)? };
+    // SAFETY: The virtual addresses and backing frames were validated above.
+    unsafe {
+        space.map_user_page(
+            allocator,
+            SYSCALL_CODE_ADDRESS,
+            code_frame,
+            UserPagePermissions::ReadOnlyExecute,
+        )?;
+        space.map_user_page(
+            allocator,
+            SYSCALL_STACK_ADDRESS,
+            stack_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )?;
+        space.verify_user_mapping(
+            SYSCALL_CODE_ADDRESS,
+            code_frame,
+            UserPagePermissions::ReadOnlyExecute,
+        )?;
+        space.verify_user_mapping(
+            SYSCALL_STACK_ADDRESS,
+            stack_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )?;
+    }
+
+    let user_rsp = SYSCALL_STACK_ADDRESS + PAGE_SIZE - 16;
+    let previous_root = unsafe { read_cr3() };
+    let previous_flags: u64;
+    // SAFETY: This test is single-core and must not be preempted while swapping CR3.
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) previous_flags, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("cli", options(nomem, nostack));
+        write_cr3(space.root());
+    }
+
+    let transition_result = if cr3_root(unsafe { read_cr3() }) != space.root() {
+        Err(AddressSpaceError::Cr3Mismatch)
+    } else if !unsafe {
+        crate::interrupts::enter_ring3_test_context(SYSCALL_CODE_ADDRESS, user_rsp)
+    } {
+        Err(AddressSpaceError::SyscallTransitionFailed)
+    } else {
+        let syscall_result = {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            // SAFETY: The Ring 3 syscall wrote its return value to this mapped stack slot.
+            unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+        };
+        let ring3_magic = {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            // SAFETY: The Ring 3 exit stub wrote its marker to this mapped stack slot.
+            unsafe { core::ptr::read_volatile((user_rsp - 16) as *const u64) }
+        };
+        if syscall_result == crate::syscall::API_VERSION
+            && ring3_magic == crate::interrupts::RING3_TEST_MAGIC
+        {
+            Ok(())
+        } else {
+            Err(AddressSpaceError::SyscallReturnMismatch)
         }
     };
 

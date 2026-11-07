@@ -100,6 +100,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\r\n"); }
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
+    if unsafe { systemes_kernel::interrupts::initialize_syscalls() }.is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SYSCALL/SYSRET unavailable\r\n"); }
+        halt();
+    }
+    if !systemes_kernel::interrupts::verify_syscall_configuration() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SYSCALL/SYSRET MSR configuration invalid\r\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES: SYSCALL/SYSRET configured with a dedicated kernel stack\r\n"); }
     if !systemes_kernel::interrupts::verify_task_register() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\r\n"); }
         halt();
@@ -304,6 +313,19 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         },
         Err(_) => {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 transition test failed\r\n"); }
+            halt();
+        }
+    }
+    #[cfg(feature = "qemu-syscall-test")]
+    match unsafe {
+        systemes_kernel::address_space::run_qemu_syscall_test(&mut frame_allocator, page_table_root)
+    } {
+        Ok(()) => unsafe {
+            debug_write(b"SYSTEMES_TEST: SYSCALL/SYSRET fast path executed\r\n");
+            debug_write(b"SYSTEMES_TEST: Syscall return value verified in user stack\r\n");
+        },
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Syscall transition test failed\r\n"); }
             halt();
         }
     }

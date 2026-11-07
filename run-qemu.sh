@@ -48,6 +48,8 @@ for marker in \
   'SYSTEMES_TEST: kernel identity mapping shared by the process address space' \
   'SYSTEMES: supervisor access protection smep=1 smap=1' \
   'SYSTEMES_TEST: user page access succeeded with SMAP enabled and AC scoped' \
+  'SYSTEMES_TEST: SYSCALL/SYSRET fast path executed' \
+  'SYSTEMES_TEST: Syscall return value verified in user stack' \
   SYSTEMES_KERNEL_OK; do
   if grep -qF "$marker" "$OUT/debug.log"; then echo "OK   $marker"; else echo "MISS $marker"; fi
 done

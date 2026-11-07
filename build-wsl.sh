@@ -6,7 +6,7 @@ WORK=/home/eemntirey/systemes-build-t8b
 EFI=$WORK/gnuefi/usr
 OUT=$WORK/uefi${SUFFIX:-}
 export CARGO_TARGET_DIR=$WORK/target
-FEATURES=${FEATURES-qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test}
+FEATURES=${FEATURES-qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test}
 FEATURE_ARGS=()
 if [ -n "$FEATURES" ]; then FEATURE_ARGS=(--features "$FEATURES"); fi
 
