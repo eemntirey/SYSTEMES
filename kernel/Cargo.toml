@@ -10,6 +10,7 @@ qemu-exception-test = []
 qemu-nx-execute-test = []
 qemu-rx-write-test = []
 qemu-heap-test = []
+qemu-acpi-madt-test = []
 
 [lib]
 path = "src/lib.rs"
