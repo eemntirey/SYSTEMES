@@ -1,12 +1,13 @@
-//! Cooperative single-core kernel task scheduler for x86_64.
+//! Single-core kernel task scheduler for x86_64.
 //!
-//! Tasks share the kernel address space and switch only at explicit yield points.
-//! Preemptive scheduling is a separate follow-up capability.
+//! Tasks share the kernel address space and are switched by cooperative yield or
+//! Local APIC timer preemption. Legacy x87/MMX/SSE state is eagerly isolated per task.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 pub const MAX_TASKS: usize = 8;
 const STACK_SIZE: usize = 16 * 1024;
+const FPU_STATE_SIZE: usize = 512;
 const YIELD_VECTOR: usize = 0x41;
 const KERNEL_CODE_SELECTOR: usize = 0x08;
 const KERNEL_DATA_SELECTOR: usize = 0x10;
@@ -39,6 +40,9 @@ pub struct TaskId(pub usize);
 
 pub type TaskEntry = extern "C" fn();
 
+#[repr(C, align(16))]
+struct FpuState([u8; FPU_STATE_SIZE]);
+
 #[repr(align(16))]
 struct TaskStack([u8; STACK_SIZE]);
 
@@ -48,6 +52,7 @@ struct Task {
     state: AtomicU8,
     switches: AtomicUsize,
     entry: AtomicUsize,
+    fpu: FpuState,
 }
 
 impl Task {
@@ -58,6 +63,7 @@ impl Task {
             state: AtomicU8::new(TaskState::Empty as u8),
             switches: AtomicUsize::new(0),
             entry: AtomicUsize::new(0),
+            fpu: FpuState([0; FPU_STATE_SIZE]),
         }
     }
 }
@@ -68,6 +74,79 @@ static CURRENT_TASK: AtomicUsize = AtomicUsize::new(0);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static PREEMPTIVE_ENABLED: AtomicBool = AtomicBool::new(false);
 static PREEMPTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+static FPU_CONTEXTS_READY: AtomicBool = AtomicBool::new(false);
+
+
+/// Configure architectural x87/SSE state management and initialize every task image.
+fn initialize_fpu_contexts() -> Result<(), &'static str> {
+    // x86_64 requires SSE2; FXSAVE is the baseline state format used by this kernel.
+    let features = unsafe { core::arch::x86_64::__cpuid(1) };
+    if features.edx & (1 << 24) == 0 || features.edx & (1 << 25) == 0 {
+        return Err("CPU does not support FXSAVE and SSE");
+    }
+
+    let cr0: u64;
+    let cr4: u64;
+    // SAFETY: This is ring-0 boot code; configure x87/SSE and disable lazy TS switching.
+    unsafe {
+        core::arch::asm!("mov {}, cr0", out(reg) cr0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack, preserves_flags));
+        let next_cr0 = (cr0 | (1 << 1) | (1 << 5)) & !((1 << 2) | (1 << 3));
+        let next_cr4 = cr4 | (1 << 9) | (1 << 10);
+        core::arch::asm!("mov cr0, {}", in(reg) next_cr0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov cr4, {}", in(reg) next_cr4, options(nomem, nostack, preserves_flags));
+    }
+
+    // Preserve the boot task's incoming x87/SSE state before creating clean task images.
+    let boot_ptr = unsafe { core::ptr::addr_of_mut!((*task_ptr(0)).fpu.0).cast::<u8>() };
+    let mxcsr: u32 = 0x1F80;
+    // SAFETY: FPU state buffers are 16-byte aligned and at least 512 bytes long.
+    unsafe {
+        core::arch::asm!("fxsave64 [{}]", in(reg) boot_ptr, options(nostack));
+        core::arch::asm!("fninit", "ldmxcsr [{}]", in(reg) &mxcsr, options(nostack));
+        for index in 1..MAX_TASKS {
+            let state = core::ptr::addr_of_mut!((*task_ptr(index)).fpu.0).cast::<u8>();
+            core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
+        }
+        core::arch::asm!("fxrstor64 [{}]", in(reg) boot_ptr, options(nostack));
+    }
+    FPU_CONTEXTS_READY.store(true, Ordering::Release);
+    Ok(())
+}
+
+/// Save the interrupted task's complete legacy x87/MMX/SSE image before Rust IRQ code runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn systemes_fpu_save_current() {
+    if !FPU_CONTEXTS_READY.load(Ordering::Acquire) {
+        return;
+    }
+    let current = CURRENT_TASK.load(Ordering::Acquire);
+    if current >= TASK_COUNT.load(Ordering::Acquire) {
+        return;
+    }
+    // SAFETY: The selected task owns a 16-byte-aligned 512-byte FXSAVE image.
+    unsafe {
+        let state = core::ptr::addr_of_mut!((*task_ptr(current)).fpu.0).cast::<u8>();
+        core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
+    }
+}
+
+/// Restore the selected task's FPU image after Rust IRQ dispatch and before IRETQ.
+#[unsafe(no_mangle)]
+pub extern "C" fn systemes_fpu_restore_current() {
+    if !FPU_CONTEXTS_READY.load(Ordering::Acquire) {
+        return;
+    }
+    let current = CURRENT_TASK.load(Ordering::Acquire);
+    if current >= TASK_COUNT.load(Ordering::Acquire) {
+        return;
+    }
+    // SAFETY: The selected task owns a previously initialized 16-byte-aligned FXSAVE image.
+    unsafe {
+        let state = core::ptr::addr_of!((*task_ptr(current)).fpu.0).cast::<u8>();
+        core::arch::asm!("fxrstor64 [{}]", in(reg) state, options(nostack));
+    }
+}
 
 unsafe fn task_ptr(index: usize) -> *mut Task {
     // SAFETY: Callers validate index against TASK_COUNT/MAX_TASKS. The task table
@@ -134,6 +213,7 @@ pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
     if entries.len() >= MAX_TASKS {
         return Err("too many kernel tasks");
     }
+    initialize_fpu_contexts()?;
     // SAFETY: Called during single-core boot before any task can access the table.
     unsafe {
         for index in 0..MAX_TASKS {
@@ -361,6 +441,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fpu_context_image_has_fxsave_size_and_alignment() {
+        assert_eq!(core::mem::size_of::<FpuState>(), 512);
+        assert_eq!(core::mem::align_of::<FpuState>(), 16);
+    }
+
+    #[test]
     fn task_states_have_stable_kernel_values() {
         assert_eq!(TaskState::from_raw(1), TaskState::Runnable);
         assert_eq!(TaskState::from_raw(2), TaskState::Blocked);
@@ -383,6 +469,89 @@ mod tests {
     }
 }
 
+
+
+#[cfg(feature = "qemu-fpu-context-test")]
+mod fpu_context_qemu_test {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    const RUNTIME_TICKS: u64 = 5;
+    static RESULTS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
+    static SIMD_RESULTS: [[AtomicUsize; 2]; 3] = [
+        [const { AtomicUsize::new(0) }; 2],
+        [const { AtomicUsize::new(0) }; 2],
+        [const { AtomicUsize::new(0) }; 2],
+    ];
+
+    fn hold_fpu_and_simd_state(index: usize, x87_bits: u64, simd: [u64; 2]) {
+        let start = crate::clock::ticks();
+        let tick_address = crate::clock::tick_counter_address();
+        let mut x87_result = 0u64;
+        let mut simd_result = [0u64; 2];
+        // The entire wait is assembly: XMM15 and x87 ST(0) remain live across hardware IRQs.
+        unsafe {
+            core::arch::asm!(
+                "fld qword ptr [{x87}]",
+                "movdqu xmm15, xmmword ptr [{simd}]",
+                "2:",
+                "mov rax, qword ptr [{ticks}]",
+                "sub rax, {start}",
+                "cmp rax, {duration}",
+                "jb 2b",
+                "fstp qword ptr [{x87_out}]",
+                "movdqu xmmword ptr [{simd_out}], xmm15",
+                x87 = in(reg) &x87_bits,
+                simd = in(reg) &simd,
+                ticks = in(reg) tick_address,
+                start = in(reg) start,
+                duration = in(reg) RUNTIME_TICKS,
+                x87_out = in(reg) &mut x87_result,
+                simd_out = in(reg) &mut simd_result,
+                out("rax") _,
+                out("xmm15") _,
+                options(nostack)
+            );
+        }
+        RESULTS[index].store(x87_result as usize, Ordering::Release);
+        SIMD_RESULTS[index][0].store(simd_result[0] as usize, Ordering::Release);
+        SIMD_RESULTS[index][1].store(simd_result[1] as usize, Ordering::Release);
+    }
+
+    extern "C" fn worker_a() { hold_fpu_and_simd_state(0, 0x3FF4_0000_0000_0000, [0x1111_2222_3333_4444, 0xAAAA_BBBB_CCCC_DDDD]); }
+    extern "C" fn worker_b() { hold_fpu_and_simd_state(1, 0x4004_0000_0000_0000, [0x5555_6666_7777_8888, 0xEEEE_FFFF_0000_1111]); }
+    extern "C" fn worker_c() { hold_fpu_and_simd_state(2, 0x400E_0000_0000_0000, [0x9999_AAAA_BBBB_CCCC, 0x2222_3333_4444_5555]); }
+
+    pub fn run() -> bool {
+        for result in &RESULTS { result.store(0, Ordering::Relaxed); }
+        for pair in &SIMD_RESULTS { pair[0].store(0, Ordering::Relaxed); pair[1].store(0, Ordering::Relaxed); }
+        if initialize(&[worker_a, worker_b, worker_c]).is_err() || !validate_initial_contexts() {
+            return false;
+        }
+        enable_preemption();
+        loop {
+            let all_exited = (1..=3).all(|index| task_state(TaskId(index)) == Some(TaskState::Exited));
+            if all_exited { break; }
+            core::hint::spin_loop();
+        }
+        let expected_x87 = [0x3FF4_0000_0000_0000usize, 0x4004_0000_0000_0000usize, 0x400E_0000_0000_0000usize];
+        let expected_simd = [
+            [0x1111_2222_3333_4444usize, 0xAAAA_BBBB_CCCC_DDDDusize],
+            [0x5555_6666_7777_8888usize, 0xEEEE_FFFF_0000_1111usize],
+            [0x9999_AAAA_BBBB_CCCCusize, 0x2222_3333_4444_5555usize],
+        ];
+        let valid = current_task() == TaskId(0)
+            && (0..3).all(|i| RESULTS[i].load(Ordering::Acquire) == expected_x87[i])
+            && (0..3).all(|i| (0..2).all(|j| SIMD_RESULTS[i][j].load(Ordering::Acquire) == expected_simd[i][j]))
+            && preemption_count() >= 3;
+        reset_after_all_tasks_exit() && valid
+    }
+}
+
+#[cfg(feature = "qemu-fpu-context-test")]
+pub fn run_fpu_context_qemu_test() -> bool {
+    fpu_context_qemu_test::run()
+}
 
 #[cfg(feature = "qemu-preemptive-scheduler-test")]
 mod preemptive_qemu_test {
