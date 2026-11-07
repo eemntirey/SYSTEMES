@@ -115,6 +115,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { systemes_kernel::interrupts::initialize() };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\\r\\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\\r\\n") };
+    if !systemes_kernel::interrupts::verify_local_apic_gates() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\\r\\n"); }
+        halt();
+    }
     // SAFETY: UEFI identity mappings remain active while the new page tables are built.
     let page_table_root = match unsafe {
         systemes_kernel::paging::build_identity_map(&mut frame_allocator)
@@ -219,32 +223,86 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
     }
 
-    #[cfg(feature = "qemu-acpi-madt-test")]
-    let mut acpi_madt_discovered = false;
+    let mut discovered_madt: Option<systemes_kernel::acpi::MadtInfo> = None;
     if boot.acpi_rsdp_address != 0 {
-        unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\\r\\n"); }
-        // SAFETY: The RSDP address comes from the UEFI configuration table and the
-        // active kernel identity map covers the firmware ACPI tables below 512 GiB.
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP discovered\r\n"); }
+        // SAFETY: The RSDP address comes from UEFI and the active identity map
+        // covers the firmware ACPI tables within the 512-GiB physical window.
         match unsafe { systemes_kernel::acpi::discover_madt(boot.acpi_rsdp_address) } {
-            Ok(madt) if madt.local_apic_address != 0
-                && madt.local_apic_count > 0 && madt.io_apic_count > 0 => {
-                unsafe { debug_write(b"SYSTEMES: ACPI MADT parsed; Local APIC and IOAPIC topology discovered\\r\\n"); }
-                #[cfg(feature = "qemu-acpi-madt-test")]
-                { acpi_madt_discovered = true; }
+            Ok(madt) => {
+                if madt.local_apic_count > 0 && madt.io_apic_count > 0 {
+                    unsafe { debug_write(b"SYSTEMES: ACPI MADT parsed; Local APIC and IOAPIC topology discovered\r\n"); }
+                } else {
+                    unsafe { debug_write(b"SYSTEMES: ACPI MADT parsed but controller topology is incomplete\r\n"); }
+                }
+                discovered_madt = Some(madt);
             }
-            Ok(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT incomplete; APIC topology unavailable\\r\\n"); },
-            Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT unavailable or invalid\\r\\n"); },
+            Err(_) => unsafe { debug_write(b"SYSTEMES: ACPI MADT unavailable or invalid\r\n"); },
         }
     } else {
-        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES: ACPI RSDP unavailable\r\n"); }
     }
     #[cfg(feature = "qemu-acpi-madt-test")]
-    if !acpi_madt_discovered {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU ACPI MADT discovery test failed\\r\\n"); }
+    if discovered_madt.is_none() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU ACPI MADT discovery test failed\r\n"); }
         halt();
     }
 
+    let should_start_apic_clock = cfg!(feature = "qemu-apic-clock-test")
+        || (!cfg!(feature = "qemu-nx-execute-test")
+            && !cfg!(feature = "qemu-rx-write-test")
+            && !cfg!(feature = "qemu-exception-test"));
+    let mut apic_timer_ready = false;
+    if should_start_apic_clock {
+        if let Some(madt) = discovered_madt.as_ref() {
+            // SAFETY: MADT is validated, page tables are active, and interrupts remain disabled.
+            match unsafe { systemes_kernel::apic::initialize_local_apic(madt, &mut frame_allocator, page_table_root) } {
+                Ok(()) => match unsafe { systemes_kernel::apic::calibrate_and_initialize_local_timer(100) } {
+                    Ok(_) => {
+                        unsafe { debug_write(b"SYSTEMES: Local APIC timer calibrated from PIT channel 2 at 100 Hz\r\n"); }
+                        apic_timer_ready = true;
+                    }
+                    Err(_) => unsafe { debug_write(b"SYSTEMES: Local APIC timer calibration failed; timer remains disabled\r\n"); },
+                },
+                Err(_) => unsafe { debug_write(b"SYSTEMES: Local APIC unavailable; timer remains disabled\r\n"); },
+            }
+        } else {
+            unsafe { debug_write(b"SYSTEMES: Local APIC skipped because ACPI MADT is unavailable\r\n"); }
+        }
+    }
+    #[cfg(feature = "qemu-apic-clock-test")]
+    if !apic_timer_ready {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU Local APIC timer test could not initialize\r\n"); }
+        halt();
+    }
+    if apic_timer_ready {
+        // SAFETY: IDT timer/spurious gates and UC Local APIC mapping are installed; PIC lines are masked.
+        unsafe { asm!("sti", options(nomem, nostack)); }
+    }
+
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-apic-clock-test")]
+    {
+        while systemes_kernel::clock::ticks() < 3 {
+            // SAFETY: The calibrated Local APIC timer is enabled and will wake HLT.
+            unsafe { asm!("hlt", options(nomem, nostack)); }
+        }
+        // SAFETY: Stop further timer delivery before inspecting the final counters.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        if systemes_kernel::clock::ticks() < 3 || systemes_kernel::clock::now_millis() < 30 {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: monotonic clock did not advance with APIC ticks\\r\\n"); }
+            halt();
+        }
+        unsafe { systemes_kernel::apic::stop_local_timer(); }
+        unsafe { debug_write(b"SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced\\r\\n"); }
+    }
+    #[cfg(not(feature = "qemu-apic-clock-test"))]
+    if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
+        loop {
+            // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
+            unsafe { asm!("hlt", options(nomem, nostack)); }
+        }
+    }
     #[cfg(feature = "qemu-nx-execute-test")]
     {
         let test_frame = match frame_allocator.allocate_frame() {
