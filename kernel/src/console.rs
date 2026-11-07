@@ -55,6 +55,25 @@ pub unsafe fn outb(port: u16, value: u8) {
     };
 }
 
+/// Read one byte from an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and device context.
+pub unsafe fn inb(port: u16) -> u8 {
+    // SAFETY: The caller guarantees the port is valid for this CPU.
+    let value: u8;
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            out("al") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
 /// Write raw bytes to the QEMU debug console.
 ///
 /// # Safety
