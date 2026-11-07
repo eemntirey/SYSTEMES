@@ -1,33 +1,34 @@
-# SYSTEMES kernel — K0 contract and K1 entry
+# SYSTEMES kernel — noyau autonome x86_64
 
-The kernel is an isolated Rust `no_std` project. It has no dependency on Windows,
-WPF, WebView2, or the .NET native host.
+Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il démarre via le chargeur UEFI et ne dépend d'aucun hôte Windows, navigateur ou runtime externe.
 
-- Target: `x86_64-unknown-none`
-- Library: versioned `BootInfo` contract and validation
-- Binary: `systemes-kernel`, linked at physical address `0x00200000`
-- Entry: `_start(BootInfo*)`, x86_64 System V ABI
-- Debug trace: QEMU debug port `0xE9`
+- Cible : `x86_64-unknown-none`
+- Entrée : `_start(BootInfo*)`, ABI System V x86_64
+- Contrat de démarrage : structure `BootInfo` versionnée, carte mémoire UEFI, framebuffer GOP et adresse ACPI RSDP
+- Mémoire physique : analyse des descripteurs UEFI et allocation/libération de frames de 4 Kio
+- Mémoire virtuelle : tables de pages x86_64 à quatre niveaux, activation NX, CR0.WP et protections RX / R-NX / RW-NX
+- CPU : GDT, IDT et gestionnaires d'exceptions CPU 0 à 31
+- Diagnostic : port debug QEMU `0xE9`
 
-## K1 status
+## Capacités présentes dans le code
 
-The binary has been loaded by the GNU-EFI loader and executed after
-`ExitBootServices` in QEMU/OVMF. It validates the boot handoff, checks the UEFI
-memory-map metadata, discovers the GOP framebuffer and ACPI RSDP, paints a small
-framebuffer marker, and emits `SYSTEMES_KERNEL_OK`.
+Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT et son IDT, construit et active ses propres tables de pages, applique les protections W^X aux sections du noyau et vérifie les permissions effectives. Il initialise également le framebuffer GOP lorsqu'il est disponible et signale la découverte de l'ACPI RSDP.
 
-The kernel still inherits the firmware's active address space and CPU execution
-environment. It does **not** yet own page tables, GDT/IDT, exception handlers,
-interrupt routing, a physical-page allocator, a scheduler, drivers, or user mode.
-It is a minimal boot-stage kernel, not a general-purpose OS.
+La CI vérifie le contrat `no_std`, la cible x86_64, la construction du chargeur EFI et de l'ISO, le démarrage sous QEMU/OVMF ainsi que les fautes matérielles attendues pour les violations NX et l'écriture dans une page RX.
 
-## Local checks
+## Limites actuelles
 
-```powershell
+Ce noyau n'est pas encore un système d'exploitation généraliste. Le code présent ne fournit pas encore un ordonnanceur préemptif intégré à cette branche, le démarrage SMP, Ring 3, les appels système, le chargeur ELF, les processus utilisateur, le VFS, les pilotes de stockage/réseau, ni un environnement graphique natif complet. Ces capacités doivent être implémentées et validées séparément avant d'être annoncées comme disponibles.
+
+Un démarrage réussi sous QEMU/OVMF ne prouve pas la compatibilité avec un PC physique. La validation matérielle doit être consignée séparément.
+
+## Vérifications locales
+
+```sh
 rustup target add x86_64-unknown-none
-cargo test --manifest-path kernel/Cargo.toml
-cargo check --manifest-path kernel/Cargo.toml --target x86_64-unknown-none
+cargo test --all-features --manifest-path kernel/Cargo.toml
+cargo check --all-features --manifest-path kernel/Cargo.toml --target x86_64-unknown-none
 cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
 ```
 
-The reproducible QEMU/OVMF build is defined in `.github/workflows/kernel.yml`.
+La chaîne reproductible de construction UEFI/ISO et les tests QEMU/OVMF sont définis dans `.github/workflows/kernel.yml`.
