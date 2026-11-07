@@ -254,6 +254,11 @@ pub fn validate_initial_contexts() -> bool {
 }
 
 #[cfg(feature = "qemu-cooperative-scheduler-test")]
+pub fn run_cooperative_qemu_test() -> bool {
+    qemu_test::run()
+}
+
+#[cfg(feature = "qemu-cooperative-scheduler-test")]
 mod qemu_test {
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
