@@ -367,11 +367,18 @@ systemes_irq_common:
     push r13
     push r14
     push r15
+    mov r12, rsp
+    and rsp, -16
+    call systemes_fpu_save_current
+    mov rsp, r12
     mov rdi, qword ptr [rsp + 120]
     mov rsi, rsp
     and rsp, -16
     call systemes_apic_timer_dispatch
-    mov rsp, rax
+    mov r12, rax
+    and rsp, -16
+    call systemes_fpu_restore_current
+    mov rsp, r12
     pop r15
     pop r14
     pop r13
