@@ -4,14 +4,17 @@ Ce document décrit exclusivement les livraisons du système d'exploitation auto
 
 ## Priorité immédiate — terminer et stabiliser le socle noyau
 
-La chaîne K2.7 → K2.10 doit être traitée dans l'ordre de dépendance réel :
+Le socle mémoire A est prioritaire : l'allocateur de frames et le heap dynamique doivent être terminés avant les étapes timer/temps et ordonnanceur. La chaîne historique K2.7 → K2.10 contient des PR empilées sur un historique antérieur à la suppression de l'ancien environnement Windows ; elle ne doit pas être fusionnée directement dans `main` sans portage chirurgical des seuls changements noyau et revalidation.
 
-1. K2.7 — ordonnanceur préemptif et multitâche ;
-2. K2.8 — isolation du contexte FPU/SIMD ;
-3. K2.9 — calibration du timer Local APIC et horloge monotone ;
-4. K2.10 — heap dynamique du noyau.
+Ordre de travail :
 
-Les PR empilées doivent être intégrées dans l'ordre de leurs bases. Pour chaque PR : vérifier le HEAD exact, les dépendances, tous les check-runs et la CI complète. Ne jamais fusionner une branche empilée indépendamment de ses prérequis.
+1. Heap dynamique du noyau (capacité mémoire A encore absente de `main`).
+2. Timer Local APIC calibré et horloge monotone (B).
+3. Ordonnanceur préemptif et isolation FPU/SIMD (C), après ses prérequis APIC.
+4. Ring 3, SYSCALL/SYSRET et processus (D/E).
+5. Shell texte utilisateur (F).
+
+SMP complet reste différé jusqu'à validation des étapes A à F. Pour chaque PR : vérifier le HEAD exact, tous les check-runs et la CI complète.
 
 ## Prochaines capacités à livrer
 
