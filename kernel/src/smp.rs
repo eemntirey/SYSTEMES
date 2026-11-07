@@ -208,19 +208,17 @@ pub fn register_madt_topology(
     madt: &crate::acpi::MadtInfo,
     bootstrap_apic_id: u32,
 ) -> Result<usize, SmpError> {
-    let mut bootstrap_seen = false;
+    let bootstrap_present = madt.local_apics.iter().take(madt.local_apic_count)
+        .any(|entry| entry.apic_id == bootstrap_apic_id && entry.flags & 0x1 != 0);
+    if !bootstrap_present {
+        return Err(SmpError::BootstrapNotFound);
+    }
     for entry in madt.local_apics.iter().take(madt.local_apic_count) {
         let enabled = entry.flags & 0x1 != 0;
         let online_capable = entry.flags & 0x2 != 0;
         if !enabled && !online_capable { continue; }
-        let is_bootstrap = entry.apic_id == bootstrap_apic_id;
-        if is_bootstrap {
-            if !enabled { return Err(SmpError::BootstrapNotFound); }
-            bootstrap_seen = true;
-        }
-        registry.register(entry.apic_id, is_bootstrap)?;
+        registry.register(entry.apic_id, entry.apic_id == bootstrap_apic_id)?;
     }
-    if !bootstrap_seen { return Err(SmpError::BootstrapNotFound); }
     Ok(registry.count())
 }
 
@@ -258,11 +256,11 @@ mod tests {
         let registry = CpuRegistry::new();
         let mut madt = crate::acpi::MadtInfo {
             local_apic_address: 0xFEE0_0000, flags: 1,
-            local_apics: [crate::acpi::LocalApic::default(); crate::acpi::MAX_LOCAL_APICS],
+            local_apics: [crate::acpi::LocalApic::default(); 64],
             local_apic_count: 3,
-            io_apics: [crate::acpi::IoApic::default(); crate::acpi::MAX_IO_APICS],
+            io_apics: [crate::acpi::IoApic::default(); 8],
             io_apic_count: 0,
-            overrides: [crate::acpi::InterruptOverride::default(); crate::acpi::MAX_ISO],
+            overrides: [crate::acpi::InterruptOverride::default(); 16],
             override_count: 0,
         };
         madt.local_apics[0] = crate::acpi::LocalApic { processor_uid: 0, apic_id: 0, flags: 1 };
