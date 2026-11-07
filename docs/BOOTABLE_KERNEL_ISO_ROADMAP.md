@@ -1,104 +1,93 @@
-# SYSTEMES — feuille de route du noyau indépendant et de l’ISO bootable
+# SYSTEMES — feuille de route du noyau autonome et de l'ISO bootable
 
-## État réel au 1er novembre 2026
+## Mission
 
-Le produit Windows existant est une édition Desktop/Host exécutée sous Windows :
-WPF/.NET 8 héberge une interface React via WebView2 et le moteur natif pilote certains
-services de l'installation Windows.
+SYSTEMES est un seul système d'exploitation autonome x86_64/UEFI. Il doit démarrer directement depuis une image EFI/ISO sur un ordinateur compatible, sans Windows, navigateur, WebView ou hôte externe.
 
-Le sous-projet Rust est distinct. Il a maintenant franchi K1 : une image ISO UEFI
-démarre dans QEMU/OVMF, le chargeur quitte les Boot Services et le point d'entrée du
-noyau autonome est exécuté. Cela constitue une première preuve de démarrage sans
-Windows hôte, mais **pas encore un OS généraliste**.
+Les anciens composants Windows du dépôt ne sont pas une édition du produit et ne font pas partie de l'architecture cible. Le développement et les validations décrits ici concernent le noyau autonome et son futur espace utilisateur.
 
 ## Architecture
 
+- `boot/` : chargeur UEFI x86_64.
 - `kernel/` : noyau Rust `no_std`, cible `x86_64-unknown-none`.
-- `boot/` : application de démarrage UEFI x86_64.
 - `userland/` : futurs services et applications en espace utilisateur.
 - `image/` : scripts de construction des images EFI/ISO.
-- `docs/` : contrats d'ABI, décisions d'architecture et validation.
-- `src/` et `native/Windver/` : édition Windows actuelle, maintenue séparément.
+- `docs/` : contrats d'ABI, décisions d'architecture et preuves de validation.
 
-## Jalons et état
+## État du démarrage
+
+La chaîne UEFI démarre sous QEMU/OVMF : le chargeur lit le noyau depuis l'ESP, récupère les informations de démarrage, quitte les Boot Services et transfère le contrôle au noyau. Cela prouve un démarrage initial sous machine virtuelle, mais ne constitue pas encore un OS généraliste ni une validation sur PC physique.
+
+## Jalons
 
 ### K0 — socle reproductible
-
-<badge>Validé</badge>
-
-- Contrat de transfert `BootInfo` versionné.
-- Crate Rust `no_std`, cible `x86_64-unknown-none`.
+- Contrat de transfert BootInfo versionné.
+- Crate Rust no_std et cible x86_64-unknown-none.
 - Tests du contrat et vérification de la cible dans GitHub Actions.
 
 ### K1 — démarrage UEFI minimal
-
-<badge color="success">Réussi dans QEMU/OVMF</badge>
-
-- Le chargeur UEFI lit `EFI/BOOT/KERNEL.BIN` depuis l'ESP.
-- Il réserve l'adresse physique `0x00200000` et charge le binaire noyau.
-- Il découvre GOP et ACPI RSDP.
-- Il récupère la carte mémoire UEFI, son nombre d'entrées, la taille/version des descripteurs.
-- Il appelle `ExitBootServices` et transfère le contrôle à `_start(BootInfo*)`.
-- Le noyau valide le contrat, initialise un marqueur framebuffer et émet `SYSTEMES_KERNEL_OK`.
-- La CI construit l'ISO puis vérifie les marqueurs de démarrage sous QEMU/OVMF.
-
-Preuve reproductible : [K1_BOOT_PROOF.md](K1_BOOT_PROOF.md).
-
-**Limites actuelles de K1 :** chargement à adresse fixe, hypothèse de mapping UEFI identité,
-absence de tables de pages propres, GDT/IDT, gestionnaire d'exceptions, allocateur,
-ordonnanceur et pilotes. Le pointeur RSDP est découvert mais les tables ACPI ne sont pas
-encore analysées. Le framebuffer ne sert qu'à dessiner un marqueur élémentaire.
-Le démarrage sur PC physique n'a pas encore été validé.
+- Chargement du noyau depuis l'ESP.
+- Découverte GOP et ACPI RSDP.
+- Récupération de la carte mémoire UEFI.
+- ExitBootServices et transfert de contrôle au noyau.
+- Trace de démarrage vérifiée sous QEMU/OVMF.
 
 ### K2 — primitives CPU et mémoire
+- GDT, IDT et gestionnaires d'exceptions.
+- Gestion mémoire physique et virtuelle.
+- Tables de pages propres et protections NX/W^X.
+- Interruptions matérielles, PIC/APIC et timer.
+- Ordonnanceur préemptif, contexte FPU/SIMD et heap dynamique.
+- SMP et synchronisation multicœur à valider séparément.
 
-- Initialiser une GDT et une IDT propres au noyau.
-- Installer des gestionnaires d'exceptions avec traces série/debug.
-- Lire et valider les descripteurs UEFI et construire un gestionnaire de mémoire physique.
-- Créer un allocateur de pages et une mémoire virtuelle contrôlée.
-- Critère : tests QEMU des allocations/libérations, exceptions attendues et protections
-  de pages, sans dépendre des tables de pages du firmware.
+### K3 — exécution utilisateur
+- Espaces d'adressage isolés et Ring 3.
+- Transitions de privilège et appels système.
+- Chargeur ELF, processus, threads et IPC.
+- Shell utilisateur indépendant du noyau.
 
-### K3 — temps, interruptions et ordonnanceur
+### K4 — stockage et périphériques
+- VFS et système de fichiers persistant.
+- Pilote bloc virtio pour QEMU, puis stockage matériel ciblé.
+- Modèle de pilotes et gestion des périphériques.
+- Clavier, souris, framebuffer et gestion des interruptions.
 
-- Initialiser APIC/PIC selon la plateforme et un timer monotone.
-- Introduire tâches noyau, changement de contexte et synchronisation.
-- Ne pas annoncer SMP avant les tests multicœurs.
-- Critère : plusieurs tâches noyau s'exécutent et les interruptions sont traitées sans blocage.
+### K5 — réseau et services système
+- Pile réseau et pilotes compatibles avec le matériel ciblé.
+- Services système, horloge civile et temporisateurs.
+- Gestion des utilisateurs, permissions et configuration.
 
-### K4 — ABI système et stockage minimal
+### K6 — interface graphique native
+- Serveur graphique/compositeur natif.
+- Gestionnaire de fenêtres et shell graphique.
+- Gestionnaire de fichiers, terminal, paramètres et applications natives.
 
-- Définir les appels système, transitions user/kernel et codes d'erreur.
-- Ajouter un VFS puis un système de fichiers en lecture seule.
-- Ajouter un pilote bloc virtio-blk pour QEMU avant le matériel réel.
-- Critère : lecture d'un fichier de test depuis un disque virtuel sans dépendance Windows.
+### K7 — installation et validation matérielle
+- ISO hybride UEFI reproductible.
+- Installateur avec confirmation des opérations disque.
+- Mise à jour, récupération et diagnostic.
+- Essais sur matériel physique, avec matrice de compatibilité et limites documentées.
 
-### K5 — espace utilisateur et shell
+## Niveaux de preuve
 
-- Charger un programme utilisateur distinct du noyau.
-- Fournir console, entrée clavier, gestion de processus et permissions minimales.
-- Garder l'interface React actuelle comme référence UX, pas comme dépendance du noyau.
-- Critère : un shell utilisateur démarre, exécute une commande et survit à l'arrêt d'un enfant.
+Pour chaque capacité, indiquer séparément :
+1. implémentée ;
+2. compilée ;
+3. tests automatisés réussis ;
+4. validée sous QEMU/OVMF ;
+5. validée sur matériel physique.
 
-### K6 — ISO bootable et validation élargie
-
-- Construire une ISO hybride UEFI avec ESP FAT.
-- Tester démarrage à froid, redémarrage, absence de disque et mémoire insuffisante.
-- Publier SHA-256, trace de démarrage et captures QEMU avec chaque artefact.
-- Ajouter progressivement les essais sur machines physiques, après stabilisation de K2-K5.
-- Critère : pipeline vert et démarrage autonome depuis l'ISO, sans Windows hôte.
+Ne jamais confondre une compilation avec une fonctionnalité opérationnelle, ni un test QEMU avec une validation sur PC physique.
 
 ## Règles d'ingénierie
 
-1. Ne jamais appeler le service .NET actuel « noyau ».
-2. Ne pas remplacer les opérations Windows par des succès simulés.
-3. Ne pas intégrer de pilote matériel réel avant un équivalent virtuel testé dans QEMU.
-4. Ne pas effectuer d'opérations destructrices sur disque pendant les premiers jalons.
-5. Chaque jalon doit avoir des tests automatiques, des traces et un artefact vérifiable.
-6. L'édition Windows reste fonctionnelle pendant le développement du noyau.
+- Aucun composant Windows ou navigateur requis au démarrage.
+- Ne jamais présenter une simulation comme une opération matérielle réelle.
+- Tester d'abord les pilotes dans QEMU lorsque c'est possible.
+- Aucune opération destructive sur disque sans consentement explicite et mécanisme de récupération.
+- Chaque jalon doit avoir des tests, des traces et un artefact vérifiable.
+- CI entièrement verte sur le HEAD exact avant toute fusion.
 
-## Hors périmètre du premier démarrage
+## Hors périmètre des premiers jalons
 
-Wi-Fi/Bluetooth matériel, GPU accéléré, audio, USB universel, ACPI avancé,
-gestion d'énergie complète, compatibilité avec tous les PC et exécution des applications
-Windows. Ces fonctions nécessitent des pilotes, une ABI et une validation spécifiques.
+Wi-Fi/Bluetooth matériel, GPU accéléré, audio, USB universel, ACPI avancé, gestion d'énergie complète et compatibilité avec tous les PC nécessitent des pilotes et validations spécifiques. Ils restent des objectifs progressifs, pas des fonctions déjà disponibles.

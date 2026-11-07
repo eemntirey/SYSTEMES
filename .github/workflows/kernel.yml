@@ -1,17 +1,10 @@
-name: Independent kernel K1 UEFI boot
+name: SYSTEMES autonomous OS CI
 
 on:
   push:
-    branches: [Osreell]
-    paths:
-      - 'kernel/**'
-      - 'boot/**'
-      - '.github/workflows/kernel.yml'
+    branches: [main, Osreell]
   pull_request:
-    paths:
-      - 'kernel/**'
-      - 'boot/**'
-      - '.github/workflows/kernel.yml'
+    branches: [main]
   workflow_dispatch:
 
 permissions:

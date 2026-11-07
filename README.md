@@ -1,72 +1,63 @@
-# SYSTEMES — Recréation de Windows 11
+# SYSTEMES — système d’exploitation autonome
 
-## 🎯 Mission du projet
+SYSTEMES est un projet de système d’exploitation indépendant, libre d’utilisation et destiné à démarrer directement sur un ordinateur compatible, sans dépendre de Windows.
 
-**Ce projet est développé uniquement à des fins éducatives, de recherche et d'utilisation personnelle gratuite.**
+## Objectif
 
-- ✅ **Gratuit** — Aucun coût, aucun abonnement, aucune limitation d'usage
-- ⚠️ **Licence personnalisée** — Usage personnel, éducatif et de recherche non commerciale uniquement ; les usages commerciaux sont interdits par `LICENSE`
-- ✅ **Non commercial** — Aucune monétisation, aucune vente, aucune collecte de données
-- ✅ **Open Source** — Développement transparent, contributions bienvenues
+Construire un OS x86_64/UEFI complet, avec ses propres composants :
 
-> **Déclaration formelle** : SYSTEMES n'a **aucun but lucratif**. Il ne sera jamais vendu, licencié, ni monétisé sous quelque forme que ce soit. Toute utilisation commerciale dérivée est explicitement interdite par la volonté des auteurs.
+- noyau autonome Rust `no_std` ;
+- gestion de la mémoire physique et virtuelle ;
+- interruptions, horloge, ordonnanceur et multitâche ;
+- espaces utilisateur, processus, appels système et IPC ;
+- pilotes matériels et gestion des périphériques ;
+- VFS et systèmes de fichiers persistants ;
+- pile réseau ;
+- interface graphique native, gestionnaire de fenêtres et applications ;
+- comptes, permissions, installation, mises à jour et récupération.
 
-## 📋 Description
+**Le livrable final est un OS amorçable directement depuis un support EFI/ISO sur un PC physique.** Une interface exécutée dans un navigateur ou hébergée par Windows ne constitue pas SYSTEMES OS.
 
-Recréation fidèle de l'interface Windows 11 en **React 18 + Vite + TypeScript**, avec un **moteur natif .NET 8** qui expose des opérations Windows réelles (WMI, Win32, APIs système). Certaines fonctions restent des préférences locales ou des représentations logiques ; leur statut doit être indiqué dans l’interface.
-
-### Fonctionnalités principales
-- Bureau, barre des tâches, menu Démarrer (thème Obsidian glassmorphism)
-- Explorateur de fichiers natif (lecture/écriture réelle)
-- Gestionnaire de processus réel (listing, terminaison, métriques)
-- Panneau matériel : CPU, RAM, GPU, disques, réseau, batterie
-- Terminal natif, Calculatrice, Bloc-notes, Paint, Photos
-- Paramètres Windows réels (ms-settings:), Windows Update, services
-- Notifications natives, centre d'actions, widgets
-
-## 🏗 Architecture
+## Architecture du système
 
 ```
-├── src/                    # Application React (UI)
-│   ├── components/         # Composants UI (Desktop, Taskbar, StartMenu, Windows, Apps)
-│   ├── native/             # Pont vers le moteur .NET (NativeBridge, JSON-RPC)
-│   └── styles/             # CSS (dont obsidian-desktop.css pour le thème glass)
-├── native/
-│   ├── Windver/Core/       # Moteur .NET 8 (C#) — HardwareManager, ProcessManager, FileSystemNative, etc.
-│   ├── windows-host/       # Hôte WPF + WebView2 (build natif autonome)
-│   └── native-core/        # Contrats partagés (ISystemServices)
-├── dist/                   # Build de production (servi par l'hôte natif)
-└── docs/                   # Documentation technique
+boot/       Chargeur UEFI x86_64
+kernel/     Noyau Rust no_std
+userland/   Services et applications en espace utilisateur
+image/      Construction des images EFI/ISO
+docs/       Architecture, contrats et preuves de validation
 ```
 
-## 🚀 Lancement rapide
+Les anciens composants d'interface et d'intégration Windows présents dans l'historique du dépôt ne constituent ni une édition du produit, ni une cible de livraison. Ils ne doivent pas être utilisés comme substitut au noyau, aux pilotes ou à l'interface native de SYSTEMES OS.
 
-### Version navigateur (développement)
-```bash
-npm install
-npm run dev          # http://127.0.0.1:5173
-```
+## État et validation
 
-### Version native Windows (recommandée — sans navigateur)
-```bash
-npm run build
-dotnet build native/windows-host/SYSTEMES.WindowsHost.csproj -c Release
-.\native\windows-host\bin\Release\net8.0-windows\SYSTEMES.WindowsHost.exe
-```
+Le noyau dispose d'une chaîne de démarrage UEFI validée sous QEMU/OVMF. Le développement des primitives CPU, mémoire, interruptions et multitâche se poursuit.
 
-Prérequis : **.NET 8 SDK**, **Node.js 20+**, **WebView2 Runtime** (inclus dans Windows 11).
+Les niveaux de validation doivent toujours être distingués :
 
-## 🤝 Contribution
+1. compilé ;
+2. tests unitaires/hôtes réussis ;
+3. démarrage et tests QEMU/OVMF réussis ;
+4. démarrage validé sur matériel physique.
 
-Contributions bienvenues (issues, PR, idées) — dans le respect de la mission **gratuite et non-commerciale**.
+Un test QEMU ne constitue pas une preuve de compatibilité matérielle générale. Ne jamais annoncer une fonctionnalité comme terminée sans preuve adaptée.
 
-## 📜 Avertissement légal
+## Développement
 
-- Ce projet n'est **pas affilié à Microsoft**.
-- "Windows 11" est une marque déposée de Microsoft Corporation.
-- SYSTEMES est une **re-création indépendante** à but éducatif.
-- Le code natif utilise des APIs Windows documentées (WMI, Win32, .NET) — aucun exploit, aucune élévation de privilège non consentie.
+Les contributions doivent viser directement les composants de l'OS autonome. Chaque livraison doit apporter une capacité vérifiable, des tests automatisés et une documentation concise.
 
----
+- Aucun composant simulé ne doit être présenté comme matériel ou service réel.
+- Aucun test ne doit être déclaré exécuté sans l'avoir réellement lancé.
+- Aucune fusion avant une CI entièrement verte sur le HEAD exact.
+- Aucune revue Kilo Code.
+- Respecter les licences des composants tiers.
 
-**Fait avec passion par la communauté, pour la communauté. 💙**
+## Gratuité
+
+SYSTEMES doit rester gratuit à utiliser, sans activation payante, abonnement ou verrouillage des fonctions essentielles. Les licences des dépendances tierces restent applicables.
+
+## Documentation
+
+- [Feuille de route du noyau et de l'ISO bootable](docs/BOOTABLE_KERNEL_ISO_ROADMAP.md)
+- [Programme d'accélération](https://github.com/eemntirey/SYSTEMES/issues/45)
