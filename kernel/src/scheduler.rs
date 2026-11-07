@@ -389,19 +389,27 @@ mod preemptive_qemu_test {
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    const WORK_ITERATIONS: usize = 30_000_000;
+    const TASK_RUNTIME_TICKS: u64 = 5;
     static COMPLETED: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
 
+    fn consume_five_timer_ticks() {
+        let start = crate::clock::ticks();
+        while crate::clock::ticks().wrapping_sub(start) < TASK_RUNTIME_TICKS {
+            core::hint::spin_loop();
+        }
+    }
+
+    // These entries never call yield_now; only the Local APIC timer can switch them.
     extern "C" fn worker_a() {
-        for _ in 0..WORK_ITERATIONS { core::hint::spin_loop(); }
+        consume_five_timer_ticks();
         COMPLETED[0].fetch_add(1, Ordering::Release);
     }
     extern "C" fn worker_b() {
-        for _ in 0..WORK_ITERATIONS { core::hint::spin_loop(); }
+        consume_five_timer_ticks();
         COMPLETED[1].fetch_add(1, Ordering::Release);
     }
     extern "C" fn worker_c() {
-        for _ in 0..WORK_ITERATIONS { core::hint::spin_loop(); }
+        consume_five_timer_ticks();
         COMPLETED[2].fetch_add(1, Ordering::Release);
     }
 
