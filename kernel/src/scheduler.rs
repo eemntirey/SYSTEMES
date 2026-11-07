@@ -709,7 +709,7 @@ mod task_sleep_qemu_test {
     }
 
     extern "C" fn event_waiter() {
-        if block_current() { EVENT_WAKE_DONE.store(1, Ordering::Release); }
+        if block_current() { EVENT_WAKE_DONE.fetch_add(1, Ordering::AcqRel); }
     }
 
     extern "C" fn event_waker() {
