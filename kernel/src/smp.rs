@@ -253,7 +253,7 @@ mod tests {
     fn rejects_invalid_logical_ids() {
         let registry = CpuRegistry::new();
         assert_eq!(registry.mark_prepared(0), Err(SmpError::InvalidLogicalId));
-        assert_eq!(registry.cpu(MAX_CPUS), None);
+        assert!(registry.cpu(MAX_CPUS).is_none());
     }
 
     #[test]
