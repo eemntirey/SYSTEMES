@@ -1,7 +1,7 @@
 //! x86_64 descriptor tables and fatal CPU-exception diagnostics.
 //!
 //! The kernel remains in the UEFI-provided long-mode environment. This module
-//! installs its own GDT and IDT but deliberately does not enable hardware IRQs.
+//! installs its own GDT and IDT, then dispatches the Local APIC timer and task-yield vector.
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
