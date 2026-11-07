@@ -315,7 +315,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         unsafe { debug_write(b"SYSTEMES_TEST: Local APIC preempted non-yielding tasks\r\n"); }
         unsafe { debug_write(b"SYSTEMES_TEST: three CPU-bound tasks completed under timer preemption\r\n"); }
-        // SAFETY: All test tasks exited; stop the periodic source before the exception test.
+
+    }
+
+    #[cfg(feature = "qemu-fpu-context-test")]
+    {
+        if !systemes_kernel::scheduler::run_fpu_context_qemu_test() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: x87 SSE context isolation failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: x87 state survived timer-driven task switches\r\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: XMM15 state survived timer-driven task switches\r\n"); }
+        // SAFETY: All FPU test tasks exited; stop the periodic source before exception tests.
         unsafe { asm!("cli", options(nomem, nostack)); }
         unsafe { systemes_kernel::apic::stop_local_timer(); }
     }
