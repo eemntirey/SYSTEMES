@@ -11,6 +11,7 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - ACPI : découverte RSDP UEFI et analyse MADT (Local APIC, IOAPIC et overrides ISA)
 - Temps : timer Local APIC calibré sur PIT channel 2 et horloge monotone 100 Hz
 - Ordonnancement : tâches noyau coopératives via 0x41 et préemption par timer Local APIC 0x40
+- Contexte FPU/SIMD : sauvegarde/restauration x87/MMX/SSE par tâche avec FXSAVE64/FXRSTOR64 (512 octets alignés sur 16 octets)
 - CPU : GDT, IDT et gestionnaires d'exceptions CPU 0 à 31
 - Diagnostic : port debug QEMU `0xE9`
 
