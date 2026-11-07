@@ -296,6 +296,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { systemes_kernel::apic::stop_local_timer(); }
         unsafe { debug_write(b"SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced\\r\\n"); }
     }
+    #[cfg(feature = "qemu-cooperative-scheduler-test")]
+    {
+        if !systemes_kernel::scheduler::run_cooperative_qemu_test() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: cooperative scheduler task switching failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: cooperative scheduler switched three kernel tasks\r\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: all cooperative tasks exited and returned to boot task\r\n"); }
+    }
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
         loop {

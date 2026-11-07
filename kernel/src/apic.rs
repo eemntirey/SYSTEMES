@@ -205,18 +205,21 @@ pub unsafe fn stop_local_timer() {
     }
 }
 
-pub fn on_timer_interrupt() {
-    crate::clock::on_timer_interrupt();
-    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
-    if !base.is_null() {
-        // SAFETY: This handler runs after the UC-mapped LAPIC is enabled.
-        unsafe { lapic_write(base, LAPIC_EOI, 0); }
-    }
-}
-
 #[unsafe(no_mangle)]
-pub extern "C" fn systemes_apic_timer_dispatch() {
-    on_timer_interrupt();
+pub extern "C" fn systemes_apic_timer_dispatch(vector: u64, saved_rsp: usize) -> usize {
+    match vector {
+        0x40 => {
+            crate::clock::on_timer_interrupt();
+            let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+            if !base.is_null() {
+                // SAFETY: Timer IRQ executes only after the UC-mapped LAPIC is enabled.
+                unsafe { lapic_write(base, LAPIC_EOI, 0); }
+            }
+            saved_rsp
+        }
+        0x41 => crate::scheduler::on_yield(saved_rsp),
+        _ => saved_rsp,
+    }
 }
 
 #[cfg(test)]

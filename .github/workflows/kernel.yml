@@ -42,7 +42,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -103,6 +103,8 @@ jobs:
           grep -q 'SYSTEMES: ACPI MADT parsed; Local APIC and IOAPIC topology discovered' build/uefi/debug.log
           grep -q 'SYSTEMES: Local APIC timer calibrated from PIT channel 2 at 100 Hz' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Local APIC timer delivered three ticks; monotonic clock advanced' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: cooperative scheduler switched three kernel tasks' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: all cooperative tasks exited and returned to boot task' build/uefi/debug.log
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: GDT initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: IDT initialized for CPU exceptions 0..31' build/uefi/debug.log
