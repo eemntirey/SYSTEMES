@@ -10,8 +10,7 @@ Les niveaux sont cumulatifs : une capacité n'est déclarée QEMU-validée que s
 | Ordonnanceur coopératif — PR #52, HEAD `c1a8b98343ae2242e916011f64c618fdce01a322`, merge `3a4ed1e10d37dd817aed67828490339e23e82208` | Oui | Oui | 40/40 | Oui | Non validé |
 | Ordonnanceur préemptif — PR #53, merge `a32bb337dfe52793a424d960433b8df84d3a2dc8` | Oui | Oui | 40/40 | Oui | Non validé |
 | Contexte x87/SSE par tâche — PR #54 intégré | FXSAVE64/FXRSTOR64 | Oui | 41/41 | Oui | Non validé |
-| TSS/RSP0/IST — PR #56, HEAD `e6b9e8b6981506e770a43964bdf0aac56a6afb25`, run `42374846321` | Oui | Oui | Oui | Oui (6/6 checks) | Non validé |
-| Blocage/sommeil/réveil de tâches — PR #57 en cours | Implémentation en cours | En attente CI | En attente CI | En attente QEMU | Non validé |
+| TSS/RSP0/IST + blocage/sommeil/réveil — PR #57 combinée, HEAD `ac99cd93cfc7353a87631b7b3448eb4bb4faa21b`, run `42375231895` | Oui | Oui | Oui | Oui (6/6 checks) | Non validé |
 
 ## Limites actuellement confirmées
 
