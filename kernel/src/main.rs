@@ -426,6 +426,26 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT valid but incomplete for APIC routing\r\n") };
                 } else {
                     discovered_madt = Some(madt);
+                    let topology_count = match systemes_kernel::smp::register_madt_topology(
+                        &systemes_kernel::smp::CPU_REGISTRY,
+                        &madt,
+                        systemes_kernel::smp::current_apic_id(),
+                    ) {
+                        Ok(count) => {
+                            unsafe { debug_write(b"SYSTEMES: MADT processor topology registered\r\n"); }
+                            count
+                        }
+                        Err(_) => {
+                            unsafe { debug_write(b"SYSTEMES: MADT processor topology registration unavailable\r\n"); }
+                            0
+                        }
+                    };
+                    #[cfg(feature = "qemu-smp-topology-test")]
+                    if topology_count < 2 {
+                        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU SMP topology did not expose at least two CPUs\r\n"); }
+                        halt();
+                    }
+                    let _ = topology_count;
                     unsafe { debug_write(b"SYSTEMES: ACPI MADT validated; Local APIC and IOAPIC topology discovered\r\n") };
                     match unsafe { systemes_kernel::interrupts::initialize_apic_ioapic(&madt, &mut frame_allocator, page_table_root) } {
                         Ok(()) => {
