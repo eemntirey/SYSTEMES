@@ -156,6 +156,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\r\n") };
+    let supervisor_protection = match systemes_kernel::uaccess::enable() {
+        Ok(features) => features,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP/SMAP activation did not latch\r\n"); }
+            halt();
+        }
+    };
+    unsafe { debug_write(b"SYSTEMES: supervisor access protection smep=") };
+    unsafe { debug_write(if supervisor_protection.smep { b"1" } else { b"0" }) };
+    unsafe { debug_write(b" smap=") };
+    unsafe { debug_write(if supervisor_protection.smap { b"1" } else { b"0" }) };
+    unsafe { debug_write(b"\r\n") };
     if systemes_kernel::heap::initialize().is_err() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: dynamic kernel heap initialization failed\r\n"); }
         halt();
@@ -299,12 +311,47 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 unsafe { debug_write(b"SYSTEMES: process address space created\r\n"); }
                 unsafe { debug_write(b"SYSTEMES_TEST: user page mapped with U/S and survived CR3 switch\r\n"); }
                 unsafe { debug_write(b"SYSTEMES_TEST: kernel identity mapping shared by the process address space\r\n"); }
+                if supervisor_protection.smap {
+                    unsafe { debug_write(b"SYSTEMES_TEST: user page access succeeded with SMAP enabled and AC scoped\r\n"); }
+                }
             }
             Err(_) => {
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: address space test failed\r\n"); }
                 halt();
             }
         }
+    }
+    #[cfg(feature = "qemu-smap-violation-test")]
+    {
+        // SAFETY: The deliberate fault below must not race a timer-driven context switch.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        match unsafe {
+            systemes_kernel::uaccess::run_qemu_smap_violation_test(&mut frame_allocator, page_table_root)
+        } {
+            Ok(()) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMAP fault expected but the read succeeded\r\n"); }
+            }
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMAP violation test setup failed\r\n"); }
+            }
+        }
+        halt();
+    }
+    #[cfg(feature = "qemu-smep-violation-test")]
+    {
+        // SAFETY: The deliberate fault below must not race a timer-driven context switch.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        match unsafe {
+            systemes_kernel::uaccess::run_qemu_smep_violation_test(&mut frame_allocator, page_table_root)
+        } {
+            Ok(()) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP fault expected but the call returned\r\n"); }
+            }
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMEP violation test setup failed\r\n"); }
+            }
+        }
+        halt();
     }
     #[cfg(feature = "qemu-ist-nmi-test")]
     {

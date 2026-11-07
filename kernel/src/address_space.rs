@@ -37,6 +37,10 @@ pub enum AddressSpaceError {
     DuplicateMappingAccepted,
     InvalidMappingAccepted,
     KernelMappingMissing,
+    SmapUnavailable,
+    SmepUnavailable,
+    SmapDidNotBlock,
+    SmepDidNotBlock,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -368,17 +372,27 @@ pub unsafe fn run_qemu_address_space_test(
     }
 
     if result.is_ok() {
-        // SAFETY: The user page is identity-backed and present in this address space.
-        let observed = unsafe { core::ptr::read_volatile(virtual_address as *const u64) };
-        if observed != USER_MAGIC {
-            result = Err(AddressSpaceError::UserReadMismatch);
-        } else {
-            // SAFETY: The page was mapped writable for the test.
-            unsafe { core::ptr::write_volatile(virtual_address as *mut u64, USER_MAGIC_WRITTEN) };
-            // SAFETY: Reading the backing frame proves the user write reached it.
-            if unsafe { core::ptr::read_volatile(user_frame as *const u64) } != USER_MAGIC_WRITTEN {
-                result = Err(AddressSpaceError::UserWriteMismatch);
+        // The guard sets EFLAGS.AC only while SMAP is active, so ring-0 user
+        // accesses below stay legal without weakening the rest of the kernel.
+        let user_access = {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            // SAFETY: The user page is identity-backed and present in this address space.
+            let observed = unsafe { core::ptr::read_volatile(virtual_address as *const u64) };
+            if observed != USER_MAGIC {
+                Err(AddressSpaceError::UserReadMismatch)
+            } else {
+                // SAFETY: The page was mapped writable for the test.
+                unsafe { core::ptr::write_volatile(virtual_address as *mut u64, USER_MAGIC_WRITTEN) };
+                // SAFETY: Reading the backing frame proves the user write reached it.
+                if unsafe { core::ptr::read_volatile(user_frame as *const u64) } != USER_MAGIC_WRITTEN {
+                    Err(AddressSpaceError::UserWriteMismatch)
+                } else {
+                    Ok(())
+                }
             }
+        };
+        result = user_access;
+        if result.is_ok() {
             // SAFETY: KERNEL_SHARED_VALUE lives in the shared kernel mapping.
             if unsafe { core::ptr::read_volatile(&KERNEL_SHARED_VALUE) } != KERNEL_SHARED_MAGIC {
                 result = Err(AddressSpaceError::KernelMappingMissing);
