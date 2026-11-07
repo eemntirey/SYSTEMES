@@ -341,6 +341,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     }
 
+    #[cfg(feature = "qemu-task-sleep-test")]
+    {
+        if !systemes_kernel::scheduler::run_task_sleep_qemu_test() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: task sleep/wakeup test failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: blocked task slept for four monotonic ticks\r\n"); }
+        unsafe { debug_write(b"SYSTEMES_TEST: timer woke the blocked task at its deadline\r\n"); }
+    }
+
     #[cfg(feature = "qemu-fpu-context-test")]
     {
         if !systemes_kernel::scheduler::run_fpu_context_qemu_test() {
