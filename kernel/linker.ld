@@ -26,10 +26,6 @@ SECTIONS
     }
     .bss : ALIGN(4096) {
         __bss_start = .;
-        . = ALIGN(4096);
-        __boot_stack_bottom = .;
-        KEEP(*(.bss.boot_stack))
-        __boot_stack_top = .;
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(4096);

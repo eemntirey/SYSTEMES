@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::arch::{asm, global_asm};
+use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{console::debug_write, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
@@ -18,23 +18,6 @@ unsafe extern "C" {
     static __bss_end: u8;
 }
 
-#[unsafe(no_mangle)]
-#[unsafe(link_section = ".bss.boot_stack")]
-static mut SYSTEMES_BOOT_STACK: [u8; 64 * 1024] = [0; 64 * 1024];
-
-global_asm!(
-    r#"
-    .global _start
-    .type _start, @function
-_start:
-    cli
-    lea rsp, [rip + __boot_stack_top]
-    and rsp, -16
-    call systemes_kernel_main
-    ud2
-"#
-);
-
 fn halt() -> ! {
     loop {
         // SAFETY: A fatal boot error must stop execution without returning to the loader.
@@ -43,15 +26,9 @@ fn halt() -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
-    let serial_available = unsafe { systemes_kernel::console::initialize_serial() };
-    unsafe {
-        debug_write(if serial_available {
-            b"SYSTEMES: COM1 serial console initialized\r\n"
-        } else {
-            b"SYSTEMES: COM1 unavailable; QEMU debug console only\r\n"
-        })
-    };
+#[unsafe(link_section = ".text._start")]
+pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
+    
     unsafe { debug_write(b"SYSTEMES: kernel entry reached\r\n") };
 
     if info.is_null() {
@@ -452,12 +429,6 @@ pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
 
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
-        let idle_start = systemes_kernel::clock::ticks();
-        while systemes_kernel::clock::ticks().wrapping_sub(idle_start) < 2 {
-            // SAFETY: The enabled Local APIC timer wakes HLT and advances the clock.
-            unsafe { asm!("hlt", options(nomem, nostack)); }
-        }
-        unsafe { debug_write(b"SYSTEMES: production idle loop entered; timer interrupts verified\r\n"); }
         loop {
             // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
             unsafe { asm!("hlt", options(nomem, nostack)); }
@@ -509,42 +480,7 @@ pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
 }
 
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
+fn panic(_info: &PanicInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
-    let stack_pointer: u64;
-    let frame_pointer: u64;
-    let flags: u64;
-    unsafe {
-        asm!(
-            "mov {}, rsp",
-            "mov {}, rbp",
-            "pushfq",
-            "pop {}",
-            out(reg) stack_pointer,
-            out(reg) frame_pointer,
-            out(reg) flags,
-            options(preserves_flags)
-        );
-        debug_write(b"  rsp=0x");
-        systemes_kernel::console::debug_hex(stack_pointer);
-        debug_write(b" rbp=0x");
-        systemes_kernel::console::debug_hex(frame_pointer);
-        debug_write(b" rflags=0x");
-        systemes_kernel::console::debug_hex(flags);
-        debug_write(b"\r\n");
-    }
-    if let Some(location) = info.location() {
-        unsafe {
-            debug_write(b"  at ");
-            debug_write(location.file().as_bytes());
-            debug_write(b":");
-            systemes_kernel::console::debug_dec(location.line() as u64);
-            debug_write(b"\r\n");
-        }
-    }
-    unsafe {
-        debug_write(b"  message: ");
-        systemes_kernel::console::debug_fmt(format_args!("{}\r\n", info.message()));
-    }
     halt();
 }

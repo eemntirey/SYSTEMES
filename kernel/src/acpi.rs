@@ -294,12 +294,12 @@ const IDENTITY_MAP_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
      }
  
      #[test]
-     fn rejects_null_rsdp_address_without_dereferencing_memory() {
+    #[test]
+    fn rejects_null_rsdp_address_without_dereferencing_memory() {
         // SAFETY: A null physical address is rejected before any memory access.
         assert_eq!(unsafe { discover_madt(0) }, Err(AcpiError::NullAddress));
     }
 
-     #[test]
      fn checksum_validator_accepts_zero_sum_tables() {
          let mut bytes = [0u8; 4];
          bytes[0] = 0xA5;
