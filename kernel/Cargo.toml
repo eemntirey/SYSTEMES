@@ -14,6 +14,7 @@ qemu-acpi-madt-test = []
 qemu-apic-clock-test = []
 qemu-cooperative-scheduler-test = []
 qemu-preemptive-scheduler-test = []
+qemu-fpu-context-test = []
 
 [lib]
 path = "src/lib.rs"
