@@ -18,7 +18,6 @@ pub mod ps2;
 pub mod ps2_controller;
 pub mod ps2_irq;
 pub mod smp;
-pub mod smp;
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;
 pub const BOOT_INFO_VERSION: u32 = 2;
