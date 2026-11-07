@@ -452,6 +452,12 @@ pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
 
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
+        let idle_start = systemes_kernel::clock::ticks();
+        while systemes_kernel::clock::ticks().wrapping_sub(idle_start) < 2 {
+            // SAFETY: The enabled Local APIC timer wakes HLT and advances the clock.
+            unsafe { asm!("hlt", options(nomem, nostack)); }
+        }
+        unsafe { debug_write(b"SYSTEMES: production idle loop entered; timer interrupts verified\r\n"); }
         loop {
             // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
             unsafe { asm!("hlt", options(nomem, nostack)); }
@@ -505,6 +511,28 @@ pub extern "sysv64" fn systemes_kernel_main(info: *const BootInfo) -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: panic\r\n"); }
+    let stack_pointer: u64;
+    let frame_pointer: u64;
+    let flags: u64;
+    unsafe {
+        asm!(
+            "mov {}, rsp",
+            "mov {}, rbp",
+            "pushfq",
+            "pop {}",
+            out(reg) stack_pointer,
+            out(reg) frame_pointer,
+            out(reg) flags,
+            options(preserves_flags)
+        );
+        debug_write(b"  rsp=0x");
+        systemes_kernel::console::debug_hex(stack_pointer);
+        debug_write(b" rbp=0x");
+        systemes_kernel::console::debug_hex(frame_pointer);
+        debug_write(b" rflags=0x");
+        systemes_kernel::console::debug_hex(flags);
+        debug_write(b"\r\n");
+    }
     if let Some(location) = info.location() {
         unsafe {
             debug_write(b"  at ");

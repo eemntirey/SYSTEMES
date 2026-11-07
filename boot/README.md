@@ -7,9 +7,10 @@ captures the UEFI memory map, and calls `ExitBootServices` with bounded retry if
 the firmware reports a stale map key.
 
 The loader passes the version-2 `BootInfo` structure to the kernel using the x86_64
-System V calling convention. The kernel validates the handoff and emits its boot
-milestones through QEMU's debug port `0xE9`. The framebuffer marker is written only
-for GOP RGB/BGR pixel formats.
+System V calling convention. The kernel entry stub switches to its dedicated 64-KiB
+boot stack before entering Rust. The kernel validates the handoff and emits its boot
+milestones through QEMU's debug port `0xE9` and, when detected, the COM1 serial port.
+The framebuffer marker is written only for GOP RGB/BGR pixel formats.
 
 ## K1 validation
 

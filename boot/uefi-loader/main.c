@@ -48,6 +48,12 @@ static VOID copy_bytes(VOID *destination, const VOID *source, UINTN length) {
     for (index = 0; index < length; ++index) out[index] = in[index];
 }
 
+static VOID zero_bytes(VOID *destination, UINTN length) {
+    UINT8 *out = (UINT8 *)destination;
+    UINTN index;
+    for (index = 0; index < length; ++index) out[index] = 0;
+}
+
 static VOID debug_out(UINT8 value) {
     __asm__ __volatile__("outb %0, $0xE9" : : "a"(value));
 }
@@ -152,6 +158,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
     if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
     copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
+    zero_bytes((VOID *)((UINTN)kernel_address + kernel_bytes), (UINTN)KERNEL_IMAGE_BYTES - kernel_bytes);
     debug_text("SYSTEMES_UEFI_KERNEL_LOADED\r\n");
     uefi_call_wrapper(st->BootServices->FreePool, 1, kernel_buffer);
     kernel_buffer = NULL;

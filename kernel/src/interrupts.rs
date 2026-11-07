@@ -6,7 +6,7 @@
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
 
-use crate::console::{debug_hex, debug_write};
+use crate::console::{debug_fmt, debug_hex, debug_write};
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const TSS_SELECTOR: u16 = 0x18;
@@ -694,7 +694,7 @@ pub unsafe fn initialize() {
 pub extern "C" fn systemes_exception_dispatch(
     vector: u64,
     error_code: u64,
-    _frame: *mut ExceptionFrame,
+    frame: *mut ExceptionFrame,
 ) {
     #[cfg(feature = "qemu-ist-nmi-test")]
     if vector == 2 {
@@ -731,6 +731,32 @@ pub extern "C" fn systemes_exception_dispatch(
         debug_write(b" error=0x");
         debug_hex(error_code);
         debug_write(b"\r\n");
+        if let Some(frame) = frame.as_ref() {
+            debug_fmt(format_args!(
+                "  rax={:#018X} rbx={:#018X} rcx={:#018X} rdx={:#018X}\r\n\
+                 rsi={:#018X} rdi={:#018X} rbp={:#018X} r8 ={:#018X}\r\n\
+                 r9 ={:#018X} r10={:#018X} r11={:#018X} r12={:#018X}\r\n\
+                 r13={:#018X} r14={:#018X} r15={:#018X}\r\n",
+                frame.rax, frame.rbx, frame.rcx, frame.rdx,
+                frame.rsi, frame.rdi, frame.rbp, frame.r8,
+                frame.r9, frame.r10, frame.r11, frame.r12,
+                frame.r13, frame.r14, frame.r15,
+            ));
+            debug_write(b"  rip=0x");
+            debug_hex(frame.rip);
+            debug_write(b" cs=0x");
+            debug_hex(frame.cs);
+            debug_write(b" rflags=0x");
+            debug_hex(frame.rflags);
+            debug_write(b"\r\n");
+            if vector == 14 {
+                let fault_address: u64;
+                asm!("mov {}, cr2", out(reg) fault_address, options(nomem, nostack, preserves_flags));
+                debug_write(b"  cr2=0x");
+                debug_hex(fault_address);
+                debug_write(b"\r\n");
+            }
+        }
     }
 
     if is_resumable_exception(vector) {
