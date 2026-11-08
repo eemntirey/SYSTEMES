@@ -15,6 +15,7 @@ pub mod interrupts;
 pub mod memory;
 pub mod paging;
 pub mod scheduler;
+pub mod serial;
 pub mod syscall;
 pub mod uaccess;
 
