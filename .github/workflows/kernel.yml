@@ -17,6 +17,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Verify embedded shell matches its assembly source
+        run: |
+          as --64 kernel/userland/shell.S -o /tmp/systemes-shell.o
+          objcopy -O binary -j .text /tmp/systemes-shell.o /tmp/systemes-shell.bin
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          rust = Path("kernel/src/shell_elf.rs").read_text()
+          match = re.search(
+              r"const SHELL_CODE:\s*&\[u8\]\s*=\s*&\[(.*?)\];",
+              rust,
+              re.S,
+          )
+          if not match:
+              raise SystemExit("SHELL_CODE byte array was not found")
+          embedded = bytes(int(value) for value in re.findall(r"\d+", match.group(1)))
+          assembled = Path("/tmp/systemes-shell.bin").read_bytes()
+          if embedded != assembled:
+              limit = min(len(embedded), len(assembled))
+              offset = next((i for i in range(limit) if embedded[i] != assembled[i]), limit)
+              raise SystemExit(
+                  f"Embedded shell differs from shell.S: embedded={len(embedded)} bytes, "
+                  f"assembled={len(assembled)} bytes, first difference={offset}"
+              )
+          print(f"Embedded ELF shell matches shell.S ({len(embedded)} bytes)")
+          PY
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -384,7 +411,28 @@ jobs:
             disk_args=(-drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on)
           fi
           set +e
-          { sleep 5; for _ in {1..5}; do printf 'Z'; sleep 1; done; } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
+          {
+            sleep 5
+            send_chars() {
+              local text="$1"
+              for ((i=0; i<${#text}; i++)); do
+                printf '%s' "${text:i:1}"
+                sleep 0.04
+              done
+            }
+            send_line() {
+              send_chars "$1"
+              printf '\r'
+              sleep 0.25
+            }
+            send_line Z
+            send_line help
+            send_chars 'echo hellx'
+            printf '\177o\r'
+            sleep 0.25
+            send_line unknown
+            send_line exit
+          } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
@@ -399,7 +447,40 @@ jobs:
           grep -q 'SYSTEMES: serial UART initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: userland shell ready' build/uefi/debug.log
           grep -qF '${{ matrix.expect }}' build/uefi/debug.log
-          grep -qF '> Z' build/uefi/serial.log
+          python3 - <<'PY'
+          from pathlib import Path
+
+          serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\r", "")
+          lines = serial.splitlines()
+          expected = [
+              "> Z",
+              "Unknown command. Type help.",
+              "> help",
+              "Commands: help, echo <text>, exit",
+              "> echo hellx\b \bo",
+              "hello",
+              "> unknown",
+              "Unknown command. Type help.",
+              "> exit",
+          ]
+          cursor = 0
+          for item in expected:
+              try:
+                  cursor = lines.index(item, cursor) + 1
+              except ValueError:
+                  raise SystemExit(f"QEMU shell transcript missing or out of order: {item!r}")
+          if lines.count("> Z") != 1 or "> ZZ" in lines:
+              raise SystemExit("single-character input was not echoed exactly once")
+          if lines.count("hello") != 1:
+              raise SystemExit("echo command did not produce exactly one standalone 'hello' output")
+          print("QEMU shell transcript verified: exact echo, help, backspace, unknown command and exit")
+          PY
+          grep -qF '> help' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, exit' build/uefi/serial.log
+          grep -qF 'hello' build/uefi/serial.log
+          grep -qF 'Unknown command. Type help.' build/uefi/serial.log
+          grep -qF '> exit' build/uefi/serial.log
+          grep -qF 'SYSTEMES: user process exited with status 0' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1
