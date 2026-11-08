@@ -16,29 +16,27 @@ Ordre de travail :
 6. Hygiène debug (CRLF réels, console factorisée) — livrée (PR #58, #59).
 7. Exceptions reprenables (#BP avec `iretq`) — livrée (PR #60).
 8. Espaces d'adressage par processus — livrés (PR #61) ; SMEP/SMAP et helpers uaccess — livrés dans cette PR.
-9. T9 — GDT user et transition Ring 3/Ring 0 — implémenté ; validation CI/QEMU requise.
-10. T10 — SYSCALL/SYSRET et ABI contrôlée — en cours : version d'ABI minimale, pile noyau dédiée mono-cœur et test QEMU.
-11. T11 — chargeur ELF, init et processus utilisateur.
-12. T12 — console native et shell texte.
-13. T13 — pilote de stockage virtio-blk.
-14. T14 — VFS.
+9. T9 — GDT user et transition Ring 3/Ring 0 — implémenté et testé sous QEMU.
+10. T10 — SYSCALL/SYSRET et ABI contrôlée — implémenté et testé sous QEMU, mono-cœur.
+11. T11 — parseur/chargeur ELF64 statique et lancement du petit ELF intégré — implémenté ; tests hôte et exécution Ring 3 QEMU.
+12. T12 — shell UART minimal en Ring 3, avec `SYS_READ` et `SYS_WRITE` — exécuté sous QEMU avec entrée série.
+13. T13 — lecture DMA synchrone d'un secteur par virtio-blk PCI legacy/transitional — démontrée sous QEMU.
+14. T14 — VFS en lecture seule sur SYSFS — `mount/open/read/close` démontrés depuis le disque virtio QEMU.
 
 SMP complet reste différé jusqu'à validation des étapes A à F. Pour chaque PR : vérifier le HEAD exact, tous les check-runs et la CI complète.
 
 ## Prochaines capacités à livrer
 
 ### P1 — mémoire et exécution isolée
-- gestionnaire de frames physiques et allocateur de pages extensible ;
-- pagination et espaces d'adressage indépendants ;
 - démarrage SMP, structures per-CPU, synchronisation et ordonnancement multicœur ;
-- passage Ring 3 et retour Ring 0 sécurisé ;
-- interface d'appels système SYSCALL/SYSRET ;
-- processus, threads, terminaison et IPC.
+- processus utilisateur durables, terminaison et IPC ;
+- chargement ELF depuis le VFS plutôt que depuis une image intégrée ;
+- gestion récupérable des fautes d'accès et libération des tables de pages.
 
 ### P2 — services fondamentaux
-- VFS et abstraction des systèmes de fichiers ;
-- pilote de stockage virtio-blk, puis pilotes matériels ciblés ;
-- entrées clavier/souris et console ;
+- systèmes de fichiers usuels et VFS inscriptible ;
+- transport virtio moderne, I/O asynchrone et validation sur matériel ciblé ;
+- entrées clavier/souris et shell avec interpréteur de commandes ;
 - gestion des périphériques, interruptions et temporisateurs ;
 - pile réseau et premiers pilotes réseau.
 
