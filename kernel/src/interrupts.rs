@@ -631,6 +631,18 @@ systemes_exception_common:
     pop rbx
     pop rax
     add rsp, 16
+    push rax
+    push rdx
+    mov rax, qword ptr [rsp + 24]
+    cmp ax, {kernel_code_selector}
+    mov dx, 0xE9
+    mov al, 'K'
+    je .Lsystemes_iret_kernel
+    mov al, 'U'
+.Lsystemes_iret_kernel:
+    out dx, al
+    pop rdx
+    pop rax
     iretq
 "#,
     kernel_code_selector = const KERNEL_CODE_SELECTOR,
