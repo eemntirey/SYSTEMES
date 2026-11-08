@@ -8,6 +8,12 @@ use core::sync::atomic::{AtomicU64, Ordering};
 pub const TICK_HZ: u64 = 100;
 pub const TICK_NANOS: u64 = 1_000_000_000 / TICK_HZ;
 
+/// Convert monotonic timer ticks to whole elapsed seconds (floor division).
+#[inline]
+pub const fn ticks_to_seconds(ticks: u64) -> u64 {
+    ticks / TICK_HZ
+}
+
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// Reset the clock before enabling the calibrated Local APIC timer.
