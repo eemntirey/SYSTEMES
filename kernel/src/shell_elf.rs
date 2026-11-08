@@ -150,8 +150,8 @@ mod tests {
         assert!(SHELL_ELF.windows(6).any(|bytes| bytes == b"uptime"));
         assert!(SHELL_ELF.windows(10).any(|bytes| bytes == b"cat <path>"));
         assert!(SHELL_ELF.windows(14).any(|bytes| bytes == b"cat: not found"));
-        assert!(SHELL_ELF.windows(19).any(|bytes| bytes == b"cat: no filesystem"));
-        assert!(SHELL_ELF.windows(9).any(|bytes| bytes == b"cat: usage"));
+        assert!(SHELL_ELF.windows(18).any(|bytes| bytes == b"cat: no filesystem"));
+        assert!(SHELL_ELF.windows(10).any(|bytes| bytes == b"cat: usage"));
         assert!(SHELL_ELF.windows(7).any(|bytes| bytes == b"Unknown"));
     }
 
