@@ -315,7 +315,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                                     unsafe { core::ptr::write_volatile((buf + read) as *mut u8, byte) };
                                 }
                                 read += 1;
-                                if byte == b'\\n' || byte == b'\\r' {
+                                if byte == b'\n' || byte == b'\r' {
                                     break;
                                 }
                             }
