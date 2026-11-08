@@ -384,7 +384,27 @@ jobs:
             disk_args=(-drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on)
           fi
           set +e
-          { sleep 5; for _ in {1..5}; do printf 'Z'; sleep 1; done; } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
+          {
+            sleep 5
+            send_chars() {
+              local text="$1"
+              for ((i=0; i<${#text}; i++)); do
+                printf '%s' "${text:i:1}"
+                sleep 0.04
+              done
+            }
+            send_line() {
+              send_chars "$1"
+              printf '\\r'
+              sleep 0.25
+            }
+            send_line help
+            send_chars 'echo hellx'
+            printf '\\177o\\r'
+            sleep 0.25
+            send_line unknown
+            send_line exit
+          } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
@@ -399,7 +419,12 @@ jobs:
           grep -q 'SYSTEMES: serial UART initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: userland shell ready' build/uefi/debug.log
           grep -qF '${{ matrix.expect }}' build/uefi/debug.log
-          grep -qF '> Z' build/uefi/serial.log
+          grep -qF '> help' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, exit' build/uefi/serial.log
+          grep -qF 'hello' build/uefi/serial.log
+          grep -qF 'Unknown command. Type help.' build/uefi/serial.log
+          grep -qF '> exit' build/uefi/serial.log
+          grep -qF 'SYSTEMES: user process exited with status 0' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1
