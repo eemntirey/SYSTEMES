@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn reports_unknown_syscalls_with_enosys() {
-        let mut frame = valid_frame(u64::MAX);
+        let mut frame = valid_frame(6);
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_NO_SYS);
     }
 
@@ -278,4 +278,11 @@ mod tests {
         frame.rdx = 8;
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
     }
+
+    #[test]
+    fn uptime_syscall_returns_the_monotonic_tick_count() {
+        let mut frame = valid_frame(SYS_UPTIME);
+        assert_eq!(systemes_syscall_dispatch(&mut frame), crate::clock::ticks());
+    }
+
 }
