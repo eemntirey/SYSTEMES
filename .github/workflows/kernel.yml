@@ -36,7 +36,6 @@ jobs:
           embedded = bytes(int(value) for value in re.findall(r"\d+", match.group(1)))
           assembled = Path("/tmp/systemes-shell.bin").read_bytes()
           if embedded != assembled:
-              print("SHELL_CODE_HEX=" + assembled.hex())
               limit = min(len(embedded), len(assembled))
               offset = next((i for i in range(limit) if embedded[i] != assembled[i]), limit)
               raise SystemExit(
