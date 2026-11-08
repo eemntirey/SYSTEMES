@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn directory_listing_rejects_extents_that_do_not_cover_entry_indices() {
         let mut image = make_tree_image();
-        let docs_inode = SYSFS_BLOCK_SIZE as usize + 2 * INODE_SIZE;
+        let docs_inode = SYSFS_BLOCK_SIZE as usize + 2 * SYSFS_INODE_SIZE;
         image[docs_inode + 2..docs_inode + 6].copy_from_slice(&8u32.to_le_bytes());
         image[docs_inode + 10..docs_inode + 14].copy_from_slice(&0u32.to_le_bytes());
         let fs = SimpleFs::parse(&image).unwrap();
