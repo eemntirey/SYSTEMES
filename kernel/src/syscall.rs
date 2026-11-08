@@ -20,6 +20,7 @@ pub const SYS_YIELD: u64 = 4;
 pub const SYS_UPTIME: u64 = 5;
 pub const SYS_OPEN: u64 = 6;
 pub const SYS_CLOSE: u64 = 7;
+pub const SYS_READDIR: u64 = 8;
 pub const API_VERSION: u64 = 1;
 pub const ERROR_NO_SYS: u64 = (-38i64) as u64;
 pub const ERROR_BAD_FD: u64 = (-9i64) as u64;
@@ -31,6 +32,8 @@ pub const ERROR_INVALID_ARGUMENT: u64 = (-22i64) as u64;
 pub const ERROR_TOO_MANY_FILES: u64 = (-24i64) as u64;
 pub const ERROR_NAME_TOO_LONG: u64 = (-36i64) as u64;
 pub const ERROR_NOT_DIRECTORY: u64 = (-20i64) as u64;
+pub const ERROR_IS_DIRECTORY: u64 = (-21i64) as u64;
+pub const ERROR_BUFFER_TOO_SMALL: u64 = (-75i64) as u64;
 const MAX_OPEN_PATH: usize = 255;
 const FILE_READ_CHUNK: usize = 512;
 static PROCESS_FILES: SpinLock<ProcessFileTable> = SpinLock::new(ProcessFileTable::new());
@@ -57,12 +60,12 @@ fn validate_open_path(bytes: &[u8]) -> Result<&str, u64> {
         return Err(ERROR_INVALID_ARGUMENT);
     }
     let path = core::str::from_utf8(bytes).map_err(|_| ERROR_INVALID_ARGUMENT)?;
-    let component = &path[1..];
-    if component.is_empty()
-        || component == "."
-        || component == ".."
-        || component.contains('/')
-        || component.split('/').any(|part| part == ".." || part == ".")
+    if path == "/" {
+        return Ok(path);
+    }
+    let components = &path[1..];
+    if components.is_empty()
+        || components.split('/').any(|part| part.is_empty() || part == "." || part == "..")
     {
         return Err(ERROR_INVALID_ARGUMENT);
     }
@@ -73,7 +76,9 @@ fn map_vfs_error(error: VfsError) -> u64 {
     match error {
         VfsError::NotMounted => ERROR_NO_DEVICE,
         VfsError::NotFound => ERROR_NO_ENTRY,
-        VfsError::NotAFile => ERROR_NOT_DIRECTORY,
+        VfsError::NotAFile | VfsError::NotADirectory => ERROR_NOT_DIRECTORY,
+        VfsError::IsDirectory => ERROR_IS_DIRECTORY,
+        VfsError::BufferTooSmall => ERROR_BUFFER_TOO_SMALL,
         VfsError::InvalidPath => ERROR_INVALID_ARGUMENT,
         VfsError::NameTooLong => ERROR_NAME_TOO_LONG,
         VfsError::OutOfHandles => ERROR_TOO_MANY_FILES,
@@ -130,6 +135,122 @@ fn open_user_file(user_path: u64, path_len: u64) -> u64 {
             map_file_table_error(error)
         }
     }
+}
+
+/// Copy a NUL-terminated path one byte at a time, validating every user page before access.
+fn copy_user_c_path(user_path: u64) -> Result<([u8; MAX_OPEN_PATH], usize), u64> {
+    let mut bytes = [0u8; MAX_OPEN_PATH];
+    for index in 0..MAX_OPEN_PATH {
+        let address = user_path.checked_add(index as u64).ok_or(ERROR_BAD_ADDRESS)?;
+        if !is_user_range(address, 1) {
+            return Err(ERROR_BAD_ADDRESS);
+        }
+        // SAFETY: This single-byte user range is canonical and bounded before the page-table walk.
+        if !unsafe { user_range_is_mapped(address, 1, false) } {
+            return Err(ERROR_BAD_ADDRESS);
+        }
+        let byte = {
+            let _guard = crate::uaccess::UserAccessGuard::new();
+            // SAFETY: The byte mapping was validated above and SMAP is enabled only for this load.
+            unsafe { core::ptr::read_volatile(address as *const u8) }
+        };
+        if byte == 0 {
+            return Ok((bytes, index));
+        }
+        bytes[index] = byte;
+    }
+    Err(ERROR_NAME_TOO_LONG)
+}
+
+/// SYS_READDIR accepts either an open directory descriptor or a NUL-terminated user path.
+fn read_user_directory(argument: u64, user_buffer: u64, length: u64) -> u64 {
+    if length != 0 {
+        if !is_user_range(user_buffer, length) {
+            return ERROR_BAD_ADDRESS;
+        }
+        // SAFETY: The output range is canonical and bounded before inspecting page mappings.
+        if !unsafe { user_range_is_mapped(user_buffer, length, true) } {
+            return ERROR_BAD_ADDRESS;
+        }
+    }
+
+    let path_mode = argument >= crate::address_space::USER_BASE;
+    let (handle, temporary) = if path_mode {
+        let (path_bytes, path_len) = match copy_user_c_path(argument) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        let path = match validate_open_path(&path_bytes[..path_len]) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        match crate::rootfs::with_root(|vfs| vfs.open(path)) {
+            Some(Ok(handle)) => (handle, true),
+            Some(Err(error)) => return map_vfs_error(error),
+            None => return ERROR_NO_DEVICE,
+        }
+    } else {
+        let descriptor = match u32::try_from(argument) {
+            Ok(descriptor) if descriptor >= crate::file_descriptors::FIRST_FILE_DESCRIPTOR => descriptor,
+            _ => return ERROR_BAD_FD,
+        };
+        match PROCESS_FILES.lock().get(descriptor) {
+            Ok(handle) => (handle, false),
+            Err(error) => return map_file_table_error(error),
+        }
+    };
+
+    let mut total = 0u64;
+    let mut error = None;
+    let mut chunk = [0u8; FILE_READ_CHUNK];
+    while total < length {
+        let chunk_len = core::cmp::min(length - total, FILE_READ_CHUNK as u64) as usize;
+        let count = match crate::rootfs::with_root(|vfs| vfs.read_dir(handle, &mut chunk[..chunk_len])) {
+            Some(Ok(count)) => count,
+            Some(Err(VfsError::BufferTooSmall)) if total != 0 => break,
+            Some(Err(vfs_error)) => {
+                if total == 0 {
+                    error = Some(map_vfs_error(vfs_error));
+                }
+                break;
+            }
+            None => {
+                if total == 0 {
+                    error = Some(ERROR_NO_DEVICE);
+                }
+                break;
+            }
+        };
+        if count == 0 {
+            break;
+        }
+        if count > chunk_len {
+            error = Some(ERROR_IO);
+            break;
+        }
+        {
+            let _guard = crate::uaccess::UserAccessGuard::new();
+            for (index, byte) in chunk[..count].iter().copied().enumerate() {
+                // SAFETY: The entire user destination was validated and mapped above.
+                unsafe {
+                    core::ptr::write_volatile((user_buffer + total + index as u64) as *mut u8, byte);
+                }
+            }
+        }
+        total += count as u64;
+    }
+
+    if temporary {
+        let close_result = crate::rootfs::with_root(|vfs| vfs.close(handle));
+        if total == 0 && error.is_none() {
+            if let Some(Err(close_error)) = close_result {
+                error = Some(map_vfs_error(close_error));
+            } else if close_result.is_none() {
+                error = Some(ERROR_NO_DEVICE);
+            }
+        }
+    }
+    error.unwrap_or(total)
 }
 
 fn close_user_file(descriptor: u64) -> u64 {
@@ -267,6 +388,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
         }
         SYS_OPEN => open_user_file(frame.rdi, frame.rsi),
         SYS_CLOSE => close_user_file(frame.rdi),
+        SYS_READDIR => read_user_directory(frame.rdi, frame.rsi, frame.rdx),
         SYS_EXIT => {
             close_process_files();
             crate::interrupts::set_user_exit_status(frame.rdi);
