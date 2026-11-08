@@ -70,16 +70,12 @@ check_uptime:
     je command_uptime
 check_ls:
     cmp $2, %r12d
-    je check_ls_exact
-    cmp $3, %r12d
     jb check_cat
     cmpw $0x736c, (%r13)
     jne check_cat
+    cmp $2, %r12d
+    je command_ls
     cmpb $0x20, 2(%r13)
-    jne check_cat
-    jmp command_ls
-check_ls_exact:
-    cmpw $0x736c, (%r13)
     jne check_cat
     jmp command_ls
 check_cat:
