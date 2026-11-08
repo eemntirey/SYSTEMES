@@ -7,7 +7,6 @@ use crate::{
     console::debug_write,
     uaccess::is_user_range,
 };
-#[cfg(feature = "qemu-user-shell-test")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const SYS_GET_API_VERSION: u64 = 0;
@@ -15,6 +14,7 @@ pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ: u64 = 2;
 pub const SYS_EXIT: u64 = 3;
 pub const SYS_YIELD: u64 = 4;
+pub const SYS_UPTIME: u64 = 5;
 pub const API_VERSION: u64 = 1;
 pub const ERROR_NO_SYS: u64 = (-38i64) as u64;
 pub const ERROR_BAD_FD: u64 = (-9i64) as u64;
@@ -22,6 +22,8 @@ pub const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
 pub const ERROR_IO: u64 = (-5i64) as u64;
 pub(crate) const SYS_EXIT_DISPATCHED: u64 = u64::MAX;
 const USER_FLAGS_MASK: u64 = 0xAD5;
+
+static USER_SHELL_UPTIME_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "qemu-user-shell-test")]
 static USER_SHELL_WRITE_SEEN: AtomicBool = AtomicBool::new(false);
@@ -66,6 +68,13 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
         SYS_YIELD => {
             crate::scheduler::yield_now();
             0
+        }
+        SYS_UPTIME => {
+            let ticks = crate::clock::ticks();
+            if !USER_SHELL_UPTIME_SEEN.swap(true, Ordering::Relaxed) {
+                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_UPTIME succeeded\\r\\n") };
+            }
+            ticks
         }
         SYS_EXIT => {
             crate::interrupts::set_user_exit_status(frame.rdi);
