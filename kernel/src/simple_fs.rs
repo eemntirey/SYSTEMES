@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(SimpleFs::parse(&data), Err(SimpleFsError::BadVersion));
 
         let mut data = make_image(1);
-        data[10] = 0;
+        data[11] = 0;
         assert_eq!(SimpleFs::parse(&data), Err(SimpleFsError::BadVersion));
 
         let mut data = make_image(1);

@@ -99,7 +99,7 @@ jobs:
           cp "$variables" build/uefi/OVMF_VARS.fd
           file "$firmware" build/uefi/OVMF_VARS.fd
           set +e
-          { sleep 3; printf 'Z'; } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown > build/uefi/serial.log
+          { sleep 5; for _ in {1..5}; do printf 'Z'; sleep 1; done; } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown > build/uefi/serial.log
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then

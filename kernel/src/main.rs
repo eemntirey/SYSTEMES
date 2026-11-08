@@ -51,8 +51,27 @@ fn run_qemu_virtio_vfs_test(
         .map_err(|_| VirtioVfsTestError::DeviceInitialization)?;
 
     let mut header = [0; 512];
-    unsafe { device.read_sector(0, &mut header, allocator) }
-        .map_err(|_| VirtioVfsTestError::SectorRead)?;
+    unsafe { device.read_sector(0, &mut header, allocator) }.map_err(|error| {
+        let message = match error {
+            systemes_kernel::virtio_blk::VirtioBlkError::OutOfFrames =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk has no DMA frames\r\n" as &[u8],
+            systemes_kernel::virtio_blk::VirtioBlkError::InvalidFrame =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk DMA frame is invalid\r\n",
+            systemes_kernel::virtio_blk::VirtioBlkError::SectorOutOfRange =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk sector is out of range\r\n",
+            systemes_kernel::virtio_blk::VirtioBlkError::RequestFailed =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk used ring response is invalid\r\n",
+            systemes_kernel::virtio_blk::VirtioBlkError::IoError =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk returned I/O error\r\n",
+            systemes_kernel::virtio_blk::VirtioBlkError::UnsupportedRequest =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk rejected read request\r\n",
+            systemes_kernel::virtio_blk::VirtioBlkError::DmaTimeout =>
+                b"SYSTEMES_TEST_FAIL: virtio-blk DMA request timed out\r\n",
+            _ => b"SYSTEMES_TEST_FAIL: virtio-blk sector read failed\r\n",
+        };
+        unsafe { debug_write(message); }
+        VirtioVfsTestError::SectorRead
+    })?;
     unsafe { debug_write(b"SYSTEMES_TEST: virtio-blk DMA sector read verified\r\n"); }
 
     let image_size = systemes_kernel::simple_fs::SimpleFs::required_image_size(&header)
@@ -70,10 +89,8 @@ fn run_qemu_virtio_vfs_test(
     let sectors = image_size / 512;
     for sector in 1..sectors {
         let mut contents = [0; 512];
-        unsafe {
-            device.read_sector(sector as u64, &mut contents, allocator)
-        }
-        .map_err(|_| VirtioVfsTestError::SectorRead)?;
+        unsafe { device.read_sector(sector as u64, &mut contents, allocator) }
+            .map_err(|_| VirtioVfsTestError::SectorRead)?;
         let offset = sector * 512;
         image[offset..offset + 512].copy_from_slice(&contents);
     }

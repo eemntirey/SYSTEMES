@@ -89,6 +89,9 @@ mod tests {
     fn shell_has_no_writable_executable_segment() {
         let image = ElfImage::parse(SHELL_ELF).expect("shell ELF should parse");
         assert_ne!(image.segments[0].flags & 3, 3);
-        assert_eq!(ElfImage::parse(&SHELL_ELF[..127]), Err(ElfError::TooSmall));
+        assert_eq!(
+            ElfImage::parse(&SHELL_ELF[..127]),
+            Err(ElfError::SegmentOutsideImage)
+        );
     }
 }
