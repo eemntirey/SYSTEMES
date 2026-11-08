@@ -707,7 +707,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     #[cfg(feature = "qemu-user-fs-test")]
     if let Err(message) = user_fs_test::run(&mut frame_allocator, page_table_root) {
         unsafe { debug_write(message); }
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: user file syscall test failed\\r\\n"); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: user file syscall test failed\r\n"); }
         halt();
     }
 
