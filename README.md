@@ -43,6 +43,18 @@ Les niveaux de validation doivent toujours être distingués :
 
 Un test QEMU ne constitue pas une preuve de compatibilité matérielle générale. Ne jamais annoncer une fonctionnalité comme terminée sans preuve adaptée.
 
+### Boot normal (sans feature de test)
+
+Le noyau compilé avec `--features ""` enchaîne : `SYSTEMES_KERNEL_OK` → UART COM1 → montage
+optionnel du système de fichiers SYSFS sur virtio-blk → shell userland. Un disque absent ou
+illisible n'arrête pas le noyau : le diagnostic est affiché et le shell démarre sans système
+de fichiers.
+
+Reproduction locale (Linux ou WSL) : `scripts/qemu-boot.sh --disk --input 'Z'`, puis lecture de
+`build/uefi/debug.log` et `build/uefi/serial.log`. Marqueurs attendus :
+`SYSTEMES: serial UART initialized`, `SYSTEMES: SYSFS root mounted from virtio-blk`,
+`SYSTEMES: userland shell ready`, puis le prompt `> ` sur la console série.
+
 ## Développement
 
 Les contributions doivent viser directement les composants de l'OS autonome. Chaque livraison doit apporter une capacité vérifiable, des tests automatisés et une documentation concise.
