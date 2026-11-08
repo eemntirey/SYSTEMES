@@ -411,6 +411,11 @@ jobs:
             sleep 2.2
             send_line uptime
             send_line 'uptime extra'
+            send_line ls
+            send_line 'ls /docs'
+            send_line 'ls /absent'
+            send_line 'ls /hello.txt'
+            send_line 'ls '
             send_line 'cat /hello.txt'
             send_line 'cat /absent'
             send_line cat
@@ -450,9 +455,23 @@ jobs:
               "> uptime extra",
           ]
           if "${{ matrix.disk }}" == "yes":
-              expected.extend(["> cat /hello.txt", "hello", "> cat /absent", "cat: not found"])
+              expected.extend([
+                  "> ls", "hello.txt", "docs",
+                  "> ls /docs", "readme.txt", "notes.txt",
+                  "> ls /absent", "ls: not found",
+                  "> ls /hello.txt", "ls: not a directory",
+                  "> ls ", "ls: usage",
+                  "> cat /hello.txt", "hello", "> cat /absent", "cat: not found",
+              ])
           else:
-              expected.extend(["> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem"])
+              expected.extend([
+                  "> ls", "ls: no filesystem",
+                  "> ls /docs", "ls: no filesystem",
+                  "> ls /absent", "ls: no filesystem",
+                  "> ls /hello.txt", "ls: no filesystem",
+                  "> ls ", "ls: usage",
+                  "> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem",
+              ])
           expected.extend(["> cat", "cat: usage", "> unknown", "Unknown command. Type help.", "> exit"])
           cursor = 0
           for item in expected:
@@ -484,10 +503,15 @@ jobs:
           grep -qF '> help' build/uefi/serial.log
           grep -qF 'Commands: help, echo <text>, uptime, cat <path>, exit' build/uefi/serial.log
           grep -qF 'cat: usage' build/uefi/serial.log
+          grep -qF 'ls: usage' build/uefi/serial.log
           if [ "${{ matrix.disk }}" = "yes" ]; then
             grep -qF 'cat: not found' build/uefi/serial.log
+            grep -qF 'ls: not found' build/uefi/serial.log
+            grep -qF 'ls: not a directory' build/uefi/serial.log
+            grep -q 'SYSTEMES_TEST: user SYS_READDIR succeeded' build/uefi/debug.log
           else
             grep -qF 'cat: no filesystem' build/uefi/serial.log
+            grep -qF 'ls: no filesystem' build/uefi/serial.log
           fi
           grep -qF '> uptime extra' build/uefi/serial.log
           grep -qF 'hello' build/uefi/serial.log
