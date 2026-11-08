@@ -4,7 +4,6 @@ use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
 use core::sync::atomic::{compiler_fence, Ordering};
 
 const SECTOR_SIZE: usize = 512;
-const QUEUE_SIZE: u16 = 8;
 const DESCRIPTOR_COUNT: usize = 3;
 const DMA_POLL_LIMIT: usize = 100_000_000;
 
@@ -19,7 +18,7 @@ mod reg {
     pub const HOST_FEATURES: u16 = 0x00;
     pub const GUEST_FEATURES: u16 = 0x04;
     pub const QUEUE_PFN: u16 = 0x08;
-    pub const QUEUE_NUM: u16 = 0x0C;
+    pub const QUEUE_NUM_MAX: u16 = 0x0C;
     pub const QUEUE_SEL: u16 = 0x0E;
     pub const QUEUE_NOTIFY: u16 = 0x10;
     pub const STATUS: u16 = 0x12;
@@ -34,6 +33,7 @@ pub enum VirtioBlkError {
     InvalidBar,
     DeviceNotReady,
     QueueTooSmall,
+    InvalidQueueSize,
     OutOfFrames,
     InvalidFrame,
     SectorOutOfRange,
@@ -110,20 +110,19 @@ impl VirtioBlk {
         }
 
         unsafe { crate::console::outw(io_base + reg::QUEUE_SEL, 0) };
-        let maximum_queue_size = unsafe { crate::console::inw(io_base + reg::QUEUE_NUM) };
-        let queue_size = if maximum_queue_size >= QUEUE_SIZE {
-            QUEUE_SIZE
-        } else if maximum_queue_size >= 4 {
-            4
-        } else {
+        let queue_size = unsafe { crate::console::inw(io_base + reg::QUEUE_NUM_MAX) };
+        if queue_size < DESCRIPTOR_COUNT as u16 {
             return Err(VirtioBlkError::QueueTooSmall);
-        };
-        unsafe { crate::console::outw(io_base + reg::QUEUE_NUM, queue_size) };
+        }
+        if !queue_size.is_power_of_two() {
+            return Err(VirtioBlkError::InvalidQueueSize);
+        }
         unsafe { crate::console::outl(io_base + reg::GUEST_PAGE_SIZE, PAGE_SIZE as u32) };
         unsafe { crate::console::outl(io_base + reg::QUEUE_ALIGN, PAGE_SIZE as u32) };
 
+        let queue_pages = queue_memory_pages(queue_size);
         let queue_memory = allocator
-            .allocate_contiguous_frames(2)
+            .allocate_contiguous_frames(queue_pages)
             .ok_or(VirtioBlkError::OutOfFrames)?;
         let request_frame = allocator
             .allocate_frame()
@@ -141,13 +140,17 @@ impl VirtioBlk {
             }
         }
         if queue_memory
-            .checked_add(2 * PAGE_SIZE)
+            .checked_add(queue_pages as u64 * PAGE_SIZE)
             .is_none_or(|end| end > crate::paging::IDENTITY_MAP_BYTES)
         {
             return Err(VirtioBlkError::InvalidFrame);
         }
         unsafe {
-            core::ptr::write_bytes(queue_memory as *mut u8, 0, (2 * PAGE_SIZE) as usize);
+            core::ptr::write_bytes(
+                queue_memory as *mut u8,
+                0,
+                (queue_pages as u64 * PAGE_SIZE) as usize,
+            );
             core::ptr::write_bytes(request_frame as *mut u8, 0, PAGE_SIZE as usize);
             core::ptr::write_bytes(status_frame as *mut u8, 0, PAGE_SIZE as usize);
         }
@@ -287,14 +290,15 @@ impl VirtioBlk {
                 if current_used != self.used_index.wrapping_add(1) {
                     return Err(VirtioBlkError::RequestFailed);
                 }
+                compiler_fence(Ordering::Acquire);
                 let used_element_offset = used_offset + 4 + (self.used_index % self.queue_size) as usize * 8;
                 let used_id = unsafe {
-                    core::ptr::read_unaligned(
+                    core::ptr::read_volatile(
                         (self.queue_memory + used_element_offset as u64) as *const u32,
                     )
                 };
                 let used_length = unsafe {
-                    core::ptr::read_unaligned(
+                    core::ptr::read_volatile(
                         (self.queue_memory + used_element_offset as u64 + 4) as *const u32,
                     )
                 };
@@ -302,7 +306,6 @@ impl VirtioBlk {
                 if used_id != 0 || used_length < (SECTOR_SIZE + 1) as u32 {
                     return Err(VirtioBlkError::RequestFailed);
                 }
-                compiler_fence(Ordering::Acquire);
                 let status = unsafe { core::ptr::read_volatile(self.status_frame as *const u8) };
                 return match status {
                     STATUS_OK => Ok(()),
@@ -324,16 +327,25 @@ fn used_ring_offset(queue_size: u16) -> usize {
     (end + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1)
 }
 
+fn queue_memory_pages(queue_size: u16) -> usize {
+    let used_offset = used_ring_offset(queue_size);
+    let used_end = used_offset + 4 + 8 * queue_size as usize + 2;
+    (used_end + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn legacy_queue_regions_fit_in_two_contiguous_pages() {
-        let used = used_ring_offset(QUEUE_SIZE);
-        let used_end = used + 4 + 8 * QUEUE_SIZE as usize + 2;
-        assert_eq!(used, PAGE_SIZE as usize);
-        assert!(used_end <= (2 * PAGE_SIZE) as usize);
+    fn legacy_queue_regions_fit_in_the_allocated_contiguous_pages() {
+        assert_eq!(queue_memory_pages(8), 2);
+        let queue_size = 256;
+        let used = used_ring_offset(queue_size);
+        let used_end = used + 4 + 8 * queue_size as usize + 2;
+        assert_eq!(used, 2 * PAGE_SIZE as usize);
+        assert_eq!(queue_memory_pages(queue_size), 3);
+        assert!(used_end <= queue_memory_pages(queue_size) * PAGE_SIZE as usize);
     }
 
     #[test]
