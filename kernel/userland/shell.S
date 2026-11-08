@@ -62,9 +62,9 @@ submit_line:
     je command_help
 check_uptime:
     cmp $6, %r12d
-    jne check_echo
+    jne check_cat
     cmpl $0x69747075, (%r13)
-    jne check_echo
+    jne check_cat
     cmpw $0x656d, 4(%r13)
     je command_uptime
 check_cat:
