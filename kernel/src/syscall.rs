@@ -329,7 +329,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                     unsafe { asm!("cli", options(nomem, nostack)); }
                     #[cfg(feature = "qemu-user-shell-test")]
                     if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
-                        unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READ received UART input\\r\\n") };
+                        unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READ received UART input\r\n") };
                     }
                     read
                 }
