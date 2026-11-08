@@ -1,12 +1,106 @@
 //! Per-process descriptor bookkeeping for the single active Ring 3 process.
 //!
-//! This module is deliberately allocation-free so its lifecycle rules can be
-//! tested by the host contract suite.
+//! The kernel currently runs one user process at a time. This fixed-size table
+//! is owned by that process and maps its public descriptors (3 and above) to
+//! VFS handles. It performs no allocation and is host-testable.
+
+use crate::vfs::FileHandle;
+
+pub const MAX_PROCESS_FILES: usize = 16;
+pub const FIRST_FILE_DESCRIPTOR: u32 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileTableError {
+    BadDescriptor,
+    TooManyOpenFiles,
+}
+
+#[derive(Clone, Copy)]
+struct Entry {
+    descriptor: u32,
+    handle: FileHandle,
+}
+
+pub struct ProcessFileTable {
+    entries: [Option<Entry>; MAX_PROCESS_FILES],
+    next_descriptor: u32,
+}
+
+impl ProcessFileTable {
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; MAX_PROCESS_FILES],
+            next_descriptor: FIRST_FILE_DESCRIPTOR,
+        }
+    }
+
+    pub fn insert(&mut self, handle: FileHandle) -> Result<u32, FileTableError> {
+        let slot = self.entries.iter().position(Option::is_none)
+            .ok_or(FileTableError::TooManyOpenFiles)?;
+        for _ in 0..=MAX_PROCESS_FILES {
+            let descriptor = self.next_descriptor;
+            self.next_descriptor = self.next_descriptor.wrapping_add(1);
+            if self.next_descriptor < FIRST_FILE_DESCRIPTOR {
+                self.next_descriptor = FIRST_FILE_DESCRIPTOR;
+            }
+            if descriptor >= FIRST_FILE_DESCRIPTOR
+                && !self.entries.iter().flatten().any(|entry| entry.descriptor == descriptor)
+            {
+                self.entries[slot] = Some(Entry { descriptor, handle });
+                return Ok(descriptor);
+            }
+        }
+        Err(FileTableError::TooManyOpenFiles)
+    }
+
+    pub fn get(&self, descriptor: u32) -> Result<FileHandle, FileTableError> {
+        self.entries.iter().flatten()
+            .find(|entry| entry.descriptor == descriptor)
+            .map(|entry| entry.handle)
+            .ok_or(FileTableError::BadDescriptor)
+    }
+
+    pub fn remove(&mut self, descriptor: u32) -> Result<FileHandle, FileTableError> {
+        let slot = self.entries.iter().position(
+            |entry| entry.is_some_and(|entry| entry.descriptor == descriptor)
+        ).ok_or(FileTableError::BadDescriptor)?;
+        self.entries[slot].take()
+            .map(|entry| entry.handle)
+            .ok_or(FileTableError::BadDescriptor)
+    }
+
+    /// Detach every descriptor when the owning process exits.
+    pub fn take_all(&mut self) -> [Option<FileHandle>; MAX_PROCESS_FILES] {
+        let mut handles = [None; MAX_PROCESS_FILES];
+        for (index, entry) in self.entries.iter_mut().enumerate() {
+            handles[index] = entry.take().map(|entry| entry.handle);
+        }
+        handles
+    }
+
+    pub fn reset(&mut self) {
+        self.entries = [None; MAX_PROCESS_FILES];
+        self.next_descriptor = FIRST_FILE_DESCRIPTOR;
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.iter().flatten().count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for ProcessFileTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::FileHandle;
 
     #[test]
     fn descriptors_start_at_three_and_round_trip_handles() {
