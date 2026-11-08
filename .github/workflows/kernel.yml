@@ -447,7 +447,7 @@ jobs:
               "> Z",
               "Unknown command. Type help.",
               "> help",
-              "Commands: help, echo <text>, uptime, cat <path>, exit",
+              "Commands: help, echo <text>, uptime, cat <path>, ls [path], exit",
               "> echo hellx\x08 \x08o",
               "hello",
               "> uptime",
@@ -498,10 +498,10 @@ jobs:
           expected_hello_lines = 2 if "${{ matrix.disk }}" == "yes" else 1
           if lines.count("hello") != expected_hello_lines:
               raise SystemExit(f"expected {expected_hello_lines} hello output lines, got {lines.count('hello')}")
-          print("QEMU shell transcript verified: echo, cat, file-not-found, no-filesystem, usage, help and exit")
+          print("QEMU shell transcript verified: echo, cat, ls, directory entries, errors, help and exit")
           PY
           grep -qF '> help' build/uefi/serial.log
-          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, exit' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, ls [path], exit' build/uefi/serial.log
           grep -qF 'cat: usage' build/uefi/serial.log
           grep -qF 'ls: usage' build/uefi/serial.log
           if [ "${{ matrix.disk }}" = "yes" ]; then
