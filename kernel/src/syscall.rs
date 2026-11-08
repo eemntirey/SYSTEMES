@@ -397,7 +397,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             let result = read_user_directory(frame.rdi, frame.rsi, frame.rdx);
             #[cfg(not(test))]
             if result > 0 && !USER_SHELL_READDIR_SEEN.swap(true, Ordering::Relaxed) {
-                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READDIR succeeded\\r\\n") };
+                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READDIR succeeded\r\n") };
             }
             result
         },
