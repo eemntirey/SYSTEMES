@@ -318,9 +318,9 @@ mod tests {
         let docs = vfs.open("/docs").unwrap();
         let mut small = [0u8; 12];
         let first = vfs.read_dir(docs, &mut small).unwrap();
-        assert_eq!(&small[..first], b"readme.txt\\n");
+        assert_eq!(&small[..first], b"readme.txt\n");
         let second = vfs.read_dir(docs, &mut small).unwrap();
-        assert_eq!(&small[..second], b"notes.txt\\n");
+        assert_eq!(&small[..second], b"notes.txt\n");
         assert_eq!(vfs.read_dir(docs, &mut small), Ok(0));
         assert_eq!(vfs.close(docs), Ok(()));
     }
