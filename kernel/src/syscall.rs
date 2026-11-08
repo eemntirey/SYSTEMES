@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(validate_open_path(b"hello.txt"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(b"/../hello.txt"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(b"/docs/hello.txt"), Err(ERROR_INVALID_ARGUMENT));
-        assert_eq!(validate_open_path(b"/bad\\xff"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/bad\xFF"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(b"/"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(&vec![b'a'; 256]), Err(ERROR_NAME_TOO_LONG));
     }
