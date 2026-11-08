@@ -46,7 +46,7 @@ pub fn run(
         return Err(b"SYSTEMES_KERNEL_FAIL: user FS test frame invalid\r\n");
     }
 
-    let mut code = [0u8; 128];
+    let mut code = [0u8; 256];
     let mut code_len = 0usize;
 
     emit_imm32(&mut code, &mut code_len, 0xB8, systemes_kernel::syscall::SYS_OPEN as u32);
