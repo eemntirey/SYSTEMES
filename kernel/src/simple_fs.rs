@@ -546,11 +546,12 @@ mod tests {
     #[test]
     fn directory_listing_rejects_extents_that_do_not_cover_entry_indices() {
         let mut image = make_tree_image();
-        image[514..518].copy_from_slice(&8u32.to_le_bytes());
-        image[522..526].copy_from_slice(&0u32.to_le_bytes());
+        let docs_inode = SYSFS_BLOCK_SIZE as usize + 2 * INODE_SIZE;
+        image[docs_inode + 2..docs_inode + 6].copy_from_slice(&8u32.to_le_bytes());
+        image[docs_inode + 10..docs_inode + 14].copy_from_slice(&0u32.to_le_bytes());
         let fs = SimpleFs::parse(&image).unwrap();
-        let root = fs.inode(0).unwrap();
-        assert_eq!(fs.list_dir(&root).err(), Some(SimpleFsError::InvalidInode));
+        let docs = fs.inode(2).unwrap();
+        assert_eq!(fs.list_dir(&docs).err(), Some(SimpleFsError::InvalidInode));
     }
 
     #[test]
