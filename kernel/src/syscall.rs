@@ -6,6 +6,9 @@ use crate::{
     address_space::{is_user_address, user_range_is_mapped},
     console::debug_write,
     uaccess::is_user_range,
+    file_descriptors::{FileTableError, ProcessFileTable},
+    sync::SpinLock,
+    vfs::VfsError,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -15,11 +18,22 @@ pub const SYS_READ: u64 = 2;
 pub const SYS_EXIT: u64 = 3;
 pub const SYS_YIELD: u64 = 4;
 pub const SYS_UPTIME: u64 = 5;
+pub const SYS_OPEN: u64 = 6;
+pub const SYS_CLOSE: u64 = 7;
 pub const API_VERSION: u64 = 1;
 pub const ERROR_NO_SYS: u64 = (-38i64) as u64;
 pub const ERROR_BAD_FD: u64 = (-9i64) as u64;
 pub const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
 pub const ERROR_IO: u64 = (-5i64) as u64;
+pub const ERROR_NO_ENTRY: u64 = (-2i64) as u64;
+pub const ERROR_NO_DEVICE: u64 = (-19i64) as u64;
+pub const ERROR_INVALID_ARGUMENT: u64 = (-22i64) as u64;
+pub const ERROR_TOO_MANY_FILES: u64 = (-24i64) as u64;
+pub const ERROR_NAME_TOO_LONG: u64 = (-36i64) as u64;
+pub const ERROR_NOT_DIRECTORY: u64 = (-20i64) as u64;
+const MAX_OPEN_PATH: usize = 255;
+const FILE_READ_CHUNK: usize = 512;
+static PROCESS_FILES: SpinLock<ProcessFileTable> = SpinLock::new(ProcessFileTable::new());
 pub(crate) const SYS_EXIT_DISPATCHED: u64 = u64::MAX;
 const USER_FLAGS_MASK: u64 = 0xAD5;
 
@@ -30,6 +44,179 @@ static USER_SHELL_UPTIME_SEEN: AtomicBool = AtomicBool::new(false);
 static USER_SHELL_WRITE_SEEN: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "qemu-user-shell-test")]
 static USER_SHELL_READ_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// Validate the deliberately small path subset supported by the current SYSFS root.
+fn validate_open_path(bytes: &[u8]) -> Result<&str, u64> {
+    if bytes.is_empty() {
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    if bytes.len() > MAX_OPEN_PATH {
+        return Err(ERROR_NAME_TOO_LONG);
+    }
+    if bytes[0] != b'/' || bytes.contains(&0) {
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    let path = core::str::from_utf8(bytes).map_err(|_| ERROR_INVALID_ARGUMENT)?;
+    let component = &path[1..];
+    if component.is_empty()
+        || component == "."
+        || component == ".."
+        || component.contains('/')
+        || component.split('/').any(|part| part == ".." || part == ".")
+    {
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    Ok(path)
+}
+
+fn map_vfs_error(error: VfsError) -> u64 {
+    match error {
+        VfsError::NotMounted => ERROR_NO_DEVICE,
+        VfsError::NotFound => ERROR_NO_ENTRY,
+        VfsError::NotAFile => ERROR_NOT_DIRECTORY,
+        VfsError::InvalidPath => ERROR_INVALID_ARGUMENT,
+        VfsError::NameTooLong => ERROR_NAME_TOO_LONG,
+        VfsError::OutOfHandles => ERROR_TOO_MANY_FILES,
+        VfsError::BadHandle => ERROR_BAD_FD,
+        VfsError::Busy | VfsError::IoError => ERROR_IO,
+    }
+}
+
+fn map_file_table_error(error: FileTableError) -> u64 {
+    match error {
+        FileTableError::BadDescriptor => ERROR_BAD_FD,
+        FileTableError::TooManyOpenFiles => ERROR_TOO_MANY_FILES,
+    }
+}
+
+/// Copy a bounded user path before parsing it; no user pointer escapes this function.
+fn open_user_file(user_path: u64, path_len: u64) -> u64 {
+    if path_len == 0 {
+        return ERROR_INVALID_ARGUMENT;
+    }
+    if path_len > MAX_OPEN_PATH as u64 {
+        return ERROR_NAME_TOO_LONG;
+    }
+    if !is_user_range(user_path, path_len) {
+        return ERROR_BAD_ADDRESS;
+    }
+    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+    if !unsafe { user_range_is_mapped(user_path, path_len, false) } {
+        return ERROR_BAD_ADDRESS;
+    }
+
+    let mut path_bytes = [0u8; MAX_OPEN_PATH];
+    {
+        let _guard = crate::uaccess::UserAccessGuard::new();
+        for (index, byte) in path_bytes[..path_len as usize].iter_mut().enumerate() {
+            // SAFETY: The full user range was validated and mapped above; SMAP is scoped.
+            *byte = unsafe { core::ptr::read_volatile((user_path + index as u64) as *const u8) };
+        }
+    }
+    let path = match validate_open_path(&path_bytes[..path_len as usize]) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+
+    let handle = match crate::rootfs::with_root(|vfs| vfs.open(path)) {
+        Some(Ok(handle)) => handle,
+        Some(Err(error)) => return map_vfs_error(error),
+        None => return ERROR_NO_DEVICE,
+    };
+    match PROCESS_FILES.lock().insert(handle) {
+        Ok(descriptor) => descriptor as u64,
+        Err(error) => {
+            let _ = crate::rootfs::with_root(|vfs| vfs.close(handle));
+            map_file_table_error(error)
+        }
+    }
+}
+
+fn close_user_file(descriptor: u64) -> u64 {
+    let descriptor = match u32::try_from(descriptor) {
+        Ok(descriptor) if descriptor >= crate::file_descriptors::FIRST_FILE_DESCRIPTOR => descriptor,
+        _ => return ERROR_BAD_FD,
+    };
+    let handle = match PROCESS_FILES.lock().get(descriptor) {
+        Ok(handle) => handle,
+        Err(error) => return map_file_table_error(error),
+    };
+    match crate::rootfs::with_root(|vfs| vfs.close(handle)) {
+        Some(Ok(())) => {
+            let _ = PROCESS_FILES.lock().remove(descriptor);
+            0
+        }
+        Some(Err(error)) => map_vfs_error(error),
+        None => ERROR_NO_DEVICE,
+    }
+}
+
+/// Copy file bytes from the kernel VFS into a validated writable user range.
+fn read_user_file(descriptor: u64, user_buffer: u64, length: u64) -> u64 {
+    let descriptor = match u32::try_from(descriptor) {
+        Ok(descriptor) if descriptor >= crate::file_descriptors::FIRST_FILE_DESCRIPTOR => descriptor,
+        _ => return ERROR_BAD_FD,
+    };
+    if length == 0 {
+        return match PROCESS_FILES.lock().get(descriptor) {
+            Ok(_) => 0,
+            Err(error) => map_file_table_error(error),
+        };
+    }
+    if !is_user_range(user_buffer, length) {
+        return ERROR_BAD_ADDRESS;
+    }
+    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+    if !unsafe { user_range_is_mapped(user_buffer, length, true) } {
+        return ERROR_BAD_ADDRESS;
+    }
+    let handle = match PROCESS_FILES.lock().get(descriptor) {
+        Ok(handle) => handle,
+        Err(error) => return map_file_table_error(error),
+    };
+
+    let mut total = 0u64;
+    let mut chunk = [0u8; FILE_READ_CHUNK];
+    while total < length {
+        let chunk_len = core::cmp::min(length - total, FILE_READ_CHUNK as u64) as usize;
+        let count = match crate::rootfs::with_root(|vfs| vfs.read(handle, &mut chunk[..chunk_len])) {
+            Some(Ok(count)) => count,
+            Some(Err(error)) => return if total == 0 { map_vfs_error(error) } else { total },
+            None => return if total == 0 { ERROR_NO_DEVICE } else { total },
+        };
+        if count == 0 {
+            break;
+        }
+        {
+            let _guard = crate::uaccess::UserAccessGuard::new();
+            for (index, byte) in chunk[..count].iter().copied().enumerate() {
+                // SAFETY: The entire destination range was validated and mapped above.
+                unsafe {
+                    core::ptr::write_volatile((user_buffer + total + index as u64) as *mut u8, byte);
+                }
+            }
+        }
+        total += count as u64;
+        if count < chunk_len {
+            break;
+        }
+    }
+    total
+}
+
+/// Release every VFS handle owned by the exiting user process.
+fn close_process_files() {
+    let handles = PROCESS_FILES.lock().take_all();
+    let _ = crate::rootfs::with_root(|vfs| {
+        for handle in handles.iter().flatten().copied() {
+            let _ = vfs.close(handle);
+        }
+    });
+}
+
+pub fn reset_process_file_table() {
+    PROCESS_FILES.lock().reset();
+}
 
 #[repr(C)]
 pub(crate) struct SyscallFrame {
@@ -78,7 +265,10 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             }
             ticks
         }
+        SYS_OPEN => open_user_file(frame.rdi, frame.rsi),
+        SYS_CLOSE => close_user_file(frame.rdi),
         SYS_EXIT => {
+            close_process_files();
             crate::interrupts::set_user_exit_status(frame.rdi);
             SYS_EXIT_DISPATCHED
         }
@@ -88,9 +278,11 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             } else {
                 let buf = frame.rsi;
                 let len = frame.rdx;
-                if !is_user_range(buf, len)
-                    || !unsafe { user_range_is_mapped(buf, len, false) }
-                {
+                if !is_user_range(buf, len) {
+                    return ERROR_BAD_ADDRESS;
+                }
+                // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+                if !unsafe { user_range_is_mapped(buf, len, false) } {
                     ERROR_BAD_ADDRESS
                 } else {
                     let _guard = crate::uaccess::UserAccessGuard::new();
@@ -111,28 +303,31 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             }
         }
         SYS_READ => {
-            if frame.rdi != 1 {
-                ERROR_BAD_FD
-            } else {
+            if frame.rdi == 1 {
                 let buf = frame.rsi;
                 let len = frame.rdx;
-                if !is_user_range(buf, len)
-                    || !unsafe { user_range_is_mapped(buf, len, true) }
-                {
-                    ERROR_BAD_ADDRESS
+                if len == 0 {
+                    0
                 } else {
-                    let _guard = crate::uaccess::UserAccessGuard::new();
+                    if !is_user_range(buf, len) {
+                        return ERROR_BAD_ADDRESS;
+                    }
+                    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+                    if !unsafe { user_range_is_mapped(buf, len, true) } {
+                        return ERROR_BAD_ADDRESS;
+                    }
                     let mut read: u64 = 0;
-                    // SYSCALL masks IF through SFMASK. This syscall is a polled,
-                    // blocking UART read, so briefly re-enable IRQs while waiting
-                    // to let the Local APIC monotonic clock continue advancing.
+                    // SAFETY: This enables timer IRQs while the polled UART read waits.
                     unsafe { asm!("sti", options(nomem, nostack)); }
                     while read < len {
+                        // SAFETY: The serial driver owns the UART port access.
                         match unsafe { crate::serial::read_byte() } {
                             Ok(Some(byte)) => {
-                                unsafe {
-                                    core::ptr::write_volatile((buf + read) as *mut u8, byte)
-                                };
+                                {
+                                    let _guard = crate::uaccess::UserAccessGuard::new();
+                                    // SAFETY: The complete destination range was validated above.
+                                    unsafe { core::ptr::write_volatile((buf + read) as *mut u8, byte) };
+                                }
                                 read += 1;
                                 if byte == b'\n' || byte == b'\r' {
                                     break;
@@ -140,12 +335,13 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                             }
                             Ok(None) => core::hint::spin_loop(),
                             Err(_) => {
+                                // SAFETY: Restore the syscall-entry interrupt mask before returning.
                                 unsafe { asm!("cli", options(nomem, nostack)); }
                                 return if read == 0 { ERROR_IO } else { read };
                             },
                         }
                     }
-                    // Restore the syscall-entry interrupt state before returning.
+                    // SAFETY: Restore the syscall-entry interrupt mask before returning.
                     unsafe { asm!("cli", options(nomem, nostack)); }
                     #[cfg(feature = "qemu-user-shell-test")]
                     if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
@@ -153,6 +349,10 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                     }
                     read
                 }
+            } else if frame.rdi >= crate::file_descriptors::FIRST_FILE_DESCRIPTOR as u64 {
+                read_user_file(frame.rdi, frame.rsi, frame.rdx)
+            } else {
+                ERROR_BAD_FD
             }
         }
         _ => ERROR_NO_SYS,
@@ -176,6 +376,7 @@ fn syscall_halt(message: &[u8]) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec;
 
     fn valid_frame(number: u64) -> SyscallFrame {
         SyscallFrame {
@@ -207,7 +408,7 @@ mod tests {
 
     #[test]
     fn reports_unknown_syscalls_with_enosys() {
-        let mut frame = valid_frame(6);
+        let mut frame = valid_frame(99);
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_NO_SYS);
     }
 
@@ -297,6 +498,45 @@ mod tests {
         frame.rsi = crate::address_space::USER_LIMIT - 4;
         frame.rdx = 8;
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
+    }
+
+    #[test]
+    fn open_path_requires_an_absolute_single_component_utf8_path() {
+        assert_eq!(validate_open_path(b"/hello.txt"), Ok("/hello.txt"));
+        assert_eq!(validate_open_path(b"hello.txt"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/../hello.txt"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/docs/hello.txt"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/bad\xFF"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(&vec![b'a'; 256]), Err(ERROR_NAME_TOO_LONG));
+    }
+
+    #[test]
+    fn maps_vfs_errors_to_stable_errno_values() {
+        assert_eq!(map_vfs_error(VfsError::NotMounted), ERROR_NO_DEVICE);
+        assert_eq!(map_vfs_error(VfsError::NotFound), ERROR_NO_ENTRY);
+        assert_eq!(map_vfs_error(VfsError::NameTooLong), ERROR_NAME_TOO_LONG);
+        assert_eq!(map_vfs_error(VfsError::NotAFile), ERROR_NOT_DIRECTORY);
+        assert_eq!(map_vfs_error(VfsError::OutOfHandles), ERROR_TOO_MANY_FILES);
+        assert_eq!(map_vfs_error(VfsError::BadHandle), ERROR_BAD_FD);
+    }
+
+    #[test]
+    fn open_and_close_reject_untrusted_pointers_and_descriptors() {
+        let mut open = valid_frame(SYS_OPEN);
+        open.rdi = crate::address_space::USER_BASE - 1;
+        open.rsi = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut open), ERROR_BAD_ADDRESS);
+
+        let mut close = valid_frame(SYS_CLOSE);
+        close.rdi = 2;
+        assert_eq!(systemes_syscall_dispatch(&mut close), ERROR_BAD_FD);
+
+        let mut file_read = valid_frame(SYS_READ);
+        file_read.rdi = crate::file_descriptors::FIRST_FILE_DESCRIPTOR as u64;
+        file_read.rsi = crate::address_space::USER_BASE - 1;
+        file_read.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut file_read), ERROR_BAD_ADDRESS);
     }
 
     #[test]

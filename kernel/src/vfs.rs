@@ -10,6 +10,7 @@ pub enum VfsError {
     NotFound,
     NotAFile,
     InvalidPath,
+    NameTooLong,
     OutOfHandles,
     Busy,
     IoError,
@@ -140,7 +141,8 @@ fn map_fs_error(error: SimpleFsError) -> VfsError {
     match error {
         SimpleFsError::InodeNotFound => VfsError::NotFound,
         SimpleFsError::NotADirectory => VfsError::NotAFile,
-        SimpleFsError::InvalidPath | SimpleFsError::NameTooLong => VfsError::InvalidPath,
+        SimpleFsError::InvalidPath => VfsError::InvalidPath,
+        SimpleFsError::NameTooLong => VfsError::NameTooLong,
         SimpleFsError::BadMagic
         | SimpleFsError::BadVersion
         | SimpleFsError::TruncatedImage
@@ -204,6 +206,7 @@ mod tests {
         vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
         assert_eq!(vfs.open("missing.txt"), Err(VfsError::NotFound));
         assert_eq!(vfs.open("../hello.txt"), Err(VfsError::InvalidPath));
+        assert_eq!(vfs.open(&"x".repeat(47)), Err(VfsError::NameTooLong));
         assert_eq!(vfs.open(""), Err(VfsError::InvalidPath));
     }
 
