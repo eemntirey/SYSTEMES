@@ -1,7 +1,7 @@
 //! xAPIC Local APIC timer initialization and PIT-referenced calibration.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::{acpi::MadtInfo, memory::PhysicalFrameAllocator, paging::IDENTITY_MAP_BYTES};
 
 const IA32_APIC_BASE_MSR: u32 = 0x1B;
@@ -109,8 +109,8 @@ pub unsafe fn initialize_local_apic(
     allocator: &mut PhysicalFrameAllocator,
     page_table_root: u64,
 ) -> Result<(), ApicInitError> {
-    // SAFETY: CPUID leaf 1 is available on the x86_64 target.
-    if unsafe { core::arch::x86_64::__cpuid(1) }.edx & CPUID_APIC == 0 {
+    // CPUID leaf 1 is architecturally available on x86_64.
+    if core::arch::x86_64::__cpuid(1).edx & CPUID_APIC == 0 {
         return Err(ApicInitError::CpuApicUnsupported);
     }
     let physical = madt.local_apic_address;
