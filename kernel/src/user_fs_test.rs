@@ -142,7 +142,7 @@ pub fn run(
         let eof_count = unsafe { core::ptr::read_volatile((user_rsp - 32) as *const u64) };
         let mut contents = [0u8; 6];
         for (index, byte) in contents.iter_mut().enumerate() {
-            // SAFETY: The five-byte read buffer is inside the mapped user stack page.
+            // SAFETY: The six-byte read buffer is inside the mapped user stack page.
             *byte = unsafe { core::ptr::read_volatile((user_rsp - 64 + index as u64) as *const u8) };
         }
         (read_count, eof_count, close_result, missing_result, contents)
