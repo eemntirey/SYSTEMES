@@ -9,7 +9,7 @@ return. Pointer arguments must refer to mapped user memory.
 |---:|---|---|---|
 | 0 | `SYS_GET_API_VERSION` | — | API version (`1`) |
 | 1 | `SYS_WRITE` | `RDI`: fd (`1` serial), `RSI`: buffer, `RDX`: byte count | Bytes written |
-| 2 | `SYS_READ` | `RDI`: fd (`1` serial), `RSI`: buffer, `RDX`: maximum bytes | Bytes read; stops at newline |
+| 2 | `SYS_READ` | `RDI`: fd (`1` serial, `>= 3` file), `RSI`: user buffer, `RDX`: maximum bytes | Bytes read; serial stops at newline, file returns `0` at EOF |
 | 3 | `SYS_EXIT` | `RDI`: process status | Does not return to user mode; resumes the kernel continuation |
 | 4 | `SYS_YIELD` | — | `0`; yields to the kernel scheduler when it has runnable tasks |
 | 5 | `SYS_UPTIME` | — | Unsigned 64-bit APIC timer ticks since boot, returned in `RAX` (100 ticks/second) |
@@ -18,7 +18,12 @@ return. Pointer arguments must refer to mapped user memory.
 
 `SYS_UPTIME` reads the same monotonic Local APIC timer counter used by the scheduler; it does not read wall-clock time or dereference user memory. Convert to whole seconds with floor division (`ticks / 100`). The unsigned counter wraps modulo `2^64` after `u64::MAX`; callers comparing samples across wrap-around must use wrapping arithmetic.
 
-`SYS_READ` keeps descriptor `1` as the blocking serial console for compatibility with the shell. Descriptors `>= 3` refer to files opened by `SYS_OPEN`; reads advance the per-open-file offset and return `0` at EOF. Descriptors `0` and `2` are currently invalid. `SYS_OPEN` copies the path into a bounded kernel buffer, requires valid UTF-8 and an absolute path, and currently accepts only a single root-directory component (for example `/hello.txt`). Relative paths, `.` and `..`, embedded NUL, and nested components are rejected with `EINVAL`; `RSI > 255` returns `ENAMETOOLONG`. The mounted SYSFS image is copied into a kernel-owned allocation and intentionally retained for the kernel lifetime, so the VFS remains available after the virtio-blk device setup returns. The image is capped at 64 KiB; a missing or invalid disk leaves the filesystem unavailable without failing boot. The active descriptor table belongs to the single Ring 3 process and all its handles are closed by `SYS_EXIT`.
+`SYS_READ` keeps descriptor `1` as the blocking serial console for compatibility with the shell. Descriptors `>= 3` refer to files opened by `SYS_OPEN`; reads advance the per-open-file offset and return `0` at EOF. Descriptors `0` and `2` are currently invalid. `SYS_OPEN` copies the path into a bounded kernel buffer, requires valid UTF-8 and an absolute path, and currently accepts only a single root-directory component of at most 46 bytes (for example `/hello.txt`). Relative paths, `.` and `..`, embedded NUL, and nested components are rejected with `EINVAL`; `RSI > 255` returns `ENAMETOOLONG`. Storage decision (five-line rationale):
+- At boot, the kernel reads the SYSFS image from virtio-blk once and validates its complete size before allocation.
+- The image is copied into a kernel-owned `Vec`, then `Box::leak` gives the mounted `SimpleFs` a `'static` backing slice.
+- The 64 KiB image cap bounds the permanent memory cost and prevents a hostile superblock from exhausting the heap.
+- File syscalls use the persistent in-memory VFS; they do not depend on the virtio device remaining configured or reread disk sectors.
+- Missing, unreadable, oversized, or invalid disks leave the root VFS absent and never make a normal boot fatal. The active descriptor table belongs to the single Ring 3 process and all its handles are closed by `SYS_EXIT`.
 
 Errors are returned in `RAX` as negative errno values:
 
