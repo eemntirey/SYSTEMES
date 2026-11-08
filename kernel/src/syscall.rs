@@ -499,6 +499,7 @@ mod tests {
     fn maps_vfs_errors_to_stable_errno_values() {
         assert_eq!(map_vfs_error(VfsError::NotMounted), ERROR_NO_DEVICE);
         assert_eq!(map_vfs_error(VfsError::NotFound), ERROR_NO_ENTRY);
+        assert_eq!(map_vfs_error(VfsError::NameTooLong), ERROR_NAME_TOO_LONG);
         assert_eq!(map_vfs_error(VfsError::NotAFile), ERROR_NOT_DIRECTORY);
         assert_eq!(map_vfs_error(VfsError::OutOfHandles), ERROR_TOO_MANY_FILES);
         assert_eq!(map_vfs_error(VfsError::BadHandle), ERROR_BAD_FD);
@@ -514,6 +515,12 @@ mod tests {
         let mut close = valid_frame(SYS_CLOSE);
         close.rdi = 2;
         assert_eq!(systemes_syscall_dispatch(&mut close), ERROR_BAD_FD);
+
+        let mut file_read = valid_frame(SYS_READ);
+        file_read.rdi = crate::file_descriptors::FIRST_FILE_DESCRIPTOR as u64;
+        file_read.rsi = crate::address_space::USER_BASE - 1;
+        file_read.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut file_read), ERROR_BAD_ADDRESS);
     }
 
     #[test]
