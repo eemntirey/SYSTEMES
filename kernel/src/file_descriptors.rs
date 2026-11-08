@@ -101,6 +101,9 @@ impl Default for ProcessFileTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{simple_fs::SimpleFs, vfs::Vfs};
+    use std::vec;
+    use std::vec::Vec;
 
     #[test]
     fn descriptors_start_at_three_and_round_trip_handles() {
