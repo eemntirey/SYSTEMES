@@ -372,6 +372,82 @@ mod tests {
         assert_eq!(fs.read_file_at(&file, 5, &mut content), Ok(0));
     }
 
+    fn make_tree_image() -> Vec<u8> {
+        let mut data = vec![0; 512 * 7];
+        data[0..6].copy_from_slice(SYSFS_MAGIC);
+        data[6..10].copy_from_slice(&SYSFS_VERSION.to_le_bytes());
+        data[10..14].copy_from_slice(&SYSFS_BLOCK_SIZE.to_le_bytes());
+        data[14..18].copy_from_slice(&6u32.to_le_bytes());
+        data[18..22].copy_from_slice(&5u32.to_le_bytes());
+        data[22..26].copy_from_slice(&0u32.to_le_bytes());
+
+        fn inode(data: &mut [u8], index: usize, mode: u16, size: u32, first: u32, blocks: u32, name: &[u8]) {
+            let offset = 512 + index * SYSFS_INODE_SIZE;
+            data[offset..offset + 2].copy_from_slice(&mode.to_le_bytes());
+            data[offset + 2..offset + 6].copy_from_slice(&size.to_le_bytes());
+            data[offset + 6..offset + 10].copy_from_slice(&first.to_le_bytes());
+            data[offset + 10..offset + 14].copy_from_slice(&blocks.to_le_bytes());
+            data[offset + 14..offset + 14 + name.len()].copy_from_slice(name);
+        }
+
+        inode(&mut data, 0, INODE_FLAG_DIRECTORY, 12, 0, 1, b"root");
+        inode(&mut data, 1, 0, 6, 2, 1, b"hello.txt");
+        inode(&mut data, 2, INODE_FLAG_DIRECTORY, 8, 1, 1, b"docs");
+        inode(&mut data, 3, 0, 7, 3, 1, b"readme.txt");
+        inode(&mut data, 4, 0, 6, 4, 1, b"notes.txt");
+        inode(&mut data, 5, INODE_FLAG_DIRECTORY, 0, 0, 0, b"empty");
+
+        data[1024..1036].copy_from_slice(&[1u32, 2, 5].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        data[1536..1544].copy_from_slice(&[3u32, 4].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        data[2048..2054].copy_from_slice(b"hello\n");
+        data[2560..2567].copy_from_slice(b"Readme\n");
+        data[3072..3078].copy_from_slice(b"Notes\n");
+        data
+    }
+
+    #[test]
+    fn lists_root_and_nested_directory_entries_without_allocation() {
+        let image = make_tree_image();
+        let fs = SimpleFs::parse(&image).unwrap();
+        let root = fs.inode(0).unwrap();
+        let root_names: Vec<_> = fs.list_dir(&root).unwrap()
+            .map(|entry| entry.unwrap().1.name_str().unwrap().to_string())
+            .collect();
+        assert_eq!(root_names, ["hello.txt", "docs", "empty"]);
+
+        let docs_index = fs.resolve_path("/docs").unwrap().0;
+        let docs = fs.inode(docs_index).unwrap();
+        let docs_names: Vec<_> = fs.list_dir(&docs).unwrap()
+            .map(|entry| entry.unwrap().1.name_str().unwrap().to_string())
+            .collect();
+        assert_eq!(docs_names, ["readme.txt", "notes.txt"]);
+
+        let empty_index = fs.resolve_path("/empty").unwrap().0;
+        let empty = fs.inode(empty_index).unwrap();
+        assert_eq!(fs.list_dir(&empty).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn resolves_nested_paths_and_rejects_invalid_or_missing_components() {
+        let image = make_tree_image();
+        let fs = SimpleFs::parse(&image).unwrap();
+        let (index, inode) = fs.resolve_path("/docs/readme.txt").unwrap();
+        assert_eq!(index, 3);
+        assert_eq!(inode.name_str(), Some("readme.txt"));
+        assert_eq!(fs.resolve_path("/"), Ok((0, fs.inode(0).unwrap())));
+        assert_eq!(fs.resolve_path("docs"), Err(SimpleFsError::InvalidPath));
+        assert_eq!(fs.resolve_path("/docs/../hello.txt"), Err(SimpleFsError::InvalidPath));
+        assert_eq!(fs.resolve_path("/absent"), Err(SimpleFsError::InodeNotFound));
+    }
+
+    #[test]
+    fn directory_listing_rejects_a_file_as_not_a_directory() {
+        let image = make_tree_image();
+        let fs = SimpleFs::parse(&image).unwrap();
+        let file = fs.inode(1).unwrap();
+        assert!(matches!(fs.list_dir(&file), Err(SimpleFsError::NotADirectory)));
+    }
+
     #[test]
     fn borrows_the_input_image() {
         let data = make_image(1);
