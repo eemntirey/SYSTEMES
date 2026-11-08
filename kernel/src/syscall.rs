@@ -13,6 +13,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 pub const SYS_GET_API_VERSION: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ: u64 = 2;
+pub const SYS_EXIT: u64 = 3;
+pub const SYS_YIELD: u64 = 4;
 pub const API_VERSION: u64 = 1;
 const ERROR_NO_SYS: u64 = (-38i64) as u64;
 const ERROR_BAD_FD: u64 = (-9i64) as u64;
@@ -123,6 +125,20 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                     read
                 }
             }
+        }
+        SYS_EXIT => {
+            // SAFETY: The frame has a valid return context; exiting user mode
+            // returns control to the kernel scheduler.
+            unsafe { core::arch::asm!("cli; hlt") };
+            0
+        }
+        SYS_YIELD => {
+            // Trigger yield via the APIC timer interrupt vector 0x41
+            // SAFETY: The frame has a valid return context; yielding returns
+            // control to the kernel scheduler through the existing interrupt
+            // vector that calls scheduler::on_yield.
+            unsafe { core::arch::asm!("int3") };
+            0
         }
         _ => ERROR_NO_SYS,
     }

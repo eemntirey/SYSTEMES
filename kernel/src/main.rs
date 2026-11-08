@@ -590,7 +590,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready
         && !cfg!(feature = "qemu-exception-test")
-        && !cfg!(feature = "qemu-user-shell-test")
     {
         loop {
             // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.

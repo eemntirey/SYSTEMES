@@ -1,7 +1,7 @@
 //! xAPIC Local APIC timer initialization and PIT-referenced calibration.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::{acpi::MadtInfo, memory::PhysicalFrameAllocator, paging::IDENTITY_MAP_BYTES};
 
 const IA32_APIC_BASE_MSR: u32 = 0x1B;
