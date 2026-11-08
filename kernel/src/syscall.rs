@@ -7,7 +7,6 @@ use crate::{
     console::debug_write,
     uaccess::is_user_range,
 };
-#[cfg(feature = "qemu-user-shell-test")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const SYS_GET_API_VERSION: u64 = 0;
@@ -15,6 +14,7 @@ pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ: u64 = 2;
 pub const SYS_EXIT: u64 = 3;
 pub const SYS_YIELD: u64 = 4;
+pub const SYS_UPTIME: u64 = 5;
 pub const API_VERSION: u64 = 1;
 pub const ERROR_NO_SYS: u64 = (-38i64) as u64;
 pub const ERROR_BAD_FD: u64 = (-9i64) as u64;
@@ -22,6 +22,9 @@ pub const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
 pub const ERROR_IO: u64 = (-5i64) as u64;
 pub(crate) const SYS_EXIT_DISPATCHED: u64 = u64::MAX;
 const USER_FLAGS_MASK: u64 = 0xAD5;
+
+#[cfg(not(test))]
+static USER_SHELL_UPTIME_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "qemu-user-shell-test")]
 static USER_SHELL_WRITE_SEEN: AtomicBool = AtomicBool::new(false);
@@ -66,6 +69,14 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
         SYS_YIELD => {
             crate::scheduler::yield_now();
             0
+        }
+        SYS_UPTIME => {
+            let ticks = crate::clock::ticks();
+            #[cfg(not(test))]
+            if !USER_SHELL_UPTIME_SEEN.swap(true, Ordering::Relaxed) {
+                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_UPTIME succeeded\r\n") };
+            }
+            ticks
         }
         SYS_EXIT => {
             crate::interrupts::set_user_exit_status(frame.rdi);
@@ -112,6 +123,10 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                 } else {
                     let _guard = crate::uaccess::UserAccessGuard::new();
                     let mut read: u64 = 0;
+                    // SYSCALL masks IF through SFMASK. This syscall is a polled,
+                    // blocking UART read, so briefly re-enable IRQs while waiting
+                    // to let the Local APIC monotonic clock continue advancing.
+                    unsafe { asm!("sti", options(nomem, nostack)); }
                     while read < len {
                         match unsafe { crate::serial::read_byte() } {
                             Ok(Some(byte)) => {
@@ -124,9 +139,14 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                                 }
                             }
                             Ok(None) => core::hint::spin_loop(),
-                            Err(_) => return if read == 0 { ERROR_IO } else { read },
+                            Err(_) => {
+                                unsafe { asm!("cli", options(nomem, nostack)); }
+                                return if read == 0 { ERROR_IO } else { read };
+                            },
                         }
                     }
+                    // Restore the syscall-entry interrupt state before returning.
+                    unsafe { asm!("cli", options(nomem, nostack)); }
                     #[cfg(feature = "qemu-user-shell-test")]
                     if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
                         unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READ received UART input\r\n") };
@@ -187,7 +207,7 @@ mod tests {
 
     #[test]
     fn reports_unknown_syscalls_with_enosys() {
-        let mut frame = valid_frame(u64::MAX);
+        let mut frame = valid_frame(6);
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_NO_SYS);
     }
 
@@ -278,4 +298,11 @@ mod tests {
         frame.rdx = 8;
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
     }
+
+    #[test]
+    fn uptime_syscall_returns_the_monotonic_tick_count() {
+        let mut frame = valid_frame(SYS_UPTIME);
+        assert_eq!(systemes_syscall_dispatch(&mut frame), crate::clock::ticks());
+    }
+
 }
