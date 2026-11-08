@@ -510,14 +510,14 @@ mod tests {
         let fs = SimpleFs::parse(&image).unwrap();
         let root = fs.inode(0).unwrap();
         let root_names: Vec<_> = fs.list_dir(&root).unwrap()
-            .map(|entry| entry.unwrap().1.name_str().unwrap().to_string())
+            .map(|entry| entry.unwrap().1.name_str().unwrap())
             .collect();
         assert_eq!(root_names, ["hello.txt", "docs", "empty"]);
 
         let docs_index = fs.resolve_path("/docs").unwrap().0;
         let docs = fs.inode(docs_index).unwrap();
         let docs_names: Vec<_> = fs.list_dir(&docs).unwrap()
-            .map(|entry| entry.unwrap().1.name_str().unwrap().to_string())
+            .map(|entry| entry.unwrap().1.name_str().unwrap())
             .collect();
         assert_eq!(docs_names, ["readme.txt", "notes.txt"]);
 
