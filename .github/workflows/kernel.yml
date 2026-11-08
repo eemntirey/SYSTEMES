@@ -69,7 +69,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test,qemu-user-fs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -178,6 +178,7 @@ jobs:
           grep -q 'SYSTEMES_TEST: user SYS_READ received UART input' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: virtio-blk DMA sector read verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_OPEN/READ/CLOSE succeeded' build/uefi/debug.log
           grep -qF '> Z' build/uefi/serial.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
           grep -q 'SYSTEMES: breakpoint handled, execution resumed' build/uefi/debug.log
