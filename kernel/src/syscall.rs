@@ -8,7 +8,7 @@ use crate::{
     uaccess::is_user_range,
     file_descriptors::{FileTableError, ProcessFileTable},
     sync::SpinLock,
-    vfs::{FileHandle, VfsError},
+    vfs::VfsError,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -75,6 +75,7 @@ fn map_vfs_error(error: VfsError) -> u64 {
         VfsError::NotFound => ERROR_NO_ENTRY,
         VfsError::NotAFile => ERROR_NOT_DIRECTORY,
         VfsError::InvalidPath => ERROR_INVALID_ARGUMENT,
+        VfsError::NameTooLong => ERROR_NAME_TOO_LONG,
         VfsError::OutOfHandles => ERROR_TOO_MANY_FILES,
         VfsError::BadHandle => ERROR_BAD_FD,
         VfsError::Busy | VfsError::IoError => ERROR_IO,
@@ -303,15 +304,16 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                 {
                     ERROR_BAD_ADDRESS
                 } else {
-                    let _guard = crate::uaccess::UserAccessGuard::new();
                     let mut read: u64 = 0;
-                    // SYSCALL masks IF through SFMASK. Re-enable IRQs while UART input blocks.
                     unsafe { asm!("sti", options(nomem, nostack)); }
                     while read < len {
                         match unsafe { crate::serial::read_byte() } {
                             Ok(Some(byte)) => {
-                                // SAFETY: The complete destination range was validated above.
-                                unsafe { core::ptr::write_volatile((buf + read) as *mut u8, byte) };
+                                {
+                                    let _guard = crate::uaccess::UserAccessGuard::new();
+                                    // SAFETY: The complete destination range was validated above.
+                                    unsafe { core::ptr::write_volatile((buf + read) as *mut u8, byte) };
+                                }
                                 read += 1;
                                 if byte == b'\\n' || byte == b'\\r' {
                                     break;
