@@ -419,6 +419,8 @@ mod tests {
         let fs = SimpleFs::parse(&data).expect("valid image");
         let root = fs.inode(0).expect("root inode");
         assert!(root.is_directory());
+        let legacy_entry = fs.list_dir(&root).unwrap().next().unwrap().unwrap();
+        assert_eq!(legacy_entry.1.name_str(), Some("hello.txt"));
         let file_index = fs.find_in_dir(&root, "hello.txt").expect("file inode");
         let file = fs.inode(file_index).expect("file inode");
         let mut content = [0; 8];
