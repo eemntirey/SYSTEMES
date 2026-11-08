@@ -177,6 +177,7 @@ impl<'a> SimpleFs<'a> {
         if stored != *directory {
             return Err(SimpleFsError::InvalidInode);
         }
+        self.validate_inode_extent(&stored)?;
         let legacy_flat = directory.index == self.superblock.root_inode_index
             && directory.size == 0
             && directory.block_count == 0;
@@ -539,6 +540,16 @@ mod tests {
         assert_eq!(fs.resolve_path("docs"), Err(SimpleFsError::InvalidPath));
         assert_eq!(fs.resolve_path("/docs/../hello.txt"), Err(SimpleFsError::InvalidPath));
         assert_eq!(fs.resolve_path("/absent"), Err(SimpleFsError::InodeNotFound));
+    }
+
+    #[test]
+    fn directory_listing_rejects_extents_that_do_not_cover_entry_indices() {
+        let mut image = make_tree_image();
+        image[514..518].copy_from_slice(&8u32.to_le_bytes());
+        image[522..526].copy_from_slice(&0u32.to_le_bytes());
+        let fs = SimpleFs::parse(&image).unwrap();
+        let root = fs.inode(0).unwrap();
+        assert_eq!(fs.list_dir(&root).err(), Some(SimpleFsError::InvalidInode));
     }
 
     #[test]
