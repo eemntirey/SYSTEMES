@@ -452,9 +452,28 @@ jobs:
 
           serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\r", "")
           lines = serial.splitlines()
+          expected = [
+              "> Z",
+              "Unknown command. Type help.",
+              "> help",
+              "Commands: help, echo <text>, exit",
+              "> echo hellx\b \bo",
+              "hello",
+              "> unknown",
+              "Unknown command. Type help.",
+              "> exit",
+          ]
+          cursor = 0
+          for item in expected:
+              try:
+                  cursor = lines.index(item, cursor) + 1
+              except ValueError:
+                  raise SystemExit(f"QEMU shell transcript missing or out of order: {item!r}")
           if lines.count("> Z") != 1 or "> ZZ" in lines:
               raise SystemExit("single-character input was not echoed exactly once")
-          print("Single-character Z input was echoed exactly once")
+          if lines.count("hello") != 1:
+              raise SystemExit("echo command did not produce exactly one standalone 'hello' output")
+          print("QEMU shell transcript verified: exact echo, help, backspace, unknown command and exit")
           PY
           grep -qF '> help' build/uefi/serial.log
           grep -qF 'Commands: help, echo <text>, exit' build/uefi/serial.log
