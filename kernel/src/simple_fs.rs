@@ -550,8 +550,7 @@ mod tests {
         image[docs_inode + 2..docs_inode + 6].copy_from_slice(&8u32.to_le_bytes());
         image[docs_inode + 10..docs_inode + 14].copy_from_slice(&0u32.to_le_bytes());
         let fs = SimpleFs::parse(&image).unwrap();
-        let docs = fs.inode(2).unwrap();
-        assert_eq!(fs.list_dir(&docs).err(), Some(SimpleFsError::InvalidInode));
+        assert_eq!(fs.inode(2).err(), Some(SimpleFsError::InvalidInode));
     }
 
     #[test]
