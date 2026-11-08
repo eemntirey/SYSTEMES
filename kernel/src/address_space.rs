@@ -7,8 +7,9 @@
 
 #[cfg(feature = "qemu-ring3-test")]
 use crate::interrupts::RING3_TEST_MAGIC;
-use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
-use crate::paging::{page_table_indices, IDENTITY_MAP_BYTES};
+use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
+use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
+use alloc::vec::Vec;
 
 const PRESENT: u64 = 1;
 const WRITABLE: u64 = 1 << 1;
@@ -25,6 +26,9 @@ pub const USER_LIMIT: u64 = 1 << 47;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AddressSpaceError {
     OutOfFrames,
+    OutOfMemory,
+    ActiveAddressSpace,
+    FrameReleaseFailed,
     InvalidFrameAlignment,
     FrameOutsideIdentityWindow,
     KernelRootNotMapped,
@@ -47,6 +51,9 @@ pub enum AddressSpaceError {
     Ring3StackWriteMismatch,
     SyscallTransitionFailed,
     SyscallReturnMismatch,
+    SyscallNegativeTestFailed,
+    UserProcessExitFailed,
+    FrameReclaimMismatch,
 }
 
 #[cfg(feature = "qemu-ring3-test")]
@@ -82,10 +89,10 @@ pub const fn cr3_root(value: u64) -> u64 {
     value & ADDRESS_MASK
 }
 
-/// A process-owned PML4. Page-table frames are not reclaimed yet; the boot
-/// self-test creates a single address space and documents this limit.
+/// A process-owned PML4 and the frames that must be reclaimed on exit.
 pub struct AddressSpace {
     root: u64,
+    owned_frames: Vec<u64>,
 }
 
 impl AddressSpace {
@@ -109,20 +116,30 @@ impl AddressSpace {
         if kernel_root >= IDENTITY_MAP_BYTES {
             return Err(AddressSpaceError::FrameOutsideIdentityWindow);
         }
-        let root = allocator
-            .allocate_frame()
-            .ok_or(AddressSpaceError::OutOfFrames)?;
-        if root % PAGE_SIZE != 0 {
-            return Err(AddressSpaceError::InvalidFrameAlignment);
-        }
-        if root >= IDENTITY_MAP_BYTES {
-            return Err(AddressSpaceError::FrameOutsideIdentityWindow);
-        }
-
         // SAFETY: kernel_root points to a valid PML4 under the active identity map.
         let kernel_entry_zero = unsafe { (kernel_root as *const u64).read() };
         if kernel_entry_zero & PRESENT == 0 {
             return Err(AddressSpaceError::KernelRootNotMapped);
+        }
+
+        let mut owned_frames = Vec::new();
+        owned_frames
+            .try_reserve_exact(1)
+            .map_err(|_| AddressSpaceError::OutOfMemory)?;
+        let root = allocator
+            .allocate_frame()
+            .ok_or(AddressSpaceError::OutOfFrames)?;
+        if root % PAGE_SIZE != 0 {
+            allocator
+                .free_frame(root)
+                .map_err(|_| AddressSpaceError::FrameReleaseFailed)?;
+            return Err(AddressSpaceError::InvalidFrameAlignment);
+        }
+        if root >= IDENTITY_MAP_BYTES {
+            allocator
+                .free_frame(root)
+                .map_err(|_| AddressSpaceError::FrameReleaseFailed)?;
+            return Err(AddressSpaceError::FrameOutsideIdentityWindow);
         }
 
         // SAFETY: root is a freshly allocated, page-aligned frame.
@@ -130,7 +147,11 @@ impl AddressSpace {
         // SAFETY: A PML4 has 512 entries; slot 0 shares the kernel identity map.
         unsafe { (root as *mut u64).write(kernel_entry_zero) };
 
-        Ok(Self { root })
+        owned_frames.push(root);
+        Ok(Self {
+            root,
+            owned_frames,
+        })
     }
 
     /// Map one 4 KiB user page with U/S set on every page-table level.
@@ -149,20 +170,93 @@ impl AddressSpace {
         let pml4 = self.root as *mut u64;
 
         // SAFETY: The entry pointers belong to tables owned by this address space.
-        let pdpt = unsafe { next_table(allocator, pml4.add(indices[0]))? };
+        let pdpt = unsafe { self.next_table(allocator, pml4.add(indices[0]))? };
         // SAFETY: `pdpt` is a valid table allocated above.
-        let pd = unsafe { next_table(allocator, pdpt.add(indices[1]))? };
+        let pd = unsafe { self.next_table(allocator, pdpt.add(indices[1]))? };
         // SAFETY: `pd` is a valid table allocated above.
-        let pt = unsafe { next_table(allocator, pd.add(indices[2]))? };
+        let pt = unsafe { self.next_table(allocator, pd.add(indices[2]))? };
         // SAFETY: `pt` is a valid leaf table allocated above.
         let pte = unsafe { pt.add(indices[3]) };
         // SAFETY: The leaf entry is readable and belongs to `pt`.
         if unsafe { pte.read() } & PRESENT != 0 {
             return Err(AddressSpaceError::AlreadyMapped);
         }
+        self.record_owned_frame(physical_frame)?;
         // SAFETY: The leaf entry is not present and the frame was validated.
         unsafe { pte.write((physical_frame & ADDRESS_MASK) | permissions.flags()) };
         Ok(())
+    }
+
+    fn record_owned_frame(&mut self, frame: u64) -> Result<(), AddressSpaceError> {
+        if self.owned_frames.contains(&frame) {
+            return Ok(());
+        }
+        self.owned_frames
+            .try_reserve(1)
+            .map_err(|_| AddressSpaceError::OutOfMemory)?;
+        self.owned_frames.push(frame);
+        Ok(())
+    }
+
+    /// Return all user mappings and page-table frames to the allocator.
+    ///
+    /// # Safety
+    ///
+    /// The caller must switch to a different valid address space before calling.
+    pub unsafe fn destroy(
+        self,
+        allocator: &mut PhysicalFrameAllocator,
+    ) -> Result<(), AddressSpaceError> {
+        if cr3_root(unsafe { read_cr3() }) == self.root {
+            return Err(AddressSpaceError::ActiveAddressSpace);
+        }
+        for frame in self.owned_frames {
+            allocator
+                .free_frame(frame)
+                .map_err(|_| AddressSpaceError::FrameReleaseFailed)?;
+        }
+        Ok(())
+    }
+
+    unsafe fn next_table(
+        &mut self,
+        allocator: &mut PhysicalFrameAllocator,
+        entry_ptr: *mut u64,
+    ) -> Result<*mut u64, AddressSpaceError> {
+        // SAFETY: `entry_ptr` belongs to a table owned by this address space.
+        let entry = unsafe { entry_ptr.read() };
+        if entry & PRESENT != 0 {
+            if entry & HUGE != 0 {
+                return Err(AddressSpaceError::HugePageUnsupported);
+            }
+            // SAFETY: `table_pointer` validates the identity-window invariant.
+            return unsafe { table_pointer(entry) };
+        }
+
+        let frame = allocator
+            .allocate_frame()
+            .ok_or(AddressSpaceError::OutOfFrames)?;
+        if frame % PAGE_SIZE != 0 || frame >= IDENTITY_MAP_BYTES {
+            allocator
+                .free_frame(frame)
+                .map_err(|_| AddressSpaceError::FrameReleaseFailed)?;
+            return Err(if frame % PAGE_SIZE != 0 {
+                AddressSpaceError::InvalidFrameAlignment
+            } else {
+                AddressSpaceError::FrameOutsideIdentityWindow
+            });
+        }
+        if let Err(error) = self.record_owned_frame(frame) {
+            allocator
+                .free_frame(frame)
+                .map_err(|_| AddressSpaceError::FrameReleaseFailed)?;
+            return Err(error);
+        }
+        // SAFETY: `frame` is a fresh, aligned identity-accessible frame.
+        unsafe { core::ptr::write_bytes(frame as *mut u8, 0, PAGE_SIZE as usize) };
+        // SAFETY: The parent entry is not present and accepts the new table.
+        unsafe { entry_ptr.write(frame | PRESENT | WRITABLE | USER) };
+        Ok(frame as *mut u64)
     }
 
     /// Verify U/S propagation and leaf permissions for one user mapping.
@@ -239,36 +333,6 @@ unsafe fn table_pointer(entry: u64) -> Result<*mut u64, AddressSpaceError> {
         return Err(AddressSpaceError::FrameOutsideIdentityWindow);
     }
     Ok(address as *mut u64)
-}
-
-unsafe fn next_table(
-    allocator: &mut PhysicalFrameAllocator,
-    entry_ptr: *mut u64,
-) -> Result<*mut u64, AddressSpaceError> {
-    // SAFETY: `entry_ptr` belongs to a page table owned by the caller.
-    let entry = unsafe { entry_ptr.read() };
-    if entry & PRESENT != 0 {
-        if entry & HUGE != 0 {
-            return Err(AddressSpaceError::HugePageUnsupported);
-        }
-        // SAFETY: `table_pointer` validates the identity-window invariant.
-        return unsafe { table_pointer(entry) };
-    }
-
-    let frame = allocator
-        .allocate_frame()
-        .ok_or(AddressSpaceError::OutOfFrames)?;
-    if frame % PAGE_SIZE != 0 {
-        return Err(AddressSpaceError::InvalidFrameAlignment);
-    }
-    if frame >= IDENTITY_MAP_BYTES {
-        return Err(AddressSpaceError::FrameOutsideIdentityWindow);
-    }
-    // SAFETY: `frame` is a freshly allocated, identity-accessible 4 KiB frame.
-    unsafe { core::ptr::write_bytes(frame as *mut u8, 0, PAGE_SIZE as usize) };
-    // SAFETY: The parent entry is not present and accepts the new table.
-    unsafe { entry_ptr.write(frame | PRESENT | WRITABLE | USER) };
-    Ok(frame as *mut u64)
 }
 
 /// Read CR3 from ring 0.
@@ -356,6 +420,7 @@ pub unsafe fn run_qemu_ring3_test(
     allocator: &mut PhysicalFrameAllocator,
     kernel_root: u64,
 ) -> Result<(), AddressSpaceError> {
+    let free_pages_before = allocator.free_pages();
     let code_frame = allocator
         .allocate_frame()
         .ok_or(AddressSpaceError::OutOfFrames)?;
@@ -439,11 +504,18 @@ pub unsafe fn run_qemu_ring3_test(
         }
     };
 
-    // SAFETY: Restore the original address space before resuming normal boot.
+    // SAFETY: Restore the original address space before reclaiming test frames.
     unsafe { write_cr3(previous_root) };
+    // SAFETY: The kernel root is active, so none of the test process frames are in use.
+    let reclaim_result = unsafe { space.destroy(allocator) };
+    let frames_reclaimed = allocator.free_pages() == free_pages_before;
     if previous_flags & (1 << 9) != 0 {
         // SAFETY: The previous root is restored and the caller had interrupts enabled.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+    reclaim_result?;
+    if !frames_reclaimed {
+        return Err(AddressSpaceError::FrameReclaimMismatch);
     }
     transition_result
 }
@@ -459,6 +531,27 @@ pub unsafe fn run_qemu_syscall_test(
     allocator: &mut PhysicalFrameAllocator,
     kernel_root: u64,
 ) -> Result<(), AddressSpaceError> {
+    fn emit(code: &mut [u8], length: &mut usize, bytes: &[u8]) {
+        let end = *length + bytes.len();
+        code[*length..end].copy_from_slice(bytes);
+        *length = end;
+    }
+
+    fn emit_number(code: &mut [u8], length: &mut usize, number: u32) {
+        emit(code, length, &[0xB8]);
+        emit(code, length, &number.to_le_bytes());
+    }
+
+    fn emit_syscall(code: &mut [u8], length: &mut usize, number: u32) {
+        emit_number(code, length, number);
+        emit(code, length, &[0x0F, 0x05]);
+    }
+
+    fn emit_result_store(code: &mut [u8], length: &mut usize, offset: i8) {
+        emit(code, length, &[0x48, 0x89, 0x44, 0x24, offset as u8]);
+    }
+
+    let free_pages_before = allocator.free_pages();
     let code_frame = allocator
         .allocate_frame()
         .ok_or(AddressSpaceError::OutOfFrames)?;
@@ -472,22 +565,44 @@ pub unsafe fn run_qemu_syscall_test(
         return Err(AddressSpaceError::FrameOutsideIdentityWindow);
     }
 
-    let mut code = [0u8; 29];
-    code[0] = 0xB8;
-    code[1..5].copy_from_slice(&(crate::syscall::SYS_GET_API_VERSION as u32).to_le_bytes());
-    code[5..7].copy_from_slice(&[0x0F, 0x05]);
-    code[7..12].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF8]);
-    code[12] = 0x48;
-    code[13] = 0xB8;
-    code[14..22].copy_from_slice(&crate::interrupts::RING3_TEST_MAGIC.to_le_bytes());
-    code[22..27].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF0]);
-    code[27..29].copy_from_slice(&[0xCD, 0x80]);
+    let mut code = [0u8; 128];
+    let mut code_len = 0;
+    emit_syscall(
+        &mut code,
+        &mut code_len,
+        crate::syscall::SYS_GET_API_VERSION as u32,
+    );
+    emit_result_store(&mut code, &mut code_len, -8);
+
+    for (number, slot) in [
+        (crate::syscall::SYS_WRITE as u32, -16),
+        (crate::syscall::SYS_READ as u32, -24),
+    ] {
+        emit_number(&mut code, &mut code_len, number);
+        emit(&mut code, &mut code_len, &[0xBF, 1, 0, 0, 0]);
+        emit(&mut code, &mut code_len, &[0x48, 0xBE]);
+        emit(
+            &mut code,
+            &mut code_len,
+            &crate::address_space::USER_LIMIT.to_le_bytes(),
+        );
+        emit(&mut code, &mut code_len, &[0xBA, 1, 0, 0, 0, 0x0F, 0x05]);
+        emit_result_store(&mut code, &mut code_len, slot);
+    }
+
+    emit_syscall(&mut code, &mut code_len, u32::MAX);
+    emit_result_store(&mut code, &mut code_len, -32);
+    emit_syscall(&mut code, &mut code_len, crate::syscall::SYS_YIELD as u32);
+    emit_result_store(&mut code, &mut code_len, -40);
+    emit_number(&mut code, &mut code_len, crate::syscall::SYS_EXIT as u32);
+    emit(&mut code, &mut code_len, &[0xBF, 42, 0, 0, 0]);
+    emit(&mut code, &mut code_len, &[0x0F, 0x05]);
 
     // SAFETY: Both are freshly allocated identity-accessible frames.
     unsafe {
         core::ptr::write_bytes(code_frame as *mut u8, 0, PAGE_SIZE as usize);
         core::ptr::write_bytes(stack_frame as *mut u8, 0, PAGE_SIZE as usize);
-        core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, code.len());
+        core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, code_len);
     }
 
     // SAFETY: The kernel root is active and the allocator owns free frames.
@@ -530,35 +645,53 @@ pub unsafe fn run_qemu_syscall_test(
 
     let transition_result = if cr3_root(unsafe { read_cr3() }) != space.root() {
         Err(AddressSpaceError::Cr3Mismatch)
-    } else if !unsafe {
-        crate::interrupts::enter_ring3_test_context(SYSCALL_CODE_ADDRESS, user_rsp)
-    } {
-        Err(AddressSpaceError::SyscallTransitionFailed)
     } else {
-        let syscall_result = {
+        // SAFETY: The syscall test code and stack are mapped in the active address space.
+        let exit_status =
+            unsafe { crate::interrupts::enter_user_mode(SYSCALL_CODE_ADDRESS, user_rsp) };
+        let read_result = |offset: i64| {
             let _smap_guard = crate::uaccess::UserAccessGuard::new();
-            // SAFETY: The Ring 3 syscall wrote its return value to this mapped stack slot.
-            unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+            // SAFETY: The Ring 3 test stores each result in the mapped user stack.
+            unsafe { core::ptr::read_volatile((user_rsp as i64 + offset) as *const u64) }
         };
-        let ring3_magic = {
-            let _smap_guard = crate::uaccess::UserAccessGuard::new();
-            // SAFETY: The Ring 3 exit stub wrote its marker to this mapped stack slot.
-            unsafe { core::ptr::read_volatile((user_rsp - 16) as *const u64) }
-        };
-        if syscall_result == crate::syscall::API_VERSION
-            && ring3_magic == crate::interrupts::RING3_TEST_MAGIC
-        {
-            Ok(())
-        } else {
+        let results = [
+            read_result(-8),
+            read_result(-16),
+            read_result(-24),
+            read_result(-32),
+            read_result(-40),
+        ];
+        if results[0] != crate::syscall::API_VERSION {
             Err(AddressSpaceError::SyscallReturnMismatch)
+        } else if results[1..4]
+            != [
+                crate::syscall::ERROR_BAD_ADDRESS,
+                crate::syscall::ERROR_BAD_ADDRESS,
+                crate::syscall::ERROR_NO_SYS,
+            ]
+        {
+            Err(AddressSpaceError::SyscallNegativeTestFailed)
+        } else if results[4] != 0 {
+            Err(AddressSpaceError::SyscallReturnMismatch)
+        } else if exit_status != 42 {
+            Err(AddressSpaceError::UserProcessExitFailed)
+        } else {
+            Ok(())
         }
     };
 
-    // SAFETY: Restore the original address space before resuming normal boot.
+    // SAFETY: Restore the original address space before reclaiming process frames.
     unsafe { write_cr3(previous_root) };
+    // SAFETY: The kernel root is active, so none of the process-owned frames are in use.
+    let reclaim_result = unsafe { space.destroy(allocator) };
+    let frames_reclaimed = allocator.free_pages() == free_pages_before;
     if previous_flags & (1 << 9) != 0 {
-        // SAFETY: The previous root is restored and the caller had interrupts enabled.
+        // SAFETY: The kernel root is restored and the caller had interrupts enabled.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+    reclaim_result?;
+    if !frames_reclaimed {
+        return Err(AddressSpaceError::FrameReclaimMismatch);
     }
     transition_result
 }
@@ -583,6 +716,7 @@ pub unsafe fn run_qemu_address_space_test(
     const USER_MAGIC: u64 = 0x5553_4552_5041_4745;
     const USER_MAGIC_WRITTEN: u64 = 0x5752_4954_5445_4E21;
 
+    let free_pages_before = allocator.free_pages();
     let user_frame = allocator
         .allocate_frame()
         .ok_or(AddressSpaceError::OutOfFrames)?;
@@ -686,14 +820,40 @@ pub unsafe fn run_qemu_address_space_test(
         }
     }
 
-    // SAFETY: Restore the original kernel root before returning.
+    // SAFETY: Restore the original kernel root before reclaiming test frames.
     unsafe { write_cr3(previous_root) };
+    // SAFETY: The kernel root is active, so none of the test process frames are in use.
+    let reclaim_result = unsafe { space.destroy(allocator) };
+    let frames_reclaimed = allocator.free_pages() == free_pages_before;
+    reclaim_result?;
+    if !frames_reclaimed {
+        return Err(AddressSpaceError::FrameReclaimMismatch);
+    }
     result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn address_space_tracks_each_owned_frame_once() {
+        let mut space = AddressSpace {
+            root: 0,
+            owned_frames: Vec::new(),
+        };
+        assert_eq!(space.record_owned_frame(0x1000), Ok(()));
+        assert_eq!(space.record_owned_frame(0x2000), Ok(()));
+        assert_eq!(space.record_owned_frame(0x1000), Ok(()));
+        assert_eq!(space.owned_frames.len(), 2);
+        for index in 2..260 {
+            assert_eq!(
+                space.record_owned_frame((index as u64 + 1) * PAGE_SIZE),
+                Ok(())
+            );
+        }
+        assert_eq!(space.owned_frames.len(), 260);
+    }
 
     #[test]
     fn user_window_starts_at_pml4_slot_one() {

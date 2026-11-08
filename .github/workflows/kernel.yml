@@ -142,6 +142,10 @@ jobs:
           grep -q 'SYSTEMES_TEST: Ring 3 user stack write verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SYSCALL/SYSRET fast path executed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Syscall return value verified in user stack' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: SYS_YIELD returned to user process' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user process exited and kernel resumed' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: exited process frames reclaimed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user shell address space activated' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_WRITE succeeded' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_READ received UART input' build/uefi/debug.log

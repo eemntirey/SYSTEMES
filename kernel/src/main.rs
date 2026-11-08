@@ -490,6 +490,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         Ok(()) => unsafe {
             debug_write(b"SYSTEMES_TEST: SYSCALL/SYSRET fast path executed\r\n");
             debug_write(b"SYSTEMES_TEST: Syscall return value verified in user stack\r\n");
+            debug_write(b"SYSTEMES_TEST: SYS_YIELD returned to user process\r\n");
+            debug_write(b"SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors\r\n");
+            debug_write(b"SYSTEMES_TEST: user process exited and kernel resumed\r\n");
+            debug_write(b"SYSTEMES_TEST: exited process frames reclaimed\r\n");
         },
         Err(_) => {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Syscall transition test failed\r\n"); }
@@ -782,7 +786,32 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
     unsafe { debug_write(b"SYSTEMES: userland shell ready\r\n"); }
     // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
-    unsafe { enter_user_mode(shell_entry, shell_stack) }
+    let shell_exit_status = unsafe { enter_user_mode(shell_entry, shell_stack) };
+    // SAFETY: The kernel page-table root is the original valid address space.
+    unsafe { write_cr3(page_table_root) };
+    if unsafe {
+        systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3())
+    } != page_table_root
+    {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: kernel address space restore failed\r\n"); }
+        halt();
+    }
+    // SAFETY: The kernel root is active, so none of the shell's owned frames are in use.
+    if unsafe { shell_space.destroy(&mut frame_allocator) }.is_err() {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell process frames could not be reclaimed\r\n"); }
+        halt();
+    }
+    unsafe {
+        debug_write(b"SYSTEMES: user process exited with status ");
+        let mut digits = [0; 20];
+        let length = encode_decimal(shell_exit_status, &mut digits);
+        debug_write(&digits[..length]);
+        debug_write(b"\r\n");
+    }
+    loop {
+        // SAFETY: The user process has exited and the kernel can idle with interrupts enabled.
+        unsafe { asm!("sti; hlt", options(nomem, nostack)); }
+    }
 }
 
 #[panic_handler]
