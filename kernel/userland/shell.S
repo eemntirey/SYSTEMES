@@ -82,9 +82,6 @@ check_ls_exact:
     cmpw $0x736c, (%r13)
     jne check_cat
     jmp command_ls
-check_cat_unused:
-    cmp $6, %r12d
-    jne check_cat
 check_cat:
     cmp $3, %r12d
     jne check_cat_args
