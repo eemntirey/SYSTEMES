@@ -120,7 +120,7 @@ impl<'a> Vfs<'a> {
         let mut written = 0usize;
         let mut entry_offset = 0usize;
         for entry in fs.list_dir(&directory).map_err(map_fs_error)? {
-            let (index, inode) = entry.map_err(map_fs_error)?;
+            let (_index, inode) = entry.map_err(map_fs_error)?;
             if entry_offset < open.offset {
                 entry_offset += 1;
                 continue;
