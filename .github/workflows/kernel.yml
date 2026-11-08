@@ -100,22 +100,10 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-k1.iso
-      - name: Create SYSFS virtio-blk test disk
+      - name: Create shared SYSFS virtio-blk test disk
         run: |
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-
-          image = bytearray(3 * 512)
-          image[0:6] = b"SYSFS1"
-          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
-          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
-          image[590:599] = b"hello.txt"
-          image[1024:1029] = b"hello"
-          Path("build/uefi/sysfs.img").write_bytes(image)
-          PY
-          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
+          python3 scripts/make-sysfs.py --output build/uefi/sysfs.img
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 3584
       - name: Boot ISO in QEMU with OVMF
         shell: bash
         run: |
@@ -383,22 +371,10 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-k1.iso
-      - name: Create SYSFS virtio-blk test disk
+      - name: Create shared SYSFS virtio-blk test disk
         run: |
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-
-          image = bytearray(3 * 512)
-          image[0:6] = b"SYSFS1"
-          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
-          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
-          image[590:599] = b"hello.txt"
-          image[1024:1030] = b"hello\n"
-          Path("build/uefi/sysfs.img").write_bytes(image)
-          PY
-          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
+          python3 scripts/make-sysfs.py --output build/uefi/sysfs.img
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 3584
       - name: Boot production kernel and drive the shell over serial
         shell: bash
         run: |
