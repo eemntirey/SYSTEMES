@@ -1013,6 +1013,15 @@ pub extern "C" fn systemes_exception_dispatch(
                 frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
+                let kernel_rsp = unsafe {
+                    addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile()
+                };
+                unsafe {
+                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame
+                        .add(21)
+                        .write(KERNEL_DATA_SELECTOR as u64);
+                }
                 RING3_ACTIVE.store(false, Ordering::Release);
                 RING3_EXIT_VALIDATED.store(true, Ordering::Release);
                 unsafe {
