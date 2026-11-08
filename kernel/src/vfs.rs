@@ -1,47 +1,55 @@
-//! Minimal virtual filesystem layer.
-//!
-//! Provides a `Vfs` abstraction over a mounted read-only filesystem (currently
-//! `simple_fs::SimpleFs`). Supports path lookup (`/file`), open, read, and
-//! close. Designed for boot-time userland bring-up before a full VFS with
-//! mount points, inodes, and directory traversal is implemented.
+//! Read-only VFS over a mounted SYSFS filesystem.
 
 use crate::simple_fs::{Inode, SimpleFs, SimpleFsError};
+
+const MAX_OPEN_FILES: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VfsError {
     NotMounted,
     NotFound,
     NotAFile,
+    InvalidPath,
     OutOfHandles,
+    Busy,
     IoError,
     BadHandle,
 }
 
-/// An open file handle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FileHandle(pub u32);
 
-/// A mounted read-only filesystem.
-pub struct Vfs {
-    fs: Option<SimpleFs>,
-    root_inode: Option<Inode>,
+#[derive(Clone, Copy)]
+struct OpenFile {
+    handle: FileHandle,
+    inode_index: u32,
+    offset: usize,
 }
 
-impl Vfs {
-    /// Create an empty, unmounted VFS.
+pub struct Vfs<'a> {
+    fs: Option<SimpleFs<'a>>,
+    root_inode: Option<Inode>,
+    handles: [Option<OpenFile>; MAX_OPEN_FILES],
+    next_handle: u32,
+}
+
+impl<'a> Vfs<'a> {
     pub const fn new() -> Self {
-        Vfs {
+        Self {
             fs: None,
             root_inode: None,
+            handles: [None; MAX_OPEN_FILES],
+            next_handle: 1,
         }
     }
 
-    /// Mount a `SimpleFs` image. The root inode is looked up from the
-    /// superblock's `root_inode_index`.
-    pub fn mount(&mut self, fs: SimpleFs) -> Result<(), VfsError> {
+    pub fn mount(&mut self, fs: SimpleFs<'a>) -> Result<(), VfsError> {
+        if self.handles.iter().any(Option::is_some) {
+            return Err(VfsError::Busy);
+        }
         let root = fs
             .inode(fs.superblock.root_inode_index)
-            .map_err(|_| VfsError::IoError)?;
+            .map_err(map_fs_error)?;
         if !root.is_directory() {
             return Err(VfsError::NotAFile);
         }
@@ -50,118 +58,173 @@ impl Vfs {
         Ok(())
     }
 
-    /// Open a file at the given path (relative to root, e.g. `"hello.txt"`).
-    /// Only single-component paths are supported in this minimal implementation.
-    ///
-    /// Returns a handle that can be used with [`read`](Self::read).
-    pub fn open(&self, path: &str) -> Result<FileHandle, VfsError> {
-        let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-        let root = self.root_inode.ok_or(VfsError::IoError)?;
-        let inode_index = fs
-            .find_in_dir(&root, path)
-            .map_err(|_| VfsError::NotFound)?;
-        let inode = fs.inode(inode_index).map_err(|_| VfsError::IoError)?;
+    pub fn open(&mut self, path: &str) -> Result<FileHandle, VfsError> {
+        let path = path.strip_prefix('/').unwrap_or(path);
+        let (inode_index, inode) = {
+            let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
+            let root = self.root_inode.ok_or(VfsError::IoError)?;
+            let inode_index = fs.find_in_dir(&root, path).map_err(map_fs_error)?;
+            let inode = fs.inode(inode_index).map_err(map_fs_error)?;
+            (inode_index, inode)
+        };
         if inode.is_directory() {
             return Err(VfsError::NotAFile);
         }
-        // Handle value 1 is reserved for the first open file.
-        Ok(FileHandle(inode_index + 1))
+        let slot = self
+            .handles
+            .iter()
+            .position(Option::is_none)
+            .ok_or(VfsError::OutOfHandles)?;
+        let handle = self.allocate_handle()?;
+        self.handles[slot] = Some(OpenFile {
+            handle,
+            inode_index,
+            offset: 0,
+        });
+        Ok(handle)
     }
 
-    /// Read up to `buf.len()` bytes from an open file into `buf`.
-    /// Returns the number of bytes read.
-    pub fn read(&self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
+    pub fn read(&mut self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let slot = self
+            .handles
+            .iter()
+            .position(|open| open.is_some_and(|open| open.handle == handle))
+            .ok_or(VfsError::BadHandle)?;
+        let open = self.handles[slot].ok_or(VfsError::BadHandle)?;
         let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-        // Handle 0 is invalid; handles start at 1.
-        if handle.0 == 0 {
-            return Err(VfsError::BadHandle);
-        }
-        let inode_index = handle.0 - 1;
-        let inode = fs.inode(inode_index).map_err(|_| VfsError::BadHandle)?;
-        if inode.is_directory() {
-            return Err(VfsError::NotAFile);
-        }
-        fs.read_file(&inode, buf).map_err(|_| VfsError::IoError)
+        let inode = fs.inode(open.inode_index).map_err(map_fs_error)?;
+        let count = fs
+            .read_file_at(&inode, open.offset, buf)
+            .map_err(map_fs_error)?;
+        let updated_offset = open.offset.checked_add(count).ok_or(VfsError::IoError)?;
+        let open = self.handles[slot].as_mut().ok_or(VfsError::BadHandle)?;
+        open.offset = updated_offset;
+        Ok(count)
     }
 
-    /// Close an open file handle. In this minimal implementation handles are
-    /// never recycled, so close is a no-op after validation.
-    pub fn close(&self, _handle: FileHandle) -> Result<(), VfsError> {
-        if self.fs.is_none() {
-            return Err(VfsError::NotMounted);
-        }
+    pub fn close(&mut self, handle: FileHandle) -> Result<(), VfsError> {
+        let slot = self
+            .handles
+            .iter()
+            .position(|open| open.is_some_and(|open| open.handle == handle))
+            .ok_or(VfsError::BadHandle)?;
+        self.handles[slot] = None;
         Ok(())
+    }
+
+    fn allocate_handle(&mut self) -> Result<FileHandle, VfsError> {
+        for _ in 0..=MAX_OPEN_FILES {
+            let candidate = self.next_handle;
+            self.next_handle = self.next_handle.wrapping_add(1).max(1);
+            if candidate != 0
+                && !self
+                    .handles
+                    .iter()
+                    .flatten()
+                    .any(|open| open.handle.0 == candidate)
+            {
+                return Ok(FileHandle(candidate));
+            }
+        }
+        Err(VfsError::OutOfHandles)
     }
 }
 
-impl Default for Vfs {
+impl Default for Vfs<'_> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn map_fs_error(error: SimpleFsError) -> VfsError {
+    match error {
+        SimpleFsError::InodeNotFound => VfsError::NotFound,
+        SimpleFsError::NotADirectory => VfsError::NotAFile,
+        SimpleFsError::InvalidPath | SimpleFsError::NameTooLong => VfsError::InvalidPath,
+        SimpleFsError::BadMagic
+        | SimpleFsError::BadVersion
+        | SimpleFsError::TruncatedImage
+        | SimpleFsError::BlockOutOfRange
+        | SimpleFsError::InvalidInode => VfsError::IoError,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::boxed::Box;
+    use std::vec;
     use std::vec::Vec;
 
-    fn make_test_fs() -> SimpleFs {
-        let mut data = Vec::new();
-        data.resize(512, 0);
+    fn make_test_image() -> Vec<u8> {
+        let mut data = vec![0; 1536];
         data[0..6].copy_from_slice(b"SYSFS1");
         data[6..10].copy_from_slice(&1u32.to_le_bytes());
         data[10..14].copy_from_slice(&512u32.to_le_bytes());
         data[14..18].copy_from_slice(&2u32.to_le_bytes());
         data[18..22].copy_from_slice(&1u32.to_le_bytes());
         data[22..26].copy_from_slice(&0u32.to_le_bytes());
-        data.resize(512 + 128, 0);
-        data[512..512 + 64].copy_from_slice(&{
-            let mut inode = [0u8; 64];
-            inode[0..2].copy_from_slice(&1u16.to_le_bytes()); // directory
-            inode[2..6].copy_from_slice(&1u32.to_le_bytes());
-            inode
-        });
-        data[512 + 64..512 + 128].copy_from_slice(&{
-            let mut inode = [0u8; 64];
-            inode[2..6].copy_from_slice(&5u32.to_le_bytes()); // size 5
-            inode[6..10].copy_from_slice(&1u32.to_le_bytes()); // first block 1
-            inode[10..14].copy_from_slice(&1u32.to_le_bytes()); // 1 block
-            let name = b"hello.txt";
-            inode[14..14 + name.len()].copy_from_slice(name);
-            inode
-        });
-        data.resize(512 + 128 + 512 + 5, 0);
-        data[512 + 128 + 512..512 + 128 + 512 + 5].copy_from_slice(b"hello");
+        data[512..514].copy_from_slice(&1u16.to_le_bytes());
+        data[578..582].copy_from_slice(&5u32.to_le_bytes());
+        data[582..586].copy_from_slice(&0u32.to_le_bytes());
+        data[586..590].copy_from_slice(&1u32.to_le_bytes());
+        data[590..599].copy_from_slice(b"hello.txt");
+        data[1024..1029].copy_from_slice(b"hello");
+        data
+    }
 
-        unsafe { SimpleFs::parse(Box::leak(data.into_boxed_slice())) }.unwrap()
+    fn mounted_vfs(image: &[u8]) -> Vfs<'_> {
+        let fs = SimpleFs::parse(image).expect("valid SYSFS image");
+        let mut vfs = Vfs::new();
+        vfs.mount(fs).expect("mount SYSFS image");
+        vfs
     }
 
     #[test]
-    fn mount_and_read_file() {
-        let fs = make_test_fs();
-        let mut vfs = Vfs::new();
-        assert!(vfs.mount(fs).is_ok());
-        let handle = vfs.open("hello.txt").expect("open hello.txt");
-        let mut buf = [0u8; 16];
-        let n = vfs.read(handle, &mut buf).expect("read hello.txt");
-        assert_eq!(&buf[..n], b"hello");
-        assert!(vfs.close(handle).is_ok());
+    fn mount_open_read_and_close_track_file_offsets() {
+        let image = make_test_image();
+        let mut vfs = mounted_vfs(&image);
+        let handle = vfs.open("/hello.txt").expect("open file");
+        let mut first = [0; 2];
+        let mut rest = [0; 8];
+        assert_eq!(vfs.read(handle, &mut first), Ok(2));
+        assert_eq!(&first, b"he");
+        assert_eq!(vfs.read(handle, &mut rest), Ok(3));
+        assert_eq!(&rest[..3], b"llo");
+        assert_eq!(vfs.read(handle, &mut rest), Ok(0));
+        assert_eq!(vfs.close(handle), Ok(()));
+        assert_eq!(vfs.read(handle, &mut rest), Err(VfsError::BadHandle));
+        assert_eq!(vfs.close(handle), Err(VfsError::BadHandle));
     }
 
     #[test]
-    fn open_nonexistent_file_fails() {
-        let fs = make_test_fs();
+    fn rejects_invalid_paths_and_unmounted_access() {
+        let image = make_test_image();
         let mut vfs = Vfs::new();
-        assert!(vfs.mount(fs).is_ok());
+        assert_eq!(vfs.open("hello.txt"), Err(VfsError::NotMounted));
+        vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
         assert_eq!(vfs.open("missing.txt"), Err(VfsError::NotFound));
+        assert_eq!(vfs.open("../hello.txt"), Err(VfsError::InvalidPath));
+        assert_eq!(vfs.open(""), Err(VfsError::InvalidPath));
     }
 
     #[test]
-    fn open_directory_fails() {
-        let fs = make_test_fs();
-        let mut vfs = Vfs::new();
-        assert!(vfs.mount(fs).is_ok());
-        assert_eq!(vfs.open(""), Err(VfsError::NotFound));
+    fn handles_are_independent_and_limited() {
+        let image = make_test_image();
+        let mut vfs = mounted_vfs(&image);
+        let first = vfs.open("hello.txt").unwrap();
+        let second = vfs.open("hello.txt").unwrap();
+        assert_ne!(first, second);
+
+        for _ in 2..MAX_OPEN_FILES {
+            vfs.open("hello.txt").unwrap();
+        }
+        assert_eq!(vfs.open("hello.txt"), Err(VfsError::OutOfHandles));
+
+        vfs.close(first).unwrap();
+        let replacement = vfs.open("hello.txt").unwrap();
+        assert_ne!(replacement, first);
+        let mut content = [0; 8];
+        assert_eq!(vfs.read(second, &mut content), Ok(5));
+        assert_eq!(&content[..5], b"hello");
     }
 }

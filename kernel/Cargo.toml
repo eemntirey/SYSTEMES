@@ -21,6 +21,8 @@ qemu-task-sleep-test = []
 qemu-address-space-test = []
 qemu-ring3-test = []
 qemu-syscall-test = ["qemu-ring3-test"]
+qemu-user-shell-test = ["qemu-syscall-test"]
+qemu-virtio-vfs-test = []
 qemu-smap-violation-test = []
 qemu-smep-violation-test = []
 

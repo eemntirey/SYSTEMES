@@ -5,14 +5,13 @@
 //! No file system or disk access is involved here: the ELF image is supplied
 //! as an in-memory byte slice (embedded in the kernel or passed by the loader).
 
-use crate::address_space::{AddressSpace, USER_BASE, UserPagePermissions};
+use crate::address_space::{AddressSpace, UserPagePermissions, USER_BASE, USER_LIMIT};
 use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
 
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
 const ELFCLASS64: u8 = 2;
 const EM_X86_64: u16 = 0x3E;
 const ET_EXEC: u16 = 2;
-const ET_DYN: u16 = 3;
 const EV_CURRENT: u32 = 1;
 const PT_LOAD: u32 = 1;
 const PF_R: u32 = 0x4;
@@ -65,8 +64,11 @@ pub enum ElfError {
     ProgramHeaderCountTooLarge,
     ProgramHeaderSizeMismatch,
     ProgramHeaderReadOverflow,
+    InvalidAlignment,
     SegmentOutsideUserWindow,
     SegmentUnaligned,
+    OverlappingSegments,
+    InvalidFlags,
     SegmentFileszLargerThanMemsz,
     SegmentOutsideImage,
     EntryOutsideLoadedSegments,
@@ -109,103 +111,147 @@ impl ElfImage {
             return Err(ElfError::TooSmall);
         }
 
-        let ehdr: &Elf64Ehdr = unsafe { &*(data.as_ptr() as *const Elf64Ehdr) };
-
-        if &ehdr.e_ident[0..4] != ELF_MAGIC {
+        if data.get(0..4) != Some(ELF_MAGIC.as_slice()) {
             return Err(ElfError::BadMagic);
         }
-        if ehdr.e_ident[4] != ELFCLASS64 {
+        if data[4] != ELFCLASS64 {
             return Err(ElfError::BadClass);
         }
-        if ehdr.e_ident[5] != 1 {
+        if data[5] != 1 {
             return Err(ElfError::BadEndianness);
         }
-        if ehdr.e_version != EV_CURRENT {
+        if data[6] != EV_CURRENT as u8 || read_u32(data, 20) != Some(EV_CURRENT) {
             return Err(ElfError::BadVersion);
         }
-        if ehdr.e_machine != EM_X86_64 {
+        if read_u16(data, 18) != Some(EM_X86_64) {
             return Err(ElfError::UnsupportedMachine);
         }
-        if ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN {
+        if read_u16(data, 16) != Some(ET_EXEC) {
             return Err(ElfError::UnsupportedType);
         }
-        if (ehdr.e_ehsize as usize) < core::mem::size_of::<Elf64Ehdr>() {
+        if read_u16(data, 52) != Some(core::mem::size_of::<Elf64Ehdr>() as u16) {
             return Err(ElfError::BadHeaderSize);
         }
-        if ehdr.e_phoff == 0 || ehdr.e_phnum == 0 {
+        let phoff = usize::try_from(read_u64(data, 32).ok_or(ElfError::ProgramHeaderOffsetOverflow)?)
+            .map_err(|_| ElfError::ProgramHeaderOffsetOverflow)?;
+        let phnum = usize::from(read_u16(data, 56).ok_or(ElfError::ProgramHeaderOffsetOverflow)?);
+        if phoff < core::mem::size_of::<Elf64Ehdr>() || phnum == 0 {
             return Err(ElfError::ProgramHeaderOffsetOverflow);
         }
-        if (ehdr.e_phentsize as usize) < core::mem::size_of::<Elf64Phdr>() {
+        let phentsize = usize::from(
+            read_u16(data, 54).ok_or(ElfError::ProgramHeaderSizeMismatch)?,
+        );
+        if phentsize != core::mem::size_of::<Elf64Phdr>() {
             return Err(ElfError::ProgramHeaderSizeMismatch);
         }
-        if ehdr.e_phnum as usize > 64 {
+        if phnum > 64 {
             return Err(ElfError::ProgramHeaderCountTooLarge);
         }
 
-        let phoff = ehdr.e_phoff as usize;
-        let phentsize = ehdr.e_phentsize as usize;
-        let phnum = ehdr.e_phnum as usize;
-
-        let phdr_table_end = phoff.checked_add(phentsize * phnum).ok_or(ElfError::ProgramHeaderOffsetOverflow)?;
+        let table_size = phentsize
+            .checked_mul(phnum)
+            .ok_or(ElfError::ProgramHeaderOffsetOverflow)?;
+        let phdr_table_end = phoff
+            .checked_add(table_size)
+            .ok_or(ElfError::ProgramHeaderOffsetOverflow)?;
         if phdr_table_end > data.len() {
             return Err(ElfError::ProgramHeaderReadOverflow);
         }
 
-        let mut segments: [ElfSegment; 8] = unsafe { core::mem::zeroed() };
-        let mut segment_count: usize = 0;
+        let mut segments = [ElfSegment {
+            vaddr: 0,
+            memsz: 0,
+            filesz: 0,
+            offset: 0,
+            flags: 0,
+        }; 8];
+        let mut segment_count = 0usize;
+        let entry = read_u64(data, 24).ok_or(ElfError::TooSmall)?;
+        let mut entry_in_executable_segment = false;
 
         for i in 0..phnum {
-            let phdr_ptr = unsafe { data.as_ptr().add(phoff + i * phentsize) } as *const Elf64Phdr;
-            let phdr = unsafe { phdr_ptr.read_unaligned() };
-
-            if phdr.p_type != PT_LOAD {
+            let offset = phoff + i * phentsize;
+            if read_u32(data, offset) != Some(PT_LOAD) {
                 continue;
             }
             if segment_count >= segments.len() {
                 return Err(ElfError::ProgramHeaderCountTooLarge);
             }
 
-            if !crate::address_space::is_user_address(phdr.p_vaddr)
-                || !crate::address_space::is_user_address(phdr.p_vaddr.saturating_add(phdr.p_memsz).saturating_sub(1))
-            {
-                return Err(ElfError::SegmentOutsideUserWindow);
-            }
-            if phdr.p_vaddr % PAGE_SIZE != 0 {
-                return Err(ElfError::SegmentUnaligned);
-            }
-            if phdr.p_filesz > phdr.p_memsz {
+            let flags = read_u32(data, offset + 4).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+            let file_offset = read_u64(data, offset + 8).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+            let virtual_address = read_u64(data, offset + 16).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+            let file_size = read_u64(data, offset + 32).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+            let memory_size = read_u64(data, offset + 40).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+            let alignment = read_u64(data, offset + 48).ok_or(ElfError::ProgramHeaderReadOverflow)?;
+
+            if file_size > memory_size {
                 return Err(ElfError::SegmentFileszLargerThanMemsz);
             }
-            if (phdr.p_flags & PF_W) != 0 && (phdr.p_flags & PF_X) != 0 {
+            if flags & !(PF_R | PF_W | PF_X) != 0 {
+                return Err(ElfError::InvalidFlags);
+            }
+            if (flags & PF_W) != 0 && (flags & PF_X) != 0 {
                 return Err(ElfError::WritableExecutableSegment);
             }
+            if alignment > 1
+                && (alignment & (alignment - 1) != 0
+                    || file_offset % alignment != virtual_address % alignment)
+            {
+                return Err(ElfError::InvalidAlignment);
+            }
+            if virtual_address % PAGE_SIZE != 0 {
+                return Err(ElfError::SegmentUnaligned);
+            }
+            if memory_size == 0 {
+                continue;
+            }
+            let segment_end = virtual_address
+                .checked_add(memory_size)
+                .ok_or(ElfError::SegmentOutsideUserWindow)?;
+            if virtual_address < USER_BASE || segment_end > USER_LIMIT {
+                return Err(ElfError::SegmentOutsideUserWindow);
+            }
+            let rounded_end = segment_end
+                .checked_add(PAGE_SIZE - 1)
+                .ok_or(ElfError::SegmentOutsideUserWindow)?
+                & !(PAGE_SIZE - 1);
+            if segments[..segment_count].iter().any(|segment| {
+                let old_end = segment.vaddr + segment.memsz;
+                let old_rounded_end = (old_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+                virtual_address < old_rounded_end && segment.vaddr < rounded_end
+            }) {
+                return Err(ElfError::OverlappingSegments);
+            }
 
-            let offset = phdr.p_offset as usize;
-            let filesz = phdr.p_filesz as usize;
-            let file_end = offset.checked_add(filesz).ok_or(ElfError::SegmentOutsideImage)?;
+            let file_data_offset =
+                usize::try_from(file_offset).map_err(|_| ElfError::SegmentOutsideImage)?;
+            let filesz = usize::try_from(file_size).map_err(|_| ElfError::SegmentOutsideImage)?;
+            let file_end = file_data_offset
+                .checked_add(filesz)
+                .ok_or(ElfError::SegmentOutsideImage)?;
             if file_end > data.len() {
                 return Err(ElfError::SegmentOutsideImage);
             }
 
             segments[segment_count] = ElfSegment {
-                vaddr: phdr.p_vaddr,
-                memsz: phdr.p_memsz,
-                filesz: phdr.p_filesz,
-                offset: phdr.p_offset,
-                flags: phdr.p_flags,
+                vaddr: virtual_address,
+                memsz: memory_size,
+                filesz: file_size,
+                offset: file_offset,
+                flags,
             };
             segment_count += 1;
+            if entry >= virtual_address && entry < segment_end && flags & PF_X != 0 {
+                entry_in_executable_segment = true;
+            }
         }
 
         if segment_count == 0 {
             return Err(ElfError::ProgramHeaderOffsetOverflow);
         }
 
-        let entry = ehdr.e_entry;
-        let entry_in_segment = segments[..segment_count].iter().any(|seg| {
-            entry >= seg.vaddr && entry < seg.vaddr.saturating_add(seg.memsz)
-        });
-        if !entry_in_segment {
+        if !entry_in_executable_segment {
             return Err(ElfError::EntryOutsideLoadedSegments);
         }
 
@@ -240,7 +286,7 @@ impl ElfImage {
             } else if (seg.flags & PF_W) != 0 {
                 UserPagePermissions::ReadWriteNoExecute
             } else {
-                UserPagePermissions::ReadOnlyExecute
+                UserPagePermissions::ReadOnlyNoExecute
             };
 
             let mut offset = 0u64;
@@ -249,7 +295,11 @@ impl ElfImage {
                 let frame = allocator
                     .allocate_frame()
                     .ok_or(ElfError::OutOfFrames)?;
-                if frame % PAGE_SIZE != 0 || frame >= crate::paging::IDENTITY_MAP_BYTES {
+                if frame % PAGE_SIZE != 0
+                    || frame
+                        .checked_add(PAGE_SIZE)
+                        .is_none_or(|end| end > crate::paging::IDENTITY_MAP_BYTES)
+                {
                     return Err(ElfError::InvalidFrameAddress);
                 }
 
@@ -290,8 +340,24 @@ pub unsafe fn load_elf(
     unsafe { image.load_into(data, allocator, space) }
 }
 
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    let end = offset.checked_add(2)?;
+    Some(u16::from_le_bytes(data.get(offset..end)?.try_into().ok()?))
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+    let end = offset.checked_add(4)?;
+    Some(u32::from_le_bytes(data.get(offset..end)?.try_into().ok()?))
+}
+
+fn read_u64(data: &[u8], offset: usize) -> Option<u64> {
+    let end = offset.checked_add(8)?;
+    Some(u64::from_le_bytes(data.get(offset..end)?.try_into().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::address_space::USER_BASE;
     use std::vec::Vec;
 
     use super::*;
@@ -305,7 +371,7 @@ mod tests {
         let phdr_table_size = core::mem::size_of::<Elf64Phdr>() as u64 * phdr_count;
         let ehdr_size = core::mem::size_of::<Elf64Ehdr>() as u64;
         let phoff = ehdr_size;
-        let file_offset = phoff + phdr_table_size;
+        let file_offset = (phoff + phdr_table_size + page - 1) & !(page - 1);
         let total = file_offset + filesz;
 
         let mut data = Vec::new();
@@ -409,7 +475,7 @@ mod tests {
         let phdr_table_size = core::mem::size_of::<Elf64Phdr>() as u64;
         let ehdr_size = core::mem::size_of::<Elf64Ehdr>() as u64;
         let phoff = ehdr_size;
-        let file_offset = phoff + phdr_table_size;
+        let file_offset = (phoff + phdr_table_size + page - 1) & !(page - 1);
         let filesz = 2 * page;
         let memsz = page;
         let total = file_offset + filesz;
@@ -473,12 +539,47 @@ mod tests {
     }
 
     #[test]
+    fn requires_entry_inside_executable_segment() {
+        let mut data = make_test_elf(USER_BASE + 0x4000, USER_BASE + 0x4000, &[0; 16]);
+        data[68..72].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        assert_eq!(ElfImage::parse(&data), Err(ElfError::EntryOutsideLoadedSegments));
+    }
+
+    #[test]
+    fn rejects_truncated_and_misaligned_program_headers() {
+        let mut data = make_test_elf(USER_BASE + 0x4000, USER_BASE + 0x4000, &[0; 16]);
+        data.truncate(100);
+        assert_eq!(ElfImage::parse(&data), Err(ElfError::ProgramHeaderReadOverflow));
+
+        let mut data = make_test_elf(USER_BASE + 0x4000, USER_BASE + 0x4000, &[0; 16]);
+        data[112..120].copy_from_slice(&3u64.to_le_bytes());
+        assert_eq!(ElfImage::parse(&data), Err(ElfError::InvalidAlignment));
+    }
+
+    #[test]
+    fn rejects_segments_that_share_a_mapped_page() {
+        let mut data = make_test_elf(USER_BASE + 0x4000, USER_BASE + 0x4000, &[0; 16]);
+        data[56..58].copy_from_slice(&2u16.to_le_bytes());
+        data.copy_within(64..120, 120);
+        assert_eq!(ElfImage::parse(&data), Err(ElfError::OverlappingSegments));
+    }
+
+    #[test]
+    fn parses_an_unaligned_input_slice_without_unaligned_references() {
+        let data = make_test_elf(USER_BASE + 0x4000, USER_BASE + 0x4000, &[0; 16]);
+        let mut unaligned = Vec::with_capacity(data.len() + 1);
+        unaligned.push(0);
+        unaligned.extend_from_slice(&data);
+        assert!(ElfImage::parse(&unaligned[1..]).is_ok());
+    }
+
+    #[test]
     fn rejects_writable_executable_segment() {
         let page = PAGE_SIZE as u64;
         let phdr_table_size = core::mem::size_of::<Elf64Phdr>() as u64;
         let ehdr_size = core::mem::size_of::<Elf64Ehdr>() as u64;
         let phoff = ehdr_size;
-        let file_offset = phoff + phdr_table_size;
+        let file_offset = (phoff + phdr_table_size + page - 1) & !(page - 1);
         let filesz = page;
         let memsz = page;
         let total = file_offset + filesz;

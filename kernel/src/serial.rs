@@ -15,6 +15,14 @@ const REG_LSR: u16 = COM1 + 5;
 
 const LSR_DATA_READY: u8 = 1 << 0;
 const LSR_OVERRUN: u8 = 1 << 1;
+const LSR_TRANSMITTER_EMPTY: u8 = 1 << 5;
+const TRANSMIT_POLL_LIMIT: usize = 1_000_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SerialError {
+    ReceiveOverrun,
+    TransmitTimeout,
+}
 
 pub fn init() {
     // SAFETY: COM1 is a dedicated, unused UART port during early boot.
@@ -42,17 +50,17 @@ pub fn init() {
 /// # Safety
 ///
 /// COM1 must be the configured debug/console UART.
-pub unsafe fn read_byte() -> Option<u8> {
+pub unsafe fn read_byte() -> Result<Option<u8>, SerialError> {
     // SAFETY: COM1 is a dedicated UART port.
-    let lsr = crate::console::inb(REG_LSR);
+    let lsr = unsafe { crate::console::inb(REG_LSR) };
     if lsr & LSR_OVERRUN != 0 {
-        return None;
+        return Err(SerialError::ReceiveOverrun);
     }
     if lsr & LSR_DATA_READY == 0 {
-        return None;
+        return Ok(None);
     }
     // SAFETY: Data is ready, the read will not block.
-    Some(crate::console::inb(REG_DATA))
+    Ok(Some(unsafe { crate::console::inb(REG_DATA) }))
 }
 
 /// Write one byte to the UART.
@@ -60,9 +68,17 @@ pub unsafe fn read_byte() -> Option<u8> {
 /// # Safety
 ///
 /// COM1 must be the configured debug/console UART.
-pub unsafe fn write_byte(byte: u8) {
-    // SAFETY: COM1 is a dedicated UART port.
-    crate::console::outb(REG_DATA, byte);
+pub unsafe fn write_byte(byte: u8) -> Result<(), SerialError> {
+    for _ in 0..TRANSMIT_POLL_LIMIT {
+        // SAFETY: COM1 is a dedicated UART port.
+        if unsafe { crate::console::inb(REG_LSR) } & LSR_TRANSMITTER_EMPTY != 0 {
+            // SAFETY: The transmitter is ready for one byte.
+            unsafe { crate::console::outb(REG_DATA, byte) };
+            return Ok(());
+        }
+        core::hint::spin_loop();
+    }
+    Err(SerialError::TransmitTimeout)
 }
 
 #[cfg(test)]
@@ -81,5 +97,6 @@ mod tests {
     fn lsr_data_ready_bit() {
         assert_eq!(LSR_DATA_READY, 1);
         assert_eq!(LSR_OVERRUN, 2);
+        assert_eq!(LSR_TRANSMITTER_EMPTY, 0x20);
     }
 }

@@ -119,6 +119,27 @@ impl PhysicalFrameAllocator {
         Some(address)
     }
 
+    /// Allocate a physically contiguous run of page-aligned frames.
+    pub fn allocate_contiguous_frames(&mut self, count: usize) -> Option<u64> {
+        if count == 0 {
+            return None;
+        }
+        let bytes = u64::try_from(count).ok()?.checked_mul(PAGE_SIZE)?;
+        for index in 0..self.free_count {
+            let range = self.free[index];
+            if range.end - range.start < bytes {
+                continue;
+            }
+            let address = range.start;
+            self.free[index].start = address.checked_add(bytes)?;
+            if self.free[index].start == self.free[index].end {
+                remove_range(&mut self.free, &mut self.free_count, index);
+            }
+            return Some(address);
+        }
+        None
+    }
+
     /// Return a previously allocated frame to the free list.
     pub fn free_frame(&mut self, address: u64) -> Result<(), FrameFreeError> {
         if address % PAGE_SIZE != 0 {
@@ -267,6 +288,18 @@ mod tests {
         assert_eq!(allocator.free_pages(), 2);
         allocator.free_frame(first).unwrap();
         assert_eq!(allocator.allocate_frame(), Some(first));
+    }
+
+    #[test]
+    fn allocates_only_contiguous_page_runs() {
+        let mut map = [0u8; 80];
+        map[..40].copy_from_slice(&descriptor(7, 0x400000, 1));
+        map[40..].copy_from_slice(&descriptor(7, 0x500000, 3));
+        let mut allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
+        assert_eq!(allocator.allocate_contiguous_frames(2), Some(0x500000));
+        assert_eq!(allocator.free_pages(), 2);
+        assert_eq!(allocator.allocate_contiguous_frames(3), None);
+        assert_eq!(allocator.allocate_contiguous_frames(0), None);
     }
 
     #[test]

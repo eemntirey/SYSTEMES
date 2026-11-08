@@ -5,7 +5,7 @@ extern crate alloc;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use systemes_kernel::{address_space::{AddressSpace, USER_BASE}, console::debug_write, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissions, USER_BASE}, console::debug_write, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions, IDENTITY_MAP_BYTES}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
 unsafe extern "C" {
     static __text_start: u8;
@@ -23,6 +23,80 @@ fn halt() -> ! {
         // SAFETY: A fatal boot error must stop execution without returning to the loader.
         unsafe { asm!("cli; hlt", options(nomem, nostack)) };
     }
+}
+
+#[cfg(feature = "qemu-virtio-vfs-test")]
+#[derive(Clone, Copy)]
+enum VirtioVfsTestError {
+    DeviceNotFound,
+    DeviceInitialization,
+    SectorRead,
+    InvalidImage,
+    ImageTooLarge,
+    Allocation,
+    Filesystem,
+    VfsMount,
+    VfsOpen,
+    VfsRead,
+    VfsClose,
+}
+
+#[cfg(feature = "qemu-virtio-vfs-test")]
+fn run_qemu_virtio_vfs_test(
+    allocator: &mut PhysicalFrameAllocator,
+) -> Result<(), VirtioVfsTestError> {
+    let pci = unsafe { systemes_kernel::pci::discover_virtio_blk() }
+        .map_err(|_| VirtioVfsTestError::DeviceNotFound)?;
+    let mut device = unsafe { systemes_kernel::virtio_blk::VirtioBlk::configure(pci, allocator) }
+        .map_err(|_| VirtioVfsTestError::DeviceInitialization)?;
+
+    let mut header = [0; 512];
+    unsafe { device.read_sector(0, &mut header, allocator) }
+        .map_err(|_| VirtioVfsTestError::SectorRead)?;
+    unsafe { debug_write(b"SYSTEMES_TEST: virtio-blk DMA sector read verified\r\n"); }
+
+    let image_size = systemes_kernel::simple_fs::SimpleFs::required_image_size(&header)
+        .map_err(|_| VirtioVfsTestError::InvalidImage)?;
+    if image_size > 64 * 1024 || image_size % 512 != 0 {
+        return Err(VirtioVfsTestError::ImageTooLarge);
+    }
+    let mut image = alloc::vec::Vec::new();
+    image
+        .try_reserve_exact(image_size)
+        .map_err(|_| VirtioVfsTestError::Allocation)?;
+    image.resize(image_size, 0);
+    image[..512].copy_from_slice(&header);
+
+    let sectors = image_size / 512;
+    for sector in 1..sectors {
+        let mut contents = [0; 512];
+        unsafe {
+            device.read_sector(sector as u64, &mut contents, allocator)
+        }
+        .map_err(|_| VirtioVfsTestError::SectorRead)?;
+        let offset = sector * 512;
+        image[offset..offset + 512].copy_from_slice(&contents);
+    }
+
+    let filesystem = systemes_kernel::simple_fs::SimpleFs::parse(&image)
+        .map_err(|_| VirtioVfsTestError::Filesystem)?;
+    let mut vfs = systemes_kernel::vfs::Vfs::new();
+    vfs.mount(filesystem)
+        .map_err(|_| VirtioVfsTestError::VfsMount)?;
+    let handle = vfs.open("/hello.txt").map_err(|_| VirtioVfsTestError::VfsOpen)?;
+    let mut contents = [0; 5];
+    let read_result = vfs.read(handle, &mut contents);
+    let close_result = vfs.close(handle);
+    if read_result != Ok(contents.len()) || contents != *b"hello" {
+        return Err(VirtioVfsTestError::VfsRead);
+    }
+    if close_result.is_err() {
+        return Err(VirtioVfsTestError::VfsClose);
+    }
+    unsafe {
+        debug_write(b"SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified\r\n");
+    }
+    Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -191,6 +265,35 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\r\n"); }
+    #[cfg(feature = "qemu-virtio-vfs-test")]
+    if let Err(error) = run_qemu_virtio_vfs_test(&mut frame_allocator) {
+        let message = match error {
+            VirtioVfsTestError::DeviceNotFound =>
+                b"SYSTEMES_KERNEL_FAIL: virtio-blk PCI discovery failed\r\n" as &[u8],
+            VirtioVfsTestError::DeviceInitialization =>
+                b"SYSTEMES_KERNEL_FAIL: virtio-blk initialization failed\r\n",
+            VirtioVfsTestError::SectorRead =>
+                b"SYSTEMES_KERNEL_FAIL: virtio-blk DMA sector read failed\r\n",
+            VirtioVfsTestError::InvalidImage =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS superblock is invalid\r\n",
+            VirtioVfsTestError::ImageTooLarge =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS image exceeds test limit\r\n",
+            VirtioVfsTestError::Allocation =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS image allocation failed\r\n",
+            VirtioVfsTestError::Filesystem =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS image parsing failed\r\n",
+            VirtioVfsTestError::VfsMount =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS mount failed\r\n",
+            VirtioVfsTestError::VfsOpen =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS open failed\r\n",
+            VirtioVfsTestError::VfsRead =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS read returned invalid content\r\n",
+            VirtioVfsTestError::VfsClose =>
+                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS close failed\r\n",
+        };
+        unsafe { debug_write(message); }
+        halt();
+    }
     #[cfg(feature = "qemu-heap-test")]
     {
         let layout = match core::alloc::Layout::from_size_align(128, 64) {
@@ -468,7 +571,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     #[cfg(not(feature = "qemu-apic-clock-test"))]
-    if apic_timer_ready && !cfg!(feature = "qemu-exception-test") {
+    if apic_timer_ready
+        && !cfg!(feature = "qemu-exception-test")
+        && !cfg!(feature = "qemu-user-shell-test")
+    {
         loop {
             // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
             unsafe { asm!("hlt", options(nomem, nostack)); }
@@ -514,7 +620,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_TEST: invoking INT3 breakpoint\r\n"); }
         unsafe { asm!("int3", options(nomem, nostack)) };
         unsafe { debug_write(b"SYSTEMES_TEST: breakpoint returned to caller through iretq\r\n"); }
-        halt();
+        if !cfg!(feature = "qemu-user-shell-test") {
+            halt();
+        }
     }
 
     // T12: initialize the polled UART console for userland input/output.
@@ -540,8 +648,71 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
     };
-    let shell_stack = USER_BASE + 0x9000;
-    // SAFETY: The shell is mapped at USER_BASE + 0x6000 with its stack at USER_BASE + 0x9000.
+    let shell_buffer = USER_BASE + 0x7000;
+    let buffer_frame = match frame_allocator.allocate_frame() {
+        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+        _ => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer frame unavailable\r\n"); }
+            halt();
+        }
+    };
+    unsafe {
+        core::ptr::write_bytes(buffer_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+        core::ptr::copy_nonoverlapping(b"> ".as_ptr(), buffer_frame as *mut u8, 2);
+    }
+    if unsafe {
+        shell_space.map_user_page(
+            &mut frame_allocator,
+            shell_buffer,
+            buffer_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )
+    }
+    .is_err()
+    {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer mapping failed\r\n"); }
+        halt();
+    }
+
+    let stack_page = USER_BASE + 0x9000;
+    let stack_frame = match frame_allocator.allocate_frame() {
+        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+        _ => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack frame unavailable\r\n"); }
+            halt();
+        }
+    };
+    unsafe {
+        core::ptr::write_bytes(stack_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+    }
+    if unsafe {
+        shell_space.map_user_page(
+            &mut frame_allocator,
+            stack_page,
+            stack_frame,
+            UserPagePermissions::ReadWriteNoExecute,
+        )
+    }
+    .is_err()
+    {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack mapping failed\r\n"); }
+        halt();
+    }
+
+    let shell_stack = stack_page + systemes_kernel::memory::PAGE_SIZE - 16;
+    // SAFETY: The ELF code, writable user buffer, and user stack are mapped in `shell_space`.
+    unsafe {
+        asm!("cli", options(nomem, nostack));
+        write_cr3(shell_space.root());
+    }
+    if unsafe { systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3()) }
+        != shell_space.root()
+    {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space activation failed\r\n"); }
+        halt();
+    }
+    unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
+    // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
     unsafe { enter_user_mode(shell_entry, shell_stack) };
     unreachable!();
 }
