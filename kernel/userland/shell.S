@@ -159,10 +159,8 @@ ls_open:
     syscall
     cmp $-19, %rax
     je ls_no_filesystem
-    cmp $-2, %rax
-    je ls_not_found
     test %rax, %rax
-    js ls_usage
+    js ls_error
     mov %rax, %r15
 ls_read:
     mov $8, %eax
@@ -181,41 +179,28 @@ ls_read:
     syscall
     jmp ls_read
 ls_read_error:
-    mov %rax, %rbx
     mov $7, %eax
     mov %r15, %rdi
     syscall
-    cmp $-20, %rbx
-    je ls_not_directory
     jmp ls_error
 ls_close:
     mov $7, %eax
     mov %r15, %rdi
     syscall
     jmp prompt
-ls_not_found:
-    lea ls_not_found_text(%rip), %rsi
-    mov $(ls_not_found_end-ls_not_found_text), %edx
-    call write_buf
-    jmp prompt
 ls_no_filesystem:
     lea ls_no_filesystem_text(%rip), %rsi
-    mov $(ls_no_filesystem_end-ls_no_filesystem_text), %edx
-    call write_buf
-    jmp prompt
-ls_not_directory:
-    lea ls_not_directory_text(%rip), %rsi
-    mov $(ls_not_directory_end-ls_not_directory_text), %edx
+    mov $19, %edx
     call write_buf
     jmp prompt
 ls_usage:
     lea ls_usage_text(%rip), %rsi
-    mov $(ls_usage_end-ls_usage_text), %edx
+    mov $11, %edx
     call write_buf
     jmp prompt
 ls_error:
     lea ls_error_text(%rip), %rsi
-    mov $(ls_error_end-ls_error_text), %edx
+    mov $11, %edx
     call write_buf
     jmp prompt
 check_echo:
@@ -299,14 +284,7 @@ cat_no_filesystem_end:
 cat_usage_text: .ascii "cat: usage\r\n"
 cat_usage_end:
 root_path: .asciz "/"
-ls_not_found_text: .ascii "ls: not found\r\n"
-ls_not_found_end:
 ls_no_filesystem_text: .ascii "ls: no filesystem\r\n"
-ls_no_filesystem_end:
-ls_not_directory_text: .ascii "ls: not a directory\r\n"
-ls_not_directory_end:
 ls_usage_text: .ascii "ls: usage\r\n"
-ls_usage_end:
 ls_error_text: .ascii "ls: error\r\n"
-ls_error_end:
 .size _start, .-_start
