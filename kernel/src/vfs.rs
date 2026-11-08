@@ -344,9 +344,10 @@ mod tests {
     fn rejects_invalid_paths_and_unmounted_access() {
         let image = make_test_image();
         let mut vfs = Vfs::new();
-        assert_eq!(vfs.open("hello.txt"), Err(VfsError::NotMounted));
+        assert_eq!(vfs.open("/hello.txt"), Err(VfsError::NotMounted));
         vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
-        assert_eq!(vfs.open("missing.txt"), Err(VfsError::NotFound));
+        assert_eq!(vfs.open("missing.txt"), Err(VfsError::InvalidPath));
+        assert_eq!(vfs.open("/missing.txt"), Err(VfsError::NotFound));
         assert_eq!(vfs.open("../hello.txt"), Err(VfsError::InvalidPath));
         assert_eq!(vfs.open(&"x".repeat(47)), Err(VfsError::NameTooLong));
         assert_eq!(vfs.open(""), Err(VfsError::InvalidPath));
@@ -356,17 +357,17 @@ mod tests {
     fn handles_are_independent_and_limited() {
         let image = make_test_image();
         let mut vfs = mounted_vfs(&image);
-        let first = vfs.open("hello.txt").unwrap();
-        let second = vfs.open("hello.txt").unwrap();
+        let first = vfs.open("/hello.txt").unwrap();
+        let second = vfs.open("/hello.txt").unwrap();
         assert_ne!(first, second);
 
         for _ in 2..MAX_OPEN_FILES {
-            vfs.open("hello.txt").unwrap();
+            vfs.open("/hello.txt").unwrap();
         }
-        assert_eq!(vfs.open("hello.txt"), Err(VfsError::OutOfHandles));
+        assert_eq!(vfs.open("/hello.txt"), Err(VfsError::OutOfHandles));
 
         vfs.close(first).unwrap();
-        let replacement = vfs.open("hello.txt").unwrap();
+        let replacement = vfs.open("/hello.txt").unwrap();
         assert_ne!(replacement, first);
         let mut content = [0; 8];
         assert_eq!(vfs.read(second, &mut content), Ok(5));
