@@ -10,6 +10,9 @@ use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissio
 /// The normal boot (no qemu-* feature) and the dedicated user-shell test both
 /// hand control to the userland shell. Kernel-only test configurations stay in
 /// the idle loop instead.
+#[cfg(feature = "qemu-user-fs-test")]
+mod user_fs_test;
+
 const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
     || !cfg!(any(
         feature = "qemu-exception-test",
@@ -28,6 +31,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-ring3-test",
         feature = "qemu-syscall-test",
         feature = "qemu-virtio-vfs-test",
+        feature = "qemu-user-fs-test",
         feature = "qemu-smap-violation-test",
         feature = "qemu-smep-violation-test",
     ));
@@ -700,6 +704,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     // P1-1: mount the optional virtio-blk root filesystem. A missing or invalid
     // disk is reported and the boot continues without a root filesystem.
     report_root_filesystem(&mut frame_allocator);
+    #[cfg(feature = "qemu-user-fs-test")]
+    if let Err(message) = user_fs_test::run(&mut frame_allocator, page_table_root) {
+        unsafe { debug_write(message); }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: user file syscall test failed\\r\\n"); }
+        halt();
+    }
 
     // T11/T12: load and launch the userland shell (ELF64), which uses
     // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
