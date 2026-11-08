@@ -197,14 +197,14 @@ write_buf:
 prompt_text: .ascii "> "
 newline_text: .ascii "\r\n"
 erase_text: .ascii "\b \b"
-help_text: .ascii "Commands: help, echo <text>, uptime, exit\r\n"
+help_text: .ascii "Commands: help, echo <text>, uptime, cat <path>, exit\r\n"
 help_text_end:
 unknown_text: .ascii "Unknown command. Type help.\r\n"
 unknown_text_end:
-cat_not_found_text: .ascii "cat: not found\\r\\n"
+cat_not_found_text: .ascii "cat: not found\r\n"
 cat_not_found_end:
-cat_no_filesystem_text: .ascii "cat: no filesystem\\r\\n"
+cat_no_filesystem_text: .ascii "cat: no filesystem\r\n"
 cat_no_filesystem_end:
-cat_usage_text: .ascii "cat: usage\\r\\n"
+cat_usage_text: .ascii "cat: usage\r\n"
 cat_usage_end:
 .size _start, .-_start
