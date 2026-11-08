@@ -501,13 +501,16 @@ mod tests {
     }
 
     #[test]
-    fn open_path_requires_an_absolute_single_component_utf8_path() {
+    fn open_path_accepts_nested_absolute_paths_and_rejects_traversal() {
         assert_eq!(validate_open_path(b"/hello.txt"), Ok("/hello.txt"));
+        assert_eq!(validate_open_path(b"/docs/hello.txt"), Ok("/docs/hello.txt"));
+        assert_eq!(validate_open_path(b"/"), Ok("/"));
         assert_eq!(validate_open_path(b"hello.txt"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(b"/../hello.txt"), Err(ERROR_INVALID_ARGUMENT));
-        assert_eq!(validate_open_path(b"/docs/hello.txt"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/docs/../hello.txt"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/docs//hello.txt"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(b"/bad\xFF"), Err(ERROR_INVALID_ARGUMENT));
-        assert_eq!(validate_open_path(b"/"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(validate_open_path(b"/bad\0name"), Err(ERROR_INVALID_ARGUMENT));
         assert_eq!(validate_open_path(&vec![b'a'; 256]), Err(ERROR_NAME_TOO_LONG));
     }
 
@@ -517,6 +520,9 @@ mod tests {
         assert_eq!(map_vfs_error(VfsError::NotFound), ERROR_NO_ENTRY);
         assert_eq!(map_vfs_error(VfsError::NameTooLong), ERROR_NAME_TOO_LONG);
         assert_eq!(map_vfs_error(VfsError::NotAFile), ERROR_NOT_DIRECTORY);
+        assert_eq!(map_vfs_error(VfsError::NotADirectory), ERROR_NOT_DIRECTORY);
+        assert_eq!(map_vfs_error(VfsError::IsDirectory), ERROR_IS_DIRECTORY);
+        assert_eq!(map_vfs_error(VfsError::BufferTooSmall), ERROR_BUFFER_TOO_SMALL);
         assert_eq!(map_vfs_error(VfsError::OutOfHandles), ERROR_TOO_MANY_FILES);
         assert_eq!(map_vfs_error(VfsError::BadHandle), ERROR_BAD_FD);
     }
@@ -537,6 +543,17 @@ mod tests {
         file_read.rsi = crate::address_space::USER_BASE - 1;
         file_read.rdx = 5;
         assert_eq!(systemes_syscall_dispatch(&mut file_read), ERROR_BAD_ADDRESS);
+
+        let mut readdir_bad_buffer = valid_frame(SYS_READDIR);
+        readdir_bad_buffer.rdi = crate::file_descriptors::FIRST_FILE_DESCRIPTOR as u64;
+        readdir_bad_buffer.rsi = crate::address_space::USER_BASE - 1;
+        readdir_bad_buffer.rdx = 16;
+        assert_eq!(systemes_syscall_dispatch(&mut readdir_bad_buffer), ERROR_BAD_ADDRESS);
+
+        let mut readdir_bad_fd = valid_frame(SYS_READDIR);
+        readdir_bad_fd.rdi = 2;
+        readdir_bad_fd.rdx = 0;
+        assert_eq!(systemes_syscall_dispatch(&mut readdir_bad_fd), ERROR_BAD_FD);
     }
 
     #[test]
