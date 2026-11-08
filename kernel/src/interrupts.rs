@@ -17,6 +17,7 @@ const USER_DATA_SELECTOR: u16 = 0x28;
 const USER_CODE_SELECTOR: u16 = 0x30;
 const USER_DATA_RPL3: u16 = USER_DATA_SELECTOR | 3;
 const USER_CODE_RPL3: u16 = USER_CODE_SELECTOR | 3;
+const USER_MODE_RFLAGS: u64 = 0x202;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const USER_INTERRUPT_GATE_ATTRIBUTES: u8 = 0xEE;
 const USER_DATA_DESCRIPTOR: u64 = 0x00CF_F200_0000_FFFF;
@@ -242,7 +243,7 @@ systemes_enter_ring3:
     mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
     push {user_data_selector}
     push rsi
-    push 0x02
+    push {user_mode_rflags}
     push {user_code_selector}
     push rdi
     iretq
@@ -657,6 +658,7 @@ systemes_exception_common:
     tss_selector = const TSS_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
+    user_mode_rflags = const USER_MODE_RFLAGS,
     interrupt_stack_size = const INTERRUPT_STACK_SIZE,
 );
 
@@ -1131,6 +1133,12 @@ mod tests {
         let nmi = IdtEntry::interrupt_gate(0x2000, 2);
         let mc = IdtEntry::interrupt_gate(0x3000, 3);
         assert_eq!((df.ist, nmi.ist, mc.ist), (1, 2, 3));
+    }
+
+    #[test]
+    fn ring3_entry_enables_interrupts_for_the_monotonic_clock() {
+        assert_ne!(USER_MODE_RFLAGS & (1 << 9), 0);
+        assert_ne!(USER_MODE_RFLAGS & 0x02, 0);
     }
 
     #[test]
