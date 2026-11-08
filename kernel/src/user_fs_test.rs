@@ -34,6 +34,7 @@ pub fn run(
         emit(code, length, &[0x48, 0x89, 0x44, 0x24, displacement]);
     }
 
+    // SAFETY: The debug console is initialized before the feature-gated test is called.
     unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test start\r\n"); }
     let free_pages_before = allocator.free_pages();
     let code_frame = allocator.allocate_frame()
@@ -84,6 +85,7 @@ pub fn run(
     emit_imm32(&mut code, &mut code_len, 0xB8, systemes_kernel::syscall::SYS_EXIT as u32);
     emit(&mut code, &mut code_len, &[0x31, 0xFF, 0x0F, 0x05, 0x0F, 0x0B]);
 
+    // SAFETY: The debug console is initialized before the feature-gated test is called.
     unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test program encoded\r\n"); }
     let hello_path_offset = code_len;
     emit(&mut code, &mut code_len, b"/hello.txt");
@@ -111,8 +113,10 @@ pub fn run(
             .map_err(|_| b"SYSTEMES_KERNEL_FAIL: user FS stack mapping failed\r\n" as &'static [u8])?;
     }
 
+    // SAFETY: The debug console is initialized before the feature-gated test is called.
     unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test address space mapped\r\n"); }
     let user_rsp = STACK_ADDRESS + page_size - 16;
+    // SAFETY: CR3 is readable in ring 0 and the current kernel root is active.
     let previous_root = unsafe { systemes_kernel::address_space::read_cr3() };
     let previous_flags: u64;
     // SAFETY: Save flags and switch CR3 with interrupts disabled during this single-core transition.
@@ -122,8 +126,11 @@ pub fn run(
         write_cr3(space.root());
     }
     systemes_kernel::syscall::reset_process_file_table();
+    // SAFETY: The code and stack pages are mapped with user RX and RW-NX permissions.
     unsafe { debug_write(b"SYSTEMES_TEST: entering Ring 3 file syscall test\r\n"); }
+    // SAFETY: The test ELF-like bytecode and user stack are mapped in the active process CR3.
     let exit_status = unsafe { enter_user_mode(CODE_ADDRESS, user_rsp) };
+    // SAFETY: The debug console remains initialized after the test process exits.
     unsafe { debug_write(b"SYSTEMES_TEST: Ring 3 file syscall test returned\r\n"); }
 
     let (read_count, eof_count, close_result, missing_result, contents) = {
@@ -151,6 +158,7 @@ pub fn run(
     }
     if previous_flags & (1 << 9) != 0 {
         // SAFETY: The original kernel address space is restored and interrupts were previously enabled.
+        // SAFETY: Restore the previously enabled interrupt state after the test address space is reclaimed.
         unsafe { asm!("sti", options(nomem, nostack)); }
     }
 
@@ -159,6 +167,7 @@ pub fn run(
     {
         return Err(b"SYSTEMES_KERNEL_FAIL: user SYS_OPEN/READ/CLOSE assertions failed\r\n");
     }
+    // SAFETY: The debug console is initialized and the user test has returned to ring 0.
     unsafe { debug_write(b"SYSTEMES_TEST: user SYS_OPEN/READ/CLOSE succeeded\r\n"); }
     Ok(())
 }
