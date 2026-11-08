@@ -141,11 +141,17 @@ mod tests {
             .windows(2)
             .filter(|bytes| *bytes == [0x0F, 0x05])
             .count();
-        assert_eq!(syscall_count, 7);
+        assert_eq!(syscall_count, 11);
+        assert!(SHELL_CODE.windows(5).any(|bytes| bytes == [0xB8, 6, 0, 0, 0]));
+        assert!(SHELL_CODE.windows(5).any(|bytes| bytes == [0xB8, 7, 0, 0, 0]));
         assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"help"));
         assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"echo"));
         assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"exit"));
         assert!(SHELL_ELF.windows(6).any(|bytes| bytes == b"uptime"));
+        assert!(SHELL_ELF.windows(10).any(|bytes| bytes == b"cat <path>"));
+        assert!(SHELL_ELF.windows(14).any(|bytes| bytes == b"cat: not found"));
+        assert!(SHELL_ELF.windows(19).any(|bytes| bytes == b"cat: no filesystem"));
+        assert!(SHELL_ELF.windows(9).any(|bytes| bytes == b"cat: usage"));
         assert!(SHELL_ELF.windows(7).any(|bytes| bytes == b"Unknown"));
     }
 
