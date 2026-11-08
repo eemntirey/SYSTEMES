@@ -140,7 +140,7 @@ fn open_user_file(user_path: u64, path_len: u64) -> u64 {
 /// Copy a NUL-terminated path one byte at a time, validating every user page before access.
 fn copy_user_c_path(user_path: u64) -> Result<([u8; MAX_OPEN_PATH], usize), u64> {
     let mut bytes = [0u8; MAX_OPEN_PATH];
-    for index in 0..MAX_OPEN_PATH {
+    for index in 0..=MAX_OPEN_PATH {
         let address = user_path.checked_add(index as u64).ok_or(ERROR_BAD_ADDRESS)?;
         if !is_user_range(address, 1) {
             return Err(ERROR_BAD_ADDRESS);
@@ -156,6 +156,9 @@ fn copy_user_c_path(user_path: u64) -> Result<([u8; MAX_OPEN_PATH], usize), u64>
         };
         if byte == 0 {
             return Ok((bytes, index));
+        }
+        if index == MAX_OPEN_PATH {
+            return Err(ERROR_NAME_TOO_LONG);
         }
         bytes[index] = byte;
     }
