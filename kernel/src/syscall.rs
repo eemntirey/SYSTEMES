@@ -97,9 +97,9 @@ fn open_user_file(user_path: u64, path_len: u64) -> u64 {
     if path_len > MAX_OPEN_PATH as u64 {
         return ERROR_NAME_TOO_LONG;
     }
-    if !is_user_range(user_path, path_len)
-        || !unsafe { user_range_is_mapped(user_path, path_len, false) }
-    {
+    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
+    let path_mapped = unsafe { user_range_is_mapped(user_path, path_len, false) };
+    if !is_user_range(user_path, path_len) || !path_mapped {
         return ERROR_BAD_ADDRESS;
     }
 
@@ -151,16 +151,19 @@ fn close_user_file(descriptor: u64) -> u64 {
 
 /// Copy file bytes from the kernel VFS into a validated writable user range.
 fn read_user_file(descriptor: u64, user_buffer: u64, length: u64) -> u64 {
-    if length == 0 {
-        return 0;
-    }
     let descriptor = match u32::try_from(descriptor) {
         Ok(descriptor) if descriptor >= crate::file_descriptors::FIRST_FILE_DESCRIPTOR => descriptor,
         _ => return ERROR_BAD_FD,
     };
-    if !is_user_range(user_buffer, length)
-        || !unsafe { user_range_is_mapped(user_buffer, length, true) }
-    {
+    if length == 0 {
+        return match PROCESS_FILES.lock().get(descriptor) {
+            Ok(_) => 0,
+            Err(error) => map_file_table_error(error),
+        };
+    }
+    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
+    let buffer_mapped = unsafe { user_range_is_mapped(user_buffer, length, true) };
+    if !is_user_range(user_buffer, length) || !buffer_mapped {
         return ERROR_BAD_ADDRESS;
     }
     let handle = match PROCESS_FILES.lock().get(descriptor) {
@@ -271,9 +274,9 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             } else {
                 let buf = frame.rsi;
                 let len = frame.rdx;
-                if !is_user_range(buf, len)
-                    || !unsafe { user_range_is_mapped(buf, len, false) }
-                {
+                // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
+                let buffer_mapped = unsafe { user_range_is_mapped(buf, len, false) };
+                if !is_user_range(buf, len) || !buffer_mapped {
                     ERROR_BAD_ADDRESS
                 } else {
                     let _guard = crate::uaccess::UserAccessGuard::new();
@@ -299,14 +302,17 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                 let len = frame.rdx;
                 if len == 0 {
                     0
-                } else if !is_user_range(buf, len)
-                    || !unsafe { user_range_is_mapped(buf, len, true) }
-                {
-                    ERROR_BAD_ADDRESS
                 } else {
+                    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
+                    let buffer_mapped = unsafe { user_range_is_mapped(buf, len, true) };
+                    if !is_user_range(buf, len) || !buffer_mapped {
+                        return ERROR_BAD_ADDRESS;
+                    }
                     let mut read: u64 = 0;
+                    // SAFETY: This enables timer IRQs while the polled UART read waits.
                     unsafe { asm!("sti", options(nomem, nostack)); }
                     while read < len {
+                        // SAFETY: The serial driver owns the UART port access.
                         match unsafe { crate::serial::read_byte() } {
                             Ok(Some(byte)) => {
                                 {
@@ -321,11 +327,13 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                             }
                             Ok(None) => core::hint::spin_loop(),
                             Err(_) => {
+                                // SAFETY: Restore the syscall-entry interrupt mask before returning.
                                 unsafe { asm!("cli", options(nomem, nostack)); }
                                 return if read == 0 { ERROR_IO } else { read };
                             },
                         }
                     }
+                    // SAFETY: Restore the syscall-entry interrupt mask before returning.
                     unsafe { asm!("cli", options(nomem, nostack)); }
                     #[cfg(feature = "qemu-user-shell-test")]
                     if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
