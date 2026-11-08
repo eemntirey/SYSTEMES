@@ -148,6 +148,46 @@ mod tests {
         assert_eq!(table.take_all().iter().flatten().count(), 0);
     }
 
+    fn make_test_image() -> Vec<u8> {
+        let mut data = vec![0; 1536];
+        data[0..6].copy_from_slice(b"SYSFS1");
+        data[6..10].copy_from_slice(&1u32.to_le_bytes());
+        data[10..14].copy_from_slice(&512u32.to_le_bytes());
+        data[14..18].copy_from_slice(&2u32.to_le_bytes());
+        data[18..22].copy_from_slice(&1u32.to_le_bytes());
+        data[22..26].copy_from_slice(&0u32.to_le_bytes());
+        data[512..514].copy_from_slice(&1u16.to_le_bytes());
+        data[578..582].copy_from_slice(&5u32.to_le_bytes());
+        data[582..586].copy_from_slice(&0u32.to_le_bytes());
+        data[586..590].copy_from_slice(&1u32.to_le_bytes());
+        data[590..599].copy_from_slice(b"hello.txt");
+        data[1024..1029].copy_from_slice(b"hello");
+        data
+    }
+
+    #[test]
+    fn process_exit_closes_all_vfs_handles_and_releases_capacity() {
+        let image = make_test_image();
+        let filesystem = SimpleFs::parse(&image).unwrap();
+        let mut vfs = Vfs::new();
+        vfs.mount(filesystem).unwrap();
+        let mut table = ProcessFileTable::new();
+
+        for _ in 0..MAX_PROCESS_FILES {
+            let handle = vfs.open("/hello.txt").unwrap();
+            table.insert(handle).unwrap();
+        }
+        let handles = table.take_all();
+        for handle in handles.into_iter().flatten() {
+            vfs.close(handle).unwrap();
+        }
+        assert!(table.is_empty());
+
+        for _ in 0..MAX_PROCESS_FILES {
+            assert!(vfs.open("/hello.txt").is_ok());
+        }
+    }
+
     #[test]
     fn closing_one_descriptor_does_not_alias_another() {
         let mut table = ProcessFileTable::new();
