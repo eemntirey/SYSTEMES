@@ -55,11 +55,18 @@ submit_line:
     test %r12d, %r12d
     jz prompt
     cmp $4, %r12d
-    jne check_echo
+    jne check_uptime
     cmpl $0x74697865, (%r13)
     je command_exit
     cmpl $0x706c6568, (%r13)
     je command_help
+check_uptime:
+    cmp $6, %r12d
+    jne check_echo
+    cmpl $0x69747075, (%r13)
+    jne check_echo
+    cmpw $0x656d, 4(%r13)
+    je command_uptime
 check_echo:
     cmp $5, %r12d
     jb command_unknown
@@ -77,6 +84,34 @@ check_echo:
     lea newline_text(%rip), %rsi
     mov $2, %edx
     call write_buf
+    jmp prompt
+command_uptime:
+    mov $5, %eax
+    syscall
+    xor %edx, %edx
+    mov $100, %ecx
+    div %rcx
+    lea 255(%r13), %rsi
+    mov $10, %ecx
+itoa_loop:
+    xor %edx, %edx
+    div %rcx
+    add $'0', %dl
+    dec %rsi
+    movb %dl, (%rsi)
+    test %rax, %rax
+    jne itoa_loop
+    lea 255(%r13), %rdx
+    sub %rsi, %rdx
+    movb $'s', (%rsi,%rdx)
+    inc %rdx
+    movb $13, (%rsi,%rdx)
+    inc %rdx
+    movb $10, (%rsi,%rdx)
+    inc %rdx
+    mov $1, %eax
+    mov $1, %edi
+    syscall
     jmp prompt
 command_help:
     lea help_text(%rip), %rsi
@@ -102,7 +137,7 @@ write_buf:
 prompt_text: .ascii "> "
 newline_text: .ascii "\r\n"
 erase_text: .ascii "\b \b"
-help_text: .ascii "Commands: help, echo <text>, exit\r\n"
+help_text: .ascii "Commands: help, echo <text>, uptime, exit\r\n"
 help_text_end:
 unknown_text: .ascii "Unknown command. Type help.\r\n"
 unknown_text_end:
