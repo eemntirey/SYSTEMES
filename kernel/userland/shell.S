@@ -67,6 +67,66 @@ check_uptime:
     jne check_echo
     cmpw $0x656d, 4(%r13)
     je command_uptime
+check_cat:
+    cmp $3, %r12d
+    jne check_cat_args
+    cmpw $0x6163, (%r13)
+    jne check_cat_args
+    cmpb $0x74, 2(%r13)
+    je cat_usage
+check_cat_args:
+    cmp $4, %r12d
+    jb check_echo
+    cmpl $0x20746163, (%r13)
+    jne check_echo
+    mov %r12d, %esi
+    sub $4, %esi
+    test %esi, %esi
+    jz cat_usage
+    lea 4(%r13), %rdi
+    mov $6, %eax
+    syscall
+    cmp $-2, %rax
+    je cat_not_found
+    cmp $-19, %rax
+    je cat_no_filesystem
+    test %rax, %rax
+    js cat_usage
+    mov %rax, %r15
+cat_read:
+    mov $2, %eax
+    mov %r15, %rdi
+    lea 512(%r13), %rsi
+    mov $256, %edx
+    syscall
+    test %rax, %rax
+    jle cat_close
+    mov %rax, %rdx
+    mov $1, %eax
+    mov $1, %edi
+    lea 512(%r13), %rsi
+    syscall
+    jmp cat_read
+cat_close:
+    mov $7, %eax
+    mov %r15, %rdi
+    syscall
+    jmp prompt
+cat_not_found:
+    lea cat_not_found_text(%rip), %rsi
+    mov $(cat_not_found_end-cat_not_found_text), %edx
+    call write_buf
+    jmp prompt
+cat_no_filesystem:
+    lea cat_no_filesystem_text(%rip), %rsi
+    mov $(cat_no_filesystem_end-cat_no_filesystem_text), %edx
+    call write_buf
+    jmp prompt
+cat_usage:
+    lea cat_usage_text(%rip), %rsi
+    mov $(cat_usage_end-cat_usage_text), %edx
+    call write_buf
+    jmp prompt
 check_echo:
     cmp $5, %r12d
     jb command_unknown
@@ -141,4 +201,10 @@ help_text: .ascii "Commands: help, echo <text>, uptime, exit\r\n"
 help_text_end:
 unknown_text: .ascii "Unknown command. Type help.\r\n"
 unknown_text_end:
+cat_not_found_text: .ascii "cat: not found\\r\\n"
+cat_not_found_end:
+cat_no_filesystem_text: .ascii "cat: no filesystem\\r\\n"
+cat_no_filesystem_end:
+cat_usage_text: .ascii "cat: usage\\r\\n"
+cat_usage_end:
 .size _start, .-_start
