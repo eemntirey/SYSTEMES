@@ -36,6 +36,7 @@ jobs:
           embedded = bytes(int(value) for value in re.findall(r"\d+", match.group(1)))
           assembled = Path("/tmp/systemes-shell.bin").read_bytes()
           if embedded != assembled:
+              print("SHELL_CODE_HEX=" + assembled.hex())
               limit = min(len(embedded), len(assembled))
               offset = next((i for i in range(limit) if embedded[i] != assembled[i]), limit)
               raise SystemExit(
@@ -110,9 +111,9 @@ jobs:
           image[0:6] = b"SYSFS1"
           struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
           struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
+          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
           image[590:599] = b"hello.txt"
-          image[1024:1029] = b"hello"
+          image[1024:1030] = b"hello\\n"
           Path("build/uefi/sysfs.img").write_bytes(image)
           PY
           test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
@@ -435,6 +436,9 @@ jobs:
             sleep 2.2
             send_line uptime
             send_line 'uptime extra'
+            send_line 'cat /hello.txt'
+            send_line 'cat /absent'
+            send_line cat
             send_line unknown
             send_line exit
           } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
@@ -463,17 +467,18 @@ jobs:
               "> Z",
               "Unknown command. Type help.",
               "> help",
-              "Commands: help, echo <text>, uptime, exit",
-              "> echo hellx\b \bo",
+              "Commands: help, echo <text>, uptime, cat <path>, exit",
+              "> echo hellx\\b \\bo",
               "hello",
               "> uptime",
               "> uptime",
               "> uptime extra",
-              "Unknown command. Type help.",
-              "> unknown",
-              "Unknown command. Type help.",
-              "> exit",
           ]
+          if "${{ matrix.disk }}" == "yes":
+              expected.extend(["> cat /hello.txt", "hello", "> cat /absent", "cat: not found"])
+          else:
+              expected.extend(["> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem"])
+          expected.extend(["> cat", "cat: usage", "> unknown", "Unknown command. Type help.", "> exit"])
           cursor = 0
           for item in expected:
               try:
@@ -496,12 +501,19 @@ jobs:
           print(f"QEMU uptime monotonicity verified: {values[0]}s -> {values[1]}s")
           if lines.count("> Z") != 1 or "> ZZ" in lines:
               raise SystemExit("single-character input was not echoed exactly once")
-          if lines.count("hello") != 1:
-              raise SystemExit("echo command did not produce exactly one standalone 'hello' output")
-          print("QEMU shell transcript verified: exact echo, help, backspace, unknown command and exit")
+          expected_hello_lines = 2 if "${{ matrix.disk }}" == "yes" else 1
+          if lines.count("hello") != expected_hello_lines:
+              raise SystemExit(f"expected {expected_hello_lines} hello output lines, got {lines.count('hello')}")
+          print("QEMU shell transcript verified: echo, cat, file-not-found, no-filesystem, usage, help and exit")
           PY
           grep -qF '> help' build/uefi/serial.log
-          grep -qF 'Commands: help, echo <text>, uptime, exit' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, exit' build/uefi/serial.log
+          grep -qF 'cat: usage' build/uefi/serial.log
+          if [ "${{ matrix.disk }}" = "yes" ]; then
+            grep -qF 'cat: not found' build/uefi/serial.log
+          else
+            grep -qF 'cat: no filesystem' build/uefi/serial.log
+          fi
           grep -qF '> uptime extra' build/uefi/serial.log
           grep -qF 'hello' build/uefi/serial.log
           grep -qF 'Unknown command. Type help.' build/uefi/serial.log
