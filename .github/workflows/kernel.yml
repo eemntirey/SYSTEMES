@@ -27,13 +27,13 @@ jobs:
 
           rust = Path("kernel/src/shell_elf.rs").read_text()
           match = re.search(
-              r"const SHELL_CODE:\\s*&\\[u8\\]\\s*=\\s*&\\[(.*?)\\];",
+              r"const SHELL_CODE:\s*&\[u8\]\s*=\s*&\[(.*?)\];",
               rust,
               re.S,
           )
           if not match:
               raise SystemExit("SHELL_CODE byte array was not found")
-          embedded = bytes(int(value) for value in re.findall(r"\\d+", match.group(1)))
+          embedded = bytes(int(value) for value in re.findall(r"\d+", match.group(1)))
           assembled = Path("/tmp/systemes-shell.bin").read_bytes()
           if embedded != assembled:
               limit = min(len(embedded), len(assembled))
