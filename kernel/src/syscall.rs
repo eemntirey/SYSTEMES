@@ -123,6 +123,10 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                 } else {
                     let _guard = crate::uaccess::UserAccessGuard::new();
                     let mut read: u64 = 0;
+                    // SYSCALL masks IF through SFMASK. This syscall is a polled,
+                    // blocking UART read, so briefly re-enable IRQs while waiting
+                    // to let the Local APIC monotonic clock continue advancing.
+                    unsafe { asm!("sti", options(nomem, nostack)); }
                     while read < len {
                         match unsafe { crate::serial::read_byte() } {
                             Ok(Some(byte)) => {
@@ -135,9 +139,14 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                                 }
                             }
                             Ok(None) => core::hint::spin_loop(),
-                            Err(_) => return if read == 0 { ERROR_IO } else { read },
+                            Err(_) => {
+                                unsafe { asm!("cli", options(nomem, nostack)); }
+                                return if read == 0 { ERROR_IO } else { read };
+                            },
                         }
                     }
+                    // Restore the syscall-entry interrupt state before returning.
+                    unsafe { asm!("cli", options(nomem, nostack)); }
                     #[cfg(feature = "qemu-user-shell-test")]
                     if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
                         unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READ received UART input\r\n") };
