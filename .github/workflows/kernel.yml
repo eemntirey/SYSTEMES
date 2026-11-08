@@ -395,12 +395,12 @@ jobs:
             }
             send_line() {
               send_chars "$1"
-              printf '\\r'
+              printf '\r'
               sleep 0.25
             }
             send_line help
             send_chars 'echo hellx'
-            printf '\\177o\\r'
+            printf '\177o\r'
             sleep 0.25
             send_line unknown
             send_line exit
