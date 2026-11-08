@@ -52,6 +52,7 @@ submit_line:
     lea newline_text(%rip), %rsi
     mov $2, %edx
     call write_buf
+    movb $0, (%r13,%r12,1)
     test %r12d, %r12d
     jz prompt
     cmp $4, %r12d
@@ -62,11 +63,28 @@ submit_line:
     je command_help
 check_uptime:
     cmp $6, %r12d
-    jne check_cat
+    jne check_ls
     cmpl $0x69747075, (%r13)
-    jne check_cat
+    jne check_ls
     cmpw $0x656d, 4(%r13)
     je command_uptime
+check_ls:
+    cmp $2, %r12d
+    je check_ls_exact
+    cmp $3, %r12d
+    jb check_cat
+    cmpw $0x736c, (%r13)
+    jne check_cat
+    cmpb $0x20, 2(%r13)
+    jne check_cat
+    jmp command_ls
+check_ls_exact:
+    cmpw $0x736c, (%r13)
+    jne check_cat
+    jmp command_ls
+check_cat_unused:
+    cmp $6, %r12d
+    jne check_cat
 check_cat:
     cmp $3, %r12d
     jne check_cat_args
@@ -125,6 +143,82 @@ cat_no_filesystem:
 cat_usage:
     lea cat_usage_text(%rip), %rsi
     mov $(cat_usage_end-cat_usage_text), %edx
+    call write_buf
+    jmp prompt
+command_ls:
+    cmp $2, %r12d
+    je ls_root_path
+    cmp $4, %r12d
+    jb ls_usage
+    lea 3(%r13), %rdi
+    mov %r12d, %esi
+    sub $3, %esi
+    jmp ls_open
+ls_root_path:
+    lea root_path(%rip), %rdi
+    mov $1, %esi
+ls_open:
+    mov $6, %eax
+    syscall
+    cmp $-19, %rax
+    je ls_no_filesystem
+    cmp $-2, %rax
+    je ls_not_found
+    test %rax, %rax
+    js ls_usage
+    mov %rax, %r15
+ls_read:
+    mov $8, %eax
+    mov %r15, %rdi
+    lea 512(%r13), %rsi
+    mov $256, %edx
+    syscall
+    test %rax, %rax
+    js ls_read_error
+    test %rax, %rax
+    jz ls_close
+    mov %rax, %rdx
+    mov $1, %eax
+    mov $1, %edi
+    lea 512(%r13), %rsi
+    syscall
+    jmp ls_read
+ls_read_error:
+    mov %rax, %rbx
+    mov $7, %eax
+    mov %r15, %rdi
+    syscall
+    cmp $-20, %rbx
+    je ls_not_directory
+    jmp ls_error
+ls_close:
+    mov $7, %eax
+    mov %r15, %rdi
+    syscall
+    jmp prompt
+ls_not_found:
+    lea ls_not_found_text(%rip), %rsi
+    mov $(ls_not_found_end-ls_not_found_text), %edx
+    call write_buf
+    jmp prompt
+ls_no_filesystem:
+    lea ls_no_filesystem_text(%rip), %rsi
+    mov $(ls_no_filesystem_end-ls_no_filesystem_text), %edx
+    call write_buf
+    jmp prompt
+ls_not_directory:
+    lea ls_not_directory_text(%rip), %rsi
+    mov $(ls_not_directory_end-ls_not_directory_text), %edx
+    call write_buf
+    jmp prompt
+ls_usage:
+    lea ls_usage_text(%rip), %rsi
+    mov $(ls_usage_end-ls_usage_text), %edx
+    call write_buf
+    jmp prompt
+ls_error:
+    lea ls_error_text(%rip), %rsi
+    mov $(ls_error_end-ls_error_text), %edx
     call write_buf
     jmp prompt
 check_echo:
@@ -197,7 +291,7 @@ write_buf:
 prompt_text: .ascii "> "
 newline_text: .ascii "\r\n"
 erase_text: .ascii "\b \b"
-help_text: .ascii "Commands: help, echo <text>, uptime, cat <path>, exit\r\n"
+help_text: .ascii "Commands: help, echo <text>, uptime, cat <path>, ls [path], exit\r\n"
 help_text_end:
 unknown_text: .ascii "Unknown command. Type help.\r\n"
 unknown_text_end:
@@ -207,4 +301,15 @@ cat_no_filesystem_text: .ascii "cat: no filesystem\r\n"
 cat_no_filesystem_end:
 cat_usage_text: .ascii "cat: usage\r\n"
 cat_usage_end:
+root_path: .asciz "/"
+ls_not_found_text: .ascii "ls: not found\r\n"
+ls_not_found_end:
+ls_no_filesystem_text: .ascii "ls: no filesystem\r\n"
+ls_no_filesystem_end:
+ls_not_directory_text: .ascii "ls: not a directory\r\n"
+ls_not_directory_end:
+ls_usage_text: .ascii "ls: usage\r\n"
+ls_usage_end:
+ls_error_text: .ascii "ls: error\r\n"
+ls_error_end:
 .size _start, .-_start
