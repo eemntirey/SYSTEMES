@@ -1,7 +1,7 @@
 .section .text
 .global _start
 .type _start,@function
-.set LINEBUF, 0x80007000
+.set LINEBUF, 0x8000007000
 _start:
     xor %r12d, %r12d
     movabs $LINEBUF, %r13
