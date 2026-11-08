@@ -64,4 +64,14 @@ mod tests {
         on_timer_interrupt();
         assert_eq!(now_millis(), 20);
     }
+
+    #[test]
+    fn converts_ticks_to_whole_seconds_without_rounding_up() {
+        assert_eq!(ticks_to_seconds(0), 0);
+        assert_eq!(ticks_to_seconds(99), 0);
+        assert_eq!(ticks_to_seconds(100), 1);
+        assert_eq!(ticks_to_seconds(250), 2);
+        assert_eq!(ticks_to_seconds(u64::MAX), u64::MAX / TICK_HZ);
+    }
+
 }
