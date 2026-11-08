@@ -61,6 +61,8 @@ submit_line:
     cmpl $0x706c6568, (%r13)
     je command_help
 check_echo:
+    cmp $5, %r12d
+    jb command_unknown
     cmpl $0x6f686365, (%r13)
     jne command_unknown
     cmpb $0x20, 4(%r13)
