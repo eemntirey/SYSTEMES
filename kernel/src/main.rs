@@ -5,7 +5,32 @@ extern crate alloc;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissions, USER_BASE}, console::debug_write, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions, IDENTITY_MAP_BYTES}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissions, USER_BASE}, console::{debug_write, encode_decimal}, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions, IDENTITY_MAP_BYTES}, rootfs::{self, RootFsError}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+
+/// The normal boot (no qemu-* feature) and the dedicated user-shell test both
+/// hand control to the userland shell. Kernel-only test configurations stay in
+/// the idle loop instead.
+const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
+    || !cfg!(any(
+        feature = "qemu-exception-test",
+        feature = "qemu-nx-execute-test",
+        feature = "qemu-rx-write-test",
+        feature = "qemu-ist-nmi-test",
+        feature = "qemu-ist-machine-check-test",
+        feature = "qemu-heap-test",
+        feature = "qemu-acpi-madt-test",
+        feature = "qemu-apic-clock-test",
+        feature = "qemu-cooperative-scheduler-test",
+        feature = "qemu-preemptive-scheduler-test",
+        feature = "qemu-fpu-context-test",
+        feature = "qemu-task-sleep-test",
+        feature = "qemu-address-space-test",
+        feature = "qemu-ring3-test",
+        feature = "qemu-syscall-test",
+        feature = "qemu-virtio-vfs-test",
+        feature = "qemu-smap-violation-test",
+        feature = "qemu-smep-violation-test",
+    ));
 
 unsafe extern "C" {
     static __text_start: u8;
@@ -114,6 +139,28 @@ fn run_qemu_virtio_vfs_test(
         debug_write(b"SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified\r\n");
     }
     Ok(())
+}
+
+/// Mount the optional root filesystem and report the outcome on the boot log.
+///
+/// A missing disk or an unreadable image is never fatal: the shell still starts
+/// and reports the missing filesystem when a file command is used.
+fn report_root_filesystem(allocator: &mut PhysicalFrameAllocator) {
+    match rootfs::mount(allocator) {
+        Ok(sectors) => {
+            unsafe { debug_write(b"SYSTEMES: SYSFS root mounted from virtio-blk, sectors=") };
+            let mut digits = [0u8; 20];
+            let len = encode_decimal(sectors, &mut digits);
+            unsafe { debug_write(&digits[..len]) };
+            unsafe { debug_write(b"\r\n") };
+        }
+        Err(RootFsError::DeviceNotFound) => unsafe {
+            debug_write(b"SYSTEMES: no virtio-blk disk found; booting without a root filesystem\r\n")
+        },
+        Err(_) => unsafe {
+            debug_write(b"SYSTEMES: virtio-blk disk present but SYSFS mount failed; booting without a root filesystem\r\n")
+        },
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -590,7 +637,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     #[cfg(not(feature = "qemu-apic-clock-test"))]
     if apic_timer_ready
         && !cfg!(feature = "qemu-exception-test")
-        && !cfg!(feature = "qemu-user-shell-test")
+        && !LAUNCH_USER_SHELL
     {
         loop {
             // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
@@ -645,6 +692,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     // T12: initialize the polled UART console for userland input/output.
     serial::init();
     unsafe { debug_write(b"SYSTEMES: serial UART initialized\r\n"); }
+
+    // P1-1: mount the optional virtio-blk root filesystem. A missing or invalid
+    // disk is reported and the boot continues without a root filesystem.
+    report_root_filesystem(&mut frame_allocator);
 
     // T11/T12: load and launch the userland shell (ELF64), which uses
     // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
@@ -729,6 +780,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
+    unsafe { debug_write(b"SYSTEMES: userland shell ready\r\n"); }
     // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
     unsafe { enter_user_mode(shell_entry, shell_stack) }
 }
