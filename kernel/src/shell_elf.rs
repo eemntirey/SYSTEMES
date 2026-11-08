@@ -82,7 +82,7 @@ const fn build_shell_elf() -> [u8; 128 + SHELL_CODE.len()] {
     put_u64(&mut elf, 88, USER_BASE + 0x6000);
     put_u64(&mut elf, 96, SHELL_CODE.len() as u64);
     put_u64(&mut elf, 104, SHELL_CODE.len() as u64);
-    put_u64(&mut elf, 112, 4096);
+    put_u64(&mut elf, 112, 1);
 
     let mut index = 0;
     while index < SHELL_CODE.len() {
