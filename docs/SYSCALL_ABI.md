@@ -12,6 +12,9 @@ return. Pointer arguments must refer to mapped user memory.
 | 2 | `SYS_READ` | `RDI`: fd (`1` serial), `RSI`: buffer, `RDX`: maximum bytes | Bytes read; stops at newline |
 | 3 | `SYS_EXIT` | `RDI`: process status | Does not return to user mode; resumes the kernel continuation |
 | 4 | `SYS_YIELD` | — | `0`; yields to the kernel scheduler when it has runnable tasks |
+| 5 | `SYS_UPTIME` | — | Unsigned 64-bit APIC timer ticks since boot, returned in `RAX` (100 ticks/second) |
+
+`SYS_UPTIME` reads the same monotonic Local APIC timer counter used by the scheduler; it does not read wall-clock time or dereference user memory. Convert to whole seconds with floor division (`ticks / 100`). The unsigned counter wraps modulo `2^64` after `u64::MAX`; callers comparing samples across wrap-around must use wrapping arithmetic.
 
 Errors are returned in `RAX` as negative errno values:
 
@@ -26,4 +29,4 @@ Errors are returned in `RAX` as negative errno values:
 kernel restores its address space and releases the exiting process's user
 pages and page-table frames before continuing to idle. `SYS_YIELD` is
 cooperative and does not promise a switch when there are no other runnable
-kernel tasks.
+kernel tasks. `SYS_UPTIME` is monotonic modulo its unsigned 64-bit wrap-around.
