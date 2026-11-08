@@ -18,6 +18,7 @@ const USER_CODE_SELECTOR: u16 = 0x30;
 const USER_DATA_RPL3: u16 = USER_DATA_SELECTOR | 3;
 const USER_CODE_RPL3: u16 = USER_CODE_SELECTOR | 3;
 const USER_MODE_RFLAGS: u64 = 0x202;
+const USER_TEST_RFLAGS: u64 = 0x02;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const USER_INTERRUPT_GATE_ATTRIBUTES: u8 = 0xEE;
 const USER_DATA_DESCRIPTOR: u64 = 0x00CF_F200_0000_FFFF;
@@ -174,7 +175,7 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
     fn systemes_load_tr();
-    fn systemes_enter_ring3(user_rip: u64, user_rsp: u64);
+    fn systemes_enter_ring3(user_rip: u64, user_rsp: u64, user_rflags: u64);
     fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
     fn systemes_isr1();
@@ -243,7 +244,7 @@ systemes_enter_ring3:
     mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
     push {user_data_selector}
     push rsi
-    push {user_mode_rflags}
+    push rdx
     push {user_code_selector}
     push rdi
     iretq
@@ -658,7 +659,6 @@ systemes_exception_common:
     tss_selector = const TSS_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
-    user_mode_rflags = const USER_MODE_RFLAGS,
     interrupt_stack_size = const INTERRUPT_STACK_SIZE,
 );
 
@@ -846,7 +846,7 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
     RING3_ACTIVE.store(true, Ordering::Release);
     SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
-    unsafe { systemes_enter_ring3(user_rip, user_rsp) };
+    unsafe { systemes_enter_ring3(user_rip, user_rsp, USER_TEST_RFLAGS) };
     RING3_ACTIVE.store(false, Ordering::Release);
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
 }
@@ -861,7 +861,7 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
-    unsafe { systemes_enter_ring3(rip, rsp) };
+    unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
     user_exit_status()
 }
 
@@ -1139,6 +1139,8 @@ mod tests {
     fn ring3_entry_enables_interrupts_for_the_monotonic_clock() {
         assert_ne!(USER_MODE_RFLAGS & (1 << 9), 0);
         assert_ne!(USER_MODE_RFLAGS & 0x02, 0);
+        assert_eq!(USER_TEST_RFLAGS & (1 << 9), 0);
+        assert_ne!(USER_TEST_RFLAGS & 0x02, 0);
     }
 
     #[test]
