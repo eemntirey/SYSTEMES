@@ -74,7 +74,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             let ticks = crate::clock::ticks();
             #[cfg(not(test))]
             if !USER_SHELL_UPTIME_SEEN.swap(true, Ordering::Relaxed) {
-                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_UPTIME succeeded\\r\\n") };
+                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_UPTIME succeeded\r\n") };
             }
             ticks
         }
