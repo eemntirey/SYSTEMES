@@ -785,6 +785,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
     unsafe { debug_write(b"SYSTEMES: userland shell ready\r\n"); }
+    systemes_kernel::syscall::reset_process_file_table();
     // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
     let shell_exit_status = unsafe { enter_user_mode(shell_entry, shell_stack) };
     // SAFETY: The kernel page-table root is the original valid address space.
