@@ -60,7 +60,7 @@ pub fn run(
     emit_imm32(&mut code, &mut code_len, 0xB8, systemes_kernel::syscall::SYS_READ as u32);
     emit(&mut code, &mut code_len, &[0x4C, 0x89, 0xE7]); // mov rdi,r12
     emit_read_buffer(&mut code, &mut code_len);
-    emit_imm32(&mut code, &mut code_len, 0xBA, 5);
+    emit_imm32(&mut code, &mut code_len, 0xBA, 6);
     emit(&mut code, &mut code_len, &[0x0F, 0x05]);
     emit_store_rax(&mut code, &mut code_len, 0xF8); // [rsp-8] = read count
 
@@ -140,7 +140,7 @@ pub fn run(
         let close_result = unsafe { core::ptr::read_volatile((user_rsp - 16) as *const u64) };
         let missing_result = unsafe { core::ptr::read_volatile((user_rsp - 24) as *const u64) };
         let eof_count = unsafe { core::ptr::read_volatile((user_rsp - 32) as *const u64) };
-        let mut contents = [0u8; 5];
+        let mut contents = [0u8; 6];
         for (index, byte) in contents.iter_mut().enumerate() {
             // SAFETY: The five-byte read buffer is inside the mapped user stack page.
             *byte = unsafe { core::ptr::read_volatile((user_rsp - 64 + index as u64) as *const u8) };
@@ -162,8 +162,8 @@ pub fn run(
         unsafe { asm!("sti", options(nomem, nostack)); }
     }
 
-    if exit_status != 0 || read_count != 5 || eof_count != 0 || close_result != 0
-        || missing_result != systemes_kernel::syscall::ERROR_NO_ENTRY || contents != *b"hello"
+    if exit_status != 0 || read_count != 6 || eof_count != 0 || close_result != 0
+        || missing_result != systemes_kernel::syscall::ERROR_NO_ENTRY || contents != *b"hello\n"
     {
         return Err(b"SYSTEMES_KERNEL_FAIL: user SYS_OPEN/READ/CLOSE assertions failed\r\n");
     }
