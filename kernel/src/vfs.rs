@@ -309,11 +309,29 @@ mod tests {
     }
 
     #[test]
+    fn directory_reads_resume_at_the_next_entry_and_finish_at_eof() {
+        let image = make_tree_image();
+        let filesystem = SimpleFs::parse(&image).unwrap();
+        let mut vfs = Vfs::new();
+        vfs.mount(filesystem).unwrap();
+
+        let docs = vfs.open("/docs").unwrap();
+        let mut small = [0u8; 12];
+        let first = vfs.read_dir(docs, &mut small).unwrap();
+        assert_eq!(&small[..first], b"readme.txt\\n");
+        let second = vfs.read_dir(docs, &mut small).unwrap();
+        assert_eq!(&small[..second], b"notes.txt\\n");
+        assert_eq!(vfs.read_dir(docs, &mut small), Ok(0));
+        assert_eq!(vfs.close(docs), Ok(()));
+    }
+
+    #[test]
     fn resolves_nested_files_and_rejects_missing_directory_components() {
         let image = make_tree_image();
         let filesystem = SimpleFs::parse(&image).unwrap();
         let mut vfs = Vfs::new();
         vfs.mount(filesystem).unwrap();
+        assert_eq!(vfs.open("/absent"), Err(VfsError::NotFound));
 
         let handle = vfs.open("/docs/readme.txt").unwrap();
         let mut output = [0u8; 16];
