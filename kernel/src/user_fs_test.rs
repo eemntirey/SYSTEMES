@@ -34,6 +34,7 @@ pub fn run(
         emit(code, length, &[0x48, 0x89, 0x44, 0x24, displacement]);
     }
 
+    unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test start\\r\\n"); }
     let free_pages_before = allocator.free_pages();
     let code_frame = allocator.allocate_frame()
         .ok_or(b"SYSTEMES_KERNEL_FAIL: user FS code frame unavailable\r\n" as &'static [u8])?;
@@ -83,6 +84,7 @@ pub fn run(
     emit_imm32(&mut code, &mut code_len, 0xB8, systemes_kernel::syscall::SYS_EXIT as u32);
     emit(&mut code, &mut code_len, &[0x31, 0xFF, 0x0F, 0x05, 0x0F, 0x0B]);
 
+    unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test program encoded\\r\\n"); }
     let hello_path_offset = code_len;
     emit(&mut code, &mut code_len, b"/hello.txt");
     let absent_path_offset = code_len;
@@ -109,6 +111,7 @@ pub fn run(
             .map_err(|_| b"SYSTEMES_KERNEL_FAIL: user FS stack mapping failed\r\n" as &'static [u8])?;
     }
 
+    unsafe { debug_write(b"SYSTEMES_TEST: user file syscall test address space mapped\\r\\n"); }
     let user_rsp = STACK_ADDRESS + page_size - 16;
     let previous_root = unsafe { systemes_kernel::address_space::read_cr3() };
     let previous_flags: u64;
@@ -119,7 +122,9 @@ pub fn run(
         write_cr3(space.root());
     }
     systemes_kernel::syscall::reset_process_file_table();
+    unsafe { debug_write(b"SYSTEMES_TEST: entering Ring 3 file syscall test\\r\\n"); }
     let exit_status = unsafe { enter_user_mode(CODE_ADDRESS, user_rsp) };
+    unsafe { debug_write(b"SYSTEMES_TEST: Ring 3 file syscall test returned\\r\\n"); }
 
     let (read_count, eof_count, close_result, missing_result, contents) = {
         let _guard = systemes_kernel::uaccess::UserAccessGuard::new();
