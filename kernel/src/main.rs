@@ -5,7 +5,7 @@ extern crate alloc;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use systemes_kernel::{console::debug_write, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
+use systemes_kernel::{address_space::{AddressSpace, USER_BASE}, console::debug_write, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
 
 unsafe extern "C" {
     static __text_start: u8;
@@ -516,7 +516,34 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_TEST: breakpoint returned to caller through iretq\r\n"); }
         halt();
     }
-    halt();
+
+    // T12: initialize the polled UART console for userland input/output.
+    unsafe { serial::init() };
+    unsafe { debug_write(b"SYSTEMES: serial UART initialized\r\n"); }
+
+    // T11/T12: load and launch the userland shell (ELF64), which uses
+    // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
+    unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
+    let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
+        Ok(space) => space,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space failed\r\n"); }
+            halt();
+        }
+    };
+    let shell_entry = match unsafe {
+        load_elf(SHELL_ELF, &mut frame_allocator, &mut shell_space)
+    } {
+        Ok(entry) => entry,
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell ELF load failed\r\n"); }
+            halt();
+        }
+    };
+    let shell_stack = USER_BASE + 0x9000;
+    // SAFETY: The shell is mapped at USER_BASE + 0x6000 with its stack at USER_BASE + 0x9000.
+    unsafe { enter_user_mode(shell_entry, shell_stack) };
+    unreachable!();
 }
 
 #[panic_handler]

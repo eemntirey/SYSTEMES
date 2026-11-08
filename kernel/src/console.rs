@@ -59,15 +59,16 @@ pub unsafe fn outb(port: u16, value: u8) {
 ///
 /// # Safety
 ///
-/// The caller must pass a port that is valid for this CPU and device context.
+/// The caller must pass a port that is valid for this CPU and must ensure the
+/// access does not conflict with a device owned by another context.
 pub unsafe fn inb(port: u16) -> u8 {
-    // SAFETY: The caller guarantees the port is valid for this CPU.
     let value: u8;
+    // SAFETY: The caller guarantees the port is valid for this CPU.
     unsafe {
         core::arch::asm!(
             "in al, dx",
-            out("al") value,
             in("dx") port,
+            out("al") value,
             options(nomem, nostack, preserves_flags)
         )
     };

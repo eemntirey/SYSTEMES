@@ -171,7 +171,6 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
     fn systemes_load_tr();
-    #[cfg(feature = "qemu-ring3-test")]
     fn systemes_enter_ring3(user_rip: u64, user_rsp: u64);
     fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
@@ -828,6 +827,23 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
     unsafe { systemes_enter_ring3(user_rip, user_rsp) };
     RING3_ACTIVE.store(false, Ordering::Release);
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
+}
+
+/// Enter ring 3 at `rip` with `rsp` as the user stack. Does not return on its
+/// own: ring-3 code that halts or faults will re-enter the kernel through the
+/// IDT/TSS, which restores ring 0 and resumes execution here.
+///
+/// # Safety
+///
+/// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
+/// and `rsp` writable in the active address space, and disabled interrupts.
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+    // SAFETY: The caller guarantees valid user mappings and a configured TSS.
+    unsafe { systemes_enter_ring3(rip, rsp) };
+    // If ring-3 code returns (e.g. via a handled fault), halt the CPU.
+    loop {
+        unsafe { asm!("cli; hlt", options(nomem, nostack)) };
+    }
 }
 
 
