@@ -425,6 +425,7 @@ jobs:
               printf '\r'
               sleep 0.25
             }
+            send_line Z
             send_line help
             send_chars 'echo hellx'
             printf '\177o\r'
@@ -446,6 +447,15 @@ jobs:
           grep -q 'SYSTEMES: serial UART initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: userland shell ready' build/uefi/debug.log
           grep -qF '${{ matrix.expect }}' build/uefi/debug.log
+          python3 - <<'PY'
+          from pathlib import Path
+
+          serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\\r", "")
+          lines = serial.splitlines()
+          if lines.count("> Z") != 1 or "> ZZ" in lines:
+              raise SystemExit("single-character input was not echoed exactly once")
+          print("Single-character Z input was echoed exactly once")
+          PY
           grep -qF '> help' build/uefi/serial.log
           grep -qF 'Commands: help, echo <text>, exit' build/uefi/serial.log
           grep -qF 'hello' build/uefi/serial.log
