@@ -97,9 +97,11 @@ fn open_user_file(user_path: u64, path_len: u64) -> u64 {
     if path_len > MAX_OPEN_PATH as u64 {
         return ERROR_NAME_TOO_LONG;
     }
-    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
-    let path_mapped = unsafe { user_range_is_mapped(user_path, path_len, false) };
-    if !is_user_range(user_path, path_len) || !path_mapped {
+    if !is_user_range(user_path, path_len) {
+        return ERROR_BAD_ADDRESS;
+    }
+    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+    if !unsafe { user_range_is_mapped(user_path, path_len, false) } {
         return ERROR_BAD_ADDRESS;
     }
 
@@ -161,9 +163,11 @@ fn read_user_file(descriptor: u64, user_buffer: u64, length: u64) -> u64 {
             Err(error) => map_file_table_error(error),
         };
     }
-    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
-    let buffer_mapped = unsafe { user_range_is_mapped(user_buffer, length, true) };
-    if !is_user_range(user_buffer, length) || !buffer_mapped {
+    if !is_user_range(user_buffer, length) {
+        return ERROR_BAD_ADDRESS;
+    }
+    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+    if !unsafe { user_range_is_mapped(user_buffer, length, true) } {
         return ERROR_BAD_ADDRESS;
     }
     let handle = match PROCESS_FILES.lock().get(descriptor) {
@@ -274,9 +278,11 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
             } else {
                 let buf = frame.rsi;
                 let len = frame.rdx;
-                // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
-                let buffer_mapped = unsafe { user_range_is_mapped(buf, len, false) };
-                if !is_user_range(buf, len) || !buffer_mapped {
+                if !is_user_range(buf, len) {
+                    return ERROR_BAD_ADDRESS;
+                }
+                // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+                if !unsafe { user_range_is_mapped(buf, len, false) } {
                     ERROR_BAD_ADDRESS
                 } else {
                     let _guard = crate::uaccess::UserAccessGuard::new();
@@ -303,9 +309,11 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
                 if len == 0 {
                     0
                 } else {
-                    // SAFETY: The user range is bounded before the page-table walk; this only inspects mappings.
-                    let buffer_mapped = unsafe { user_range_is_mapped(buf, len, true) };
-                    if !is_user_range(buf, len) || !buffer_mapped {
+                    if !is_user_range(buf, len) {
+                        return ERROR_BAD_ADDRESS;
+                    }
+                    // SAFETY: The user range is canonical and bounded; this only inspects current page-table mappings.
+                    if !unsafe { user_range_is_mapped(buf, len, true) } {
                         return ERROR_BAD_ADDRESS;
                     }
                     let mut read: u64 = 0;
