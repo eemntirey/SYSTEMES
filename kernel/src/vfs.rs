@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(vfs.open("missing.txt"), Err(VfsError::InvalidPath));
         assert_eq!(vfs.open("/missing.txt"), Err(VfsError::NotFound));
         assert_eq!(vfs.open("../hello.txt"), Err(VfsError::InvalidPath));
-        assert_eq!(vfs.open(&"x".repeat(47)), Err(VfsError::NameTooLong));
+        assert_eq!(vfs.open(&format!("/{}", "x".repeat(47))), Err(VfsError::NameTooLong));
         assert_eq!(vfs.open(""), Err(VfsError::InvalidPath));
     }
 
