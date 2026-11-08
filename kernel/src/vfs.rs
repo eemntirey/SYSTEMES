@@ -9,6 +9,9 @@ pub enum VfsError {
     NotMounted,
     NotFound,
     NotAFile,
+    NotADirectory,
+    IsDirectory,
+    BufferTooSmall,
     InvalidPath,
     NameTooLong,
     OutOfHandles,
@@ -60,17 +63,10 @@ impl<'a> Vfs<'a> {
     }
 
     pub fn open(&mut self, path: &str) -> Result<FileHandle, VfsError> {
-        let path = path.strip_prefix('/').unwrap_or(path);
-        let (inode_index, inode) = {
+        let (inode_index, _) = {
             let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-            let root = self.root_inode.ok_or(VfsError::IoError)?;
-            let inode_index = fs.find_in_dir(&root, path).map_err(map_fs_error)?;
-            let inode = fs.inode(inode_index).map_err(map_fs_error)?;
-            (inode_index, inode)
+            fs.resolve_path(path).map_err(map_fs_error)?
         };
-        if inode.is_directory() {
-            return Err(VfsError::NotAFile);
-        }
         let slot = self
             .handles
             .iter()
@@ -94,6 +90,9 @@ impl<'a> Vfs<'a> {
         let open = self.handles[slot].ok_or(VfsError::BadHandle)?;
         let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
         let inode = fs.inode(open.inode_index).map_err(map_fs_error)?;
+        if inode.is_directory() {
+            return Err(VfsError::IsDirectory);
+        }
         let count = fs
             .read_file_at(&inode, open.offset, buf)
             .map_err(map_fs_error)?;
@@ -101,6 +100,49 @@ impl<'a> Vfs<'a> {
         let open = self.handles[slot].as_mut().ok_or(VfsError::BadHandle)?;
         open.offset = updated_offset;
         Ok(count)
+    }
+
+    /// Read whole directory names separated by newline, advancing the directory handle.
+    /// If the next complete name cannot fit in an empty output buffer, return BufferTooSmall.
+    pub fn read_dir(&mut self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let slot = self
+            .handles
+            .iter()
+            .position(|open| open.is_some_and(|open| open.handle == handle))
+            .ok_or(VfsError::BadHandle)?;
+        let open = self.handles[slot].ok_or(VfsError::BadHandle)?;
+        let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
+        let directory = fs.inode(open.inode_index).map_err(map_fs_error)?;
+        if !directory.is_directory() {
+            return Err(VfsError::NotADirectory);
+        }
+
+        let mut written = 0usize;
+        let mut entry_offset = 0usize;
+        for entry in fs.list_dir(&directory).map_err(map_fs_error)? {
+            let (index, inode) = entry.map_err(map_fs_error)?;
+            if entry_offset < open.offset {
+                entry_offset += 1;
+                continue;
+            }
+            let name = inode.name_str().ok_or(VfsError::IoError)?;
+            let needed = name.len().checked_add(1).ok_or(VfsError::IoError)?;
+            let remaining = buf.len().saturating_sub(written);
+            if needed > remaining {
+                if written == 0 {
+                    return Err(VfsError::BufferTooSmall);
+                }
+                break;
+            }
+            buf[written..written + name.len()].copy_from_slice(name.as_bytes());
+            buf[written + name.len()] = b'\\n';
+            written += needed;
+            entry_offset += 1;
+        }
+
+        let open = self.handles[slot].as_mut().ok_or(VfsError::BadHandle)?;
+        open.offset = entry_offset;
+        Ok(written)
     }
 
     pub fn close(&mut self, handle: FileHandle) -> Result<(), VfsError> {
@@ -140,7 +182,7 @@ impl Default for Vfs<'_> {
 fn map_fs_error(error: SimpleFsError) -> VfsError {
     match error {
         SimpleFsError::InodeNotFound => VfsError::NotFound,
-        SimpleFsError::NotADirectory => VfsError::NotAFile,
+        SimpleFsError::NotADirectory => VfsError::NotADirectory,
         SimpleFsError::InvalidPath => VfsError::InvalidPath,
         SimpleFsError::NameTooLong => VfsError::NameTooLong,
         SimpleFsError::BadMagic
