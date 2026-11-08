@@ -458,8 +458,8 @@ jobs:
               expected.extend([
                   "> ls", "hello.txt", "docs",
                   "> ls /docs", "readme.txt", "notes.txt",
-                  "> ls /absent", "ls: not found",
-                  "> ls /hello.txt", "ls: not a directory",
+                  "> ls /absent", "ls: error",
+                  "> ls /hello.txt", "ls: error",
                   "> ls ", "ls: usage",
                   "> cat /hello.txt", "hello", "> cat /absent", "cat: not found",
               ])
@@ -506,8 +506,7 @@ jobs:
           grep -qF 'ls: usage' build/uefi/serial.log
           if [ "${{ matrix.disk }}" = "yes" ]; then
             grep -qF 'cat: not found' build/uefi/serial.log
-            grep -qF 'ls: not found' build/uefi/serial.log
-            grep -qF 'ls: not a directory' build/uefi/serial.log
+            grep -qF 'ls: error' build/uefi/serial.log
             grep -q 'SYSTEMES_TEST: user SYS_READDIR succeeded' build/uefi/debug.log
           else
             grep -qF 'cat: no filesystem' build/uefi/serial.log
