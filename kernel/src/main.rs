@@ -643,7 +643,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     // T12: initialize the polled UART console for userland input/output.
-    unsafe { serial::init() };
+    serial::init();
     unsafe { debug_write(b"SYSTEMES: serial UART initialized\r\n"); }
 
     // T11/T12: load and launch the userland shell (ELF64), which uses
@@ -730,8 +730,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
     // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
-    unsafe { enter_user_mode(shell_entry, shell_stack) };
-    unreachable!();
+    unsafe { enter_user_mode(shell_entry, shell_stack) }
 }
 
 #[panic_handler]
