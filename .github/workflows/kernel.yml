@@ -17,6 +17,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Verify embedded shell matches its assembly source
+        run: |
+          as --64 kernel/userland/shell.S -o /tmp/systemes-shell.o
+          objcopy -O binary -j .text /tmp/systemes-shell.o /tmp/systemes-shell.bin
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          rust = Path("kernel/src/shell_elf.rs").read_text()
+          match = re.search(
+              r"const SHELL_CODE:\\s*&\\[u8\\]\\s*=\\s*&\\[(.*?)\\];",
+              rust,
+              re.S,
+          )
+          if not match:
+              raise SystemExit("SHELL_CODE byte array was not found")
+          embedded = bytes(int(value) for value in re.findall(r"\\d+", match.group(1)))
+          assembled = Path("/tmp/systemes-shell.bin").read_bytes()
+          if embedded != assembled:
+              limit = min(len(embedded), len(assembled))
+              offset = next((i for i in range(limit) if embedded[i] != assembled[i]), limit)
+              raise SystemExit(
+                  f"Embedded shell differs from shell.S: embedded={len(embedded)} bytes, "
+                  f"assembled={len(assembled)} bytes, first difference={offset}"
+              )
+          print(f"Embedded ELF shell matches shell.S ({len(embedded)} bytes)")
+          PY
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
