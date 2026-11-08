@@ -13,11 +13,14 @@ use core::sync::atomic::{AtomicBool, Ordering};
 pub const SYS_GET_API_VERSION: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ: u64 = 2;
+pub const SYS_EXIT: u64 = 3;
+pub const SYS_YIELD: u64 = 4;
 pub const API_VERSION: u64 = 1;
-const ERROR_NO_SYS: u64 = (-38i64) as u64;
-const ERROR_BAD_FD: u64 = (-9i64) as u64;
-const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
-const ERROR_IO: u64 = (-5i64) as u64;
+pub const ERROR_NO_SYS: u64 = (-38i64) as u64;
+pub const ERROR_BAD_FD: u64 = (-9i64) as u64;
+pub const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
+pub const ERROR_IO: u64 = (-5i64) as u64;
+pub(crate) const SYS_EXIT_DISPATCHED: u64 = u64::MAX;
 const USER_FLAGS_MASK: u64 = 0xAD5;
 
 #[cfg(feature = "qemu-user-shell-test")]
@@ -60,6 +63,14 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
     frame.r11 = (frame.r11 & USER_FLAGS_MASK) | 0x02;
     match frame.rax {
         SYS_GET_API_VERSION => API_VERSION,
+        SYS_YIELD => {
+            crate::scheduler::yield_now();
+            0
+        }
+        SYS_EXIT => {
+            crate::interrupts::set_user_exit_status(frame.rdi);
+            SYS_EXIT_DISPATCHED
+        }
         SYS_WRITE => {
             if frame.rdi != 1 {
                 ERROR_BAD_FD
@@ -178,6 +189,20 @@ mod tests {
     fn reports_unknown_syscalls_with_enosys() {
         let mut frame = valid_frame(u64::MAX);
         assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_NO_SYS);
+    }
+
+    #[test]
+    fn yields_to_the_scheduler_and_returns_success() {
+        let mut frame = valid_frame(SYS_YIELD);
+        assert_eq!(systemes_syscall_dispatch(&mut frame), 0);
+    }
+
+    #[test]
+    fn exit_dispatch_records_status_and_requests_kernel_return() {
+        let mut frame = valid_frame(SYS_EXIT);
+        frame.rdi = 23;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), SYS_EXIT_DISPATCHED);
+        assert_eq!(crate::interrupts::user_exit_status(), 23);
     }
 
     #[test]

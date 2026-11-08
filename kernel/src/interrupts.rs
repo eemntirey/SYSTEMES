@@ -64,6 +64,8 @@ static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
     InterruptStack([0; INTERRUPT_STACK_SIZE]);
 #[unsafe(no_mangle)]
 static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
+#[unsafe(no_mangle)]
+static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
@@ -231,6 +233,12 @@ systemes_load_gdt:
 .global systemes_enter_ring3
 .type systemes_enter_ring3, @function
 systemes_enter_ring3:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
     mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
     push {user_data_selector}
     push rsi
@@ -247,6 +255,12 @@ systemes_ring3_exit_trampoline:
     mov es, ax
     mov ss, ax
     mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
     ret
 
 .global systemes_load_tr
@@ -501,6 +515,8 @@ systemes_syscall_entry:
     push r15
     mov rdi, rsp
     call systemes_syscall_dispatch
+    cmp rax, -1
+    je .Lsystemes_syscall_exit
     mov qword ptr [rsp + 112], rax
     pop r15
     pop r14
@@ -520,6 +536,9 @@ systemes_syscall_entry:
     add rsp, 8
     mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     sysretq
+.Lsystemes_syscall_exit:
+    mov rax, qword ptr [rip + SYSTEMES_SYSCALL_EXIT_STATUS]
+    jmp systemes_ring3_exit_trampoline
 
 .global systemes_lapic_timer
 .type systemes_lapic_timer, @function
@@ -817,35 +836,40 @@ fn write_msr(msr: u32, value: u64) {
 ///
 /// The caller must have installed the kernel GDT/IDT/TSS, mapped `user_rip`
 /// executable and `user_rsp` writable in the active address space, and disabled
-/// interrupts. The user code must issue the expected `int 0x80` exit.
+/// interrupts. The user code must use a supported exit path: `int 0x80` or `SYS_EXIT`.
 #[cfg(feature = "qemu-ring3-test")]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
     RING3_EXIT_VALIDATED.store(false, Ordering::Release);
     RING3_EXPECTED_USER_RSP.store(user_rsp, Ordering::Release);
     RING3_ACTIVE.store(true, Ordering::Release);
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(user_rip, user_rsp) };
     RING3_ACTIVE.store(false, Ordering::Release);
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
 }
 
-/// Enter ring 3 at `rip` with `rsp` as the user stack. Does not return on its
-/// own: ring-3 code that halts or faults will re-enter the kernel through the
-/// IDT/TSS, which restores ring 0 and resumes execution here.
+/// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
+/// to `SYS_EXIT`; a user process that does not exit or faults remains non-returning.
 ///
 /// # Safety
 ///
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
-pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp) };
-    // If ring-3 code returns (e.g. via a handled fault), halt the CPU.
-    loop {
-        unsafe { asm!("cli; hlt", options(nomem, nostack)) };
-    }
+    user_exit_status()
 }
 
+pub(crate) fn set_user_exit_status(status: u64) {
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(status, Ordering::Release);
+}
+
+pub(crate) fn user_exit_status() -> u64 {
+    SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
+}
 
 /// Install a private ring-0 GDT and gates for all architecturally defined
 /// exception vectors 0..31. Hardware interrupts remain disabled.
