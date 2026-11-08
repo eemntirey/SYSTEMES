@@ -207,7 +207,7 @@ fn close_process_files() {
     });
 }
 
-pub(crate) fn reset_process_file_table() {
+pub fn reset_process_file_table() {
     PROCESS_FILES.lock().reset();
 }
 
