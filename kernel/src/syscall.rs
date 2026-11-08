@@ -42,6 +42,8 @@ const USER_FLAGS_MASK: u64 = 0xAD5;
 
 #[cfg(not(test))]
 static USER_SHELL_UPTIME_SEEN: AtomicBool = AtomicBool::new(false);
+#[cfg(not(test))]
+static USER_SHELL_READDIR_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "qemu-user-shell-test")]
 static USER_SHELL_WRITE_SEEN: AtomicBool = AtomicBool::new(false);
@@ -391,7 +393,14 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
         }
         SYS_OPEN => open_user_file(frame.rdi, frame.rsi),
         SYS_CLOSE => close_user_file(frame.rdi),
-        SYS_READDIR => read_user_directory(frame.rdi, frame.rsi, frame.rdx),
+        SYS_READDIR => {
+            let result = read_user_directory(frame.rdi, frame.rsi, frame.rdx);
+            #[cfg(not(test))]
+            if result > 0 && !USER_SHELL_READDIR_SEEN.swap(true, Ordering::Relaxed) {
+                unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READDIR succeeded\\r\\n") };
+            }
+            result
+        },
         SYS_EXIT => {
             close_process_files();
             crate::interrupts::set_user_exit_status(frame.rdi);
