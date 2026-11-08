@@ -430,6 +430,10 @@ jobs:
             send_chars 'echo hellx'
             printf '\177o\r'
             sleep 0.25
+            send_line uptime
+            sleep 2.2
+            send_line uptime
+            send_line 'uptime extra'
             send_line unknown
             send_line exit
           } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
@@ -446,8 +450,10 @@ jobs:
           grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
           grep -q 'SYSTEMES: serial UART initialized' build/uefi/debug.log
           grep -q 'SYSTEMES: userland shell ready' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_UPTIME succeeded' build/uefi/debug.log
           grep -qF '${{ matrix.expect }}' build/uefi/debug.log
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\r", "")
@@ -456,9 +462,13 @@ jobs:
               "> Z",
               "Unknown command. Type help.",
               "> help",
-              "Commands: help, echo <text>, exit",
+              "Commands: help, echo <text>, uptime, exit",
               "> echo hellx\b \bo",
               "hello",
+              "> uptime",
+              "> uptime",
+              "> uptime extra",
+              "Unknown command. Type help.",
               "> unknown",
               "Unknown command. Type help.",
               "> exit",
@@ -469,6 +479,20 @@ jobs:
                   cursor = lines.index(item, cursor) + 1
               except ValueError:
                   raise SystemExit(f"QEMU shell transcript missing or out of order: {item!r}")
+          uptime_prompts = [i for i, line in enumerate(lines) if line == "> uptime"]
+          if len(uptime_prompts) != 2:
+              raise SystemExit(f"expected exactly two uptime commands, got {len(uptime_prompts)}")
+          values = []
+          for index in uptime_prompts:
+              if index + 1 >= len(lines):
+                  raise SystemExit("uptime command has no output line")
+              match = re.fullmatch(r"(\d+)s", lines[index + 1])
+              if not match:
+                  raise SystemExit(f"uptime output is not an integer followed by s: {lines[index + 1]!r}")
+              values.append(int(match.group(1)))
+          if values[1] <= values[0]:
+              raise SystemExit(f"uptime did not advance: first={values[0]}, second={values[1]}")
+          print(f"QEMU uptime monotonicity verified: {values[0]}s -> {values[1]}s")
           if lines.count("> Z") != 1 or "> ZZ" in lines:
               raise SystemExit("single-character input was not echoed exactly once")
           if lines.count("hello") != 1:
@@ -476,7 +500,8 @@ jobs:
           print("QEMU shell transcript verified: exact echo, help, backspace, unknown command and exit")
           PY
           grep -qF '> help' build/uefi/serial.log
-          grep -qF 'Commands: help, echo <text>, exit' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, uptime, exit' build/uefi/serial.log
+          grep -qF '> uptime extra' build/uefi/serial.log
           grep -qF 'hello' build/uefi/serial.log
           grep -qF 'Unknown command. Type help.' build/uefi/serial.log
           grep -qF '> exit' build/uefi/serial.log
