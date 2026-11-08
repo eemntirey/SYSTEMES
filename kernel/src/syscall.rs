@@ -23,6 +23,7 @@ pub const ERROR_IO: u64 = (-5i64) as u64;
 pub(crate) const SYS_EXIT_DISPATCHED: u64 = u64::MAX;
 const USER_FLAGS_MASK: u64 = 0xAD5;
 
+#[cfg(not(test))]
 static USER_SHELL_UPTIME_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "qemu-user-shell-test")]
@@ -71,6 +72,7 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
         }
         SYS_UPTIME => {
             let ticks = crate::clock::ticks();
+            #[cfg(not(test))]
             if !USER_SHELL_UPTIME_SEEN.swap(true, Ordering::Relaxed) {
                 unsafe { debug_write(b"SYSTEMES_TEST: user SYS_UPTIME succeeded\\r\\n") };
             }
