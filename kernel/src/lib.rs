@@ -17,6 +17,14 @@ pub mod paging;
 pub mod scheduler;
 pub mod syscall;
 pub mod uaccess;
+pub mod elf_loader;
+pub mod init_elf;
+pub mod serial;
+pub mod shell_elf;
+pub mod pci;
+pub mod virtio_blk;
+pub mod simple_fs;
+pub mod vfs;
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;
 pub const BOOT_INFO_VERSION: u32 = 2;

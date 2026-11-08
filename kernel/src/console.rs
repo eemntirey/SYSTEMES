@@ -55,6 +55,98 @@ pub unsafe fn outb(port: u16, value: u8) {
     };
 }
 
+/// Read one byte from an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and must ensure the
+/// access does not conflict with a device owned by another context.
+pub unsafe fn inb(port: u16) -> u8 {
+    let value: u8;
+    // SAFETY: The caller guarantees the port is valid for this CPU.
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            in("dx") port,
+            out("al") value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
+/// Write a 16-bit value to an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and device.
+pub unsafe fn outw(port: u16, value: u16) {
+    // SAFETY: The caller guarantees the port is valid for this CPU.
+    unsafe {
+        core::arch::asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+}
+
+/// Read a 16-bit value from an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and device.
+pub unsafe fn inw(port: u16) -> u16 {
+    let value: u16;
+    // SAFETY: The caller guarantees the port is valid for this CPU.
+    unsafe {
+        core::arch::asm!(
+            "in ax, dx",
+            in("dx") port,
+            out("ax") value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
+/// Write a 32-bit value to an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and device.
+pub unsafe fn outl(port: u16, value: u32) {
+    // SAFETY: The caller guarantees the port is valid for this CPU.
+    unsafe {
+        core::arch::asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+}
+
+/// Read a 32-bit value from an x86 I/O port.
+///
+/// # Safety
+///
+/// The caller must pass a port that is valid for this CPU and device.
+pub unsafe fn inl(port: u16) -> u32 {
+    let value: u32;
+    // SAFETY: The caller guarantees the port is valid for this CPU and device.
+    unsafe {
+        core::arch::asm!(
+            "in eax, dx",
+            in("dx") port,
+            out("eax") value,
+            options(nomem, nostack, preserves_flags)
+        )
+    };
+    value
+}
+
 /// Write raw bytes to the QEMU debug console.
 ///
 /// # Safety

@@ -60,6 +60,7 @@ const SYSCALL_STACK_ADDRESS: u64 = USER_BASE + 0x7000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserPagePermissions {
     ReadOnlyExecute,
+    ReadOnlyNoExecute,
     ReadWriteNoExecute,
 }
 
@@ -67,6 +68,7 @@ impl UserPagePermissions {
     const fn flags(self) -> u64 {
         match self {
             Self::ReadOnlyExecute => PRESENT | USER,
+            Self::ReadOnlyNoExecute => PRESENT | USER | NX,
             Self::ReadWriteNoExecute => PRESENT | USER | WRITABLE | NX,
         }
     }
@@ -289,6 +291,57 @@ pub unsafe fn read_cr3() -> u64 {
 pub unsafe fn write_cr3(root: u64) {
     // SAFETY: The caller guarantees a valid PML4 root.
     unsafe { core::arch::asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags)) };
+}
+
+/// Check that every page in a user range is present and user-accessible.
+///
+/// # Safety
+///
+/// The active CR3 and all page-table frames must be valid and identity-mapped.
+pub unsafe fn user_range_is_mapped(address: u64, size: u64, writable: bool) -> bool {
+    if !crate::uaccess::is_user_range(address, size) {
+        return false;
+    }
+
+    let end = match address.checked_add(size) {
+        Some(end) => end,
+        None => return false,
+    };
+    let root = cr3_root(unsafe { read_cr3() });
+    if root >= IDENTITY_MAP_BYTES || root % PAGE_SIZE != 0 {
+        return false;
+    }
+
+    let first_page = address & !(PAGE_SIZE - 1);
+    let last_page = (end - 1) & !(PAGE_SIZE - 1);
+    let mut page = first_page;
+    loop {
+        let indices = page_table_indices(page);
+        let mut table = root as *const u64;
+        for (level, index) in indices.iter().enumerate() {
+            let entry = unsafe { table.add(*index).read_volatile() };
+            if entry & (PRESENT | USER) != (PRESENT | USER)
+                || (writable && entry & WRITABLE == 0)
+                || (level < 3 && entry & HUGE != 0)
+            {
+                return false;
+            }
+            if level < 3 {
+                table = match unsafe { table_pointer(entry) } {
+                    Ok(next) => next as *const u64,
+                    Err(_) => return false,
+                };
+            }
+        }
+
+        if page == last_page {
+            return true;
+        }
+        page = match page.checked_add(PAGE_SIZE) {
+            Some(next) => next,
+            None => return false,
+        };
+    }
 }
 
 /// Boot-time proof of user execution, user-stack access, and a controlled

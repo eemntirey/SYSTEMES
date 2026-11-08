@@ -2,7 +2,7 @@ name: SYSTEMES autonomous OS CI
 
 on:
   push:
-    branches: [main, Osreell]
+    branches: [main, Osreell, t11-elf-loader]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -42,7 +42,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -73,6 +73,22 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-k1.iso
+      - name: Create SYSFS virtio-blk test disk
+        run: |
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          image = bytearray(3 * 512)
+          image[0:6] = b"SYSFS1"
+          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
+          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
+          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
+          image[590:599] = b"hello.txt"
+          image[1024:1029] = b"hello"
+          Path("build/uefi/sysfs.img").write_bytes(image)
+          PY
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
       - name: Boot ISO in QEMU with OVMF
         shell: bash
         run: |
@@ -83,7 +99,7 @@ jobs:
           cp "$variables" build/uefi/OVMF_VARS.fd
           file "$firmware" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 20s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          { sleep 5; for _ in {1..5}; do printf 'Z'; sleep 1; done; } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on -drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown > build/uefi/serial.log
           qemu_status=$?
           set -e
           if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
@@ -126,6 +142,12 @@ jobs:
           grep -q 'SYSTEMES_TEST: Ring 3 user stack write verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SYSCALL/SYSRET fast path executed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Syscall return value verified in user stack' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user shell address space activated' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_WRITE succeeded' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_READ received UART input' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: virtio-blk DMA sector read verified' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified' build/uefi/debug.log
+          grep -qF '> Z' build/uefi/serial.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
           grep -q 'SYSTEMES: breakpoint handled, execution resumed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: breakpoint returned to caller through iretq' build/uefi/debug.log
@@ -145,6 +167,7 @@ jobs:
           name: systemes-k1-uefi-boot-evidence
           path: |
             build/uefi/systemes-k1.iso
+            build/uefi/sysfs.img
             build/uefi/serial.log
             build/uefi/debug.log
             build/uefi/qemu.log

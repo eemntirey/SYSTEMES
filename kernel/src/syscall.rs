@@ -2,12 +2,28 @@
 
 use core::arch::asm;
 
-use crate::{address_space::is_user_address, console::debug_write};
+use crate::{
+    address_space::{is_user_address, user_range_is_mapped},
+    console::debug_write,
+    uaccess::is_user_range,
+};
+#[cfg(feature = "qemu-user-shell-test")]
+use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const SYS_GET_API_VERSION: u64 = 0;
+pub const SYS_WRITE: u64 = 1;
+pub const SYS_READ: u64 = 2;
 pub const API_VERSION: u64 = 1;
 const ERROR_NO_SYS: u64 = (-38i64) as u64;
+const ERROR_BAD_FD: u64 = (-9i64) as u64;
+const ERROR_BAD_ADDRESS: u64 = (-14i64) as u64;
+const ERROR_IO: u64 = (-5i64) as u64;
 const USER_FLAGS_MASK: u64 = 0xAD5;
+
+#[cfg(feature = "qemu-user-shell-test")]
+static USER_SHELL_WRITE_SEEN: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "qemu-user-shell-test")]
+static USER_SHELL_READ_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[repr(C)]
 pub(crate) struct SyscallFrame {
@@ -44,6 +60,70 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
     frame.r11 = (frame.r11 & USER_FLAGS_MASK) | 0x02;
     match frame.rax {
         SYS_GET_API_VERSION => API_VERSION,
+        SYS_WRITE => {
+            if frame.rdi != 1 {
+                ERROR_BAD_FD
+            } else {
+                let buf = frame.rsi;
+                let len = frame.rdx;
+                if !is_user_range(buf, len)
+                    || !unsafe { user_range_is_mapped(buf, len, false) }
+                {
+                    ERROR_BAD_ADDRESS
+                } else {
+                    let _guard = crate::uaccess::UserAccessGuard::new();
+                    let mut written: u64 = 0;
+                    while written < len {
+                        let byte = unsafe { core::ptr::read_volatile((buf + written) as *const u8) };
+                        if unsafe { crate::serial::write_byte(byte) }.is_err() {
+                            return if written == 0 { ERROR_IO } else { written };
+                        }
+                        written += 1;
+                    }
+                    #[cfg(feature = "qemu-user-shell-test")]
+                    if written != 0 && !USER_SHELL_WRITE_SEEN.swap(true, Ordering::Relaxed) {
+                        unsafe { debug_write(b"SYSTEMES_TEST: user SYS_WRITE succeeded\r\n") };
+                    }
+                    written
+                }
+            }
+        }
+        SYS_READ => {
+            if frame.rdi != 1 {
+                ERROR_BAD_FD
+            } else {
+                let buf = frame.rsi;
+                let len = frame.rdx;
+                if !is_user_range(buf, len)
+                    || !unsafe { user_range_is_mapped(buf, len, true) }
+                {
+                    ERROR_BAD_ADDRESS
+                } else {
+                    let _guard = crate::uaccess::UserAccessGuard::new();
+                    let mut read: u64 = 0;
+                    while read < len {
+                        match unsafe { crate::serial::read_byte() } {
+                            Ok(Some(byte)) => {
+                                unsafe {
+                                    core::ptr::write_volatile((buf + read) as *mut u8, byte)
+                                };
+                                read += 1;
+                                if byte == b'\n' || byte == b'\r' {
+                                    break;
+                                }
+                            }
+                            Ok(None) => core::hint::spin_loop(),
+                            Err(_) => return if read == 0 { ERROR_IO } else { read },
+                        }
+                    }
+                    #[cfg(feature = "qemu-user-shell-test")]
+                    if read != 0 && !USER_SHELL_READ_SEEN.swap(true, Ordering::Relaxed) {
+                        unsafe { debug_write(b"SYSTEMES_TEST: user SYS_READ received UART input\r\n") };
+                    }
+                    read
+                }
+            }
+        }
         _ => ERROR_NO_SYS,
     }
 }
@@ -118,5 +198,59 @@ mod tests {
         assert_eq!(core::mem::offset_of!(SyscallFrame, r15), 0);
         assert_eq!(core::mem::offset_of!(SyscallFrame, rax), 112);
         assert_eq!(core::mem::offset_of!(SyscallFrame, user_rsp), 120);
+    }
+
+    #[test]
+    fn write_syscall_rejects_bad_fd() {
+        let mut frame = valid_frame(SYS_WRITE);
+        frame.rdi = 2;
+        frame.rsi = crate::address_space::USER_BASE + 0x4000;
+        frame.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_FD);
+    }
+
+    #[test]
+    fn write_syscall_rejects_non_user_buffer() {
+        let mut frame = valid_frame(SYS_WRITE);
+        frame.rdi = 1;
+        frame.rsi = crate::address_space::USER_BASE - 1;
+        frame.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
+    }
+
+    #[test]
+    fn write_syscall_rejects_non_user_length() {
+        let mut frame = valid_frame(SYS_WRITE);
+        frame.rdi = 1;
+        frame.rsi = crate::address_space::USER_LIMIT - 4;
+        frame.rdx = 8;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
+    }
+
+    #[test]
+    fn read_syscall_rejects_bad_fd() {
+        let mut frame = valid_frame(SYS_READ);
+        frame.rdi = 2;
+        frame.rsi = crate::address_space::USER_BASE + 0x4000;
+        frame.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_FD);
+    }
+
+    #[test]
+    fn read_syscall_rejects_non_user_buffer() {
+        let mut frame = valid_frame(SYS_READ);
+        frame.rdi = 1;
+        frame.rsi = crate::address_space::USER_BASE - 1;
+        frame.rdx = 5;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
+    }
+
+    #[test]
+    fn read_syscall_rejects_non_user_length() {
+        let mut frame = valid_frame(SYS_READ);
+        frame.rdi = 1;
+        frame.rsi = crate::address_space::USER_LIMIT - 4;
+        frame.rdx = 8;
+        assert_eq!(systemes_syscall_dispatch(&mut frame), ERROR_BAD_ADDRESS);
     }
 }

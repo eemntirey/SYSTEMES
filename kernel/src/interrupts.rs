@@ -171,7 +171,6 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
     fn systemes_load_tr();
-    #[cfg(feature = "qemu-ring3-test")]
     fn systemes_enter_ring3(user_rip: u64, user_rsp: u64);
     fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
@@ -736,7 +735,7 @@ const MSR_LSTAR: u32 = 0xC000_0082;
 const MSR_SFMASK: u32 = 0xC000_0084;
 const EFER_SCE: u64 = 1;
 const STAR_VALUE: u64 =
-    (((USER_DATA_SELECTOR - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
+    (((USER_DATA_RPL3 - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
 const SFMASK_VALUE: u64 =
     (1 << 8) | (1 << 9) | (1 << 10) | (3 << 12) | (1 << 14) | (1 << 16) | (1 << 18);
 
@@ -828,6 +827,23 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
     unsafe { systemes_enter_ring3(user_rip, user_rsp) };
     RING3_ACTIVE.store(false, Ordering::Release);
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
+}
+
+/// Enter ring 3 at `rip` with `rsp` as the user stack. Does not return on its
+/// own: ring-3 code that halts or faults will re-enter the kernel through the
+/// IDT/TSS, which restores ring 0 and resumes execution here.
+///
+/// # Safety
+///
+/// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
+/// and `rsp` writable in the active address space, and disabled interrupts.
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+    // SAFETY: The caller guarantees valid user mappings and a configured TSS.
+    unsafe { systemes_enter_ring3(rip, rsp) };
+    // If ring-3 code returns (e.g. via a handled fault), halt the CPU.
+    loop {
+        unsafe { asm!("cli; hlt", options(nomem, nostack)) };
+    }
 }
 
 
@@ -985,6 +1001,16 @@ pub extern "C" fn systemes_exception_dispatch(
                 frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
+                let kernel_rsp = unsafe {
+                    addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile()
+                };
+                // Rewrite the privilege-return stack slots along with CS.
+                unsafe {
+                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame
+                        .add(21)
+                        .write(KERNEL_DATA_SELECTOR as u64);
+                }
                 RING3_ACTIVE.store(false, Ordering::Release);
                 RING3_EXIT_VALIDATED.store(true, Ordering::Release);
                 unsafe {
@@ -1108,8 +1134,8 @@ mod tests {
         let sysret_base = (STAR_VALUE >> 48) as u16;
         assert_eq!(syscall_code, KERNEL_CODE_SELECTOR);
         assert_eq!(syscall_code + 8, KERNEL_DATA_SELECTOR);
-        assert_eq!(sysret_base + 8, USER_DATA_SELECTOR);
-        assert_eq!(sysret_base + 16, USER_CODE_SELECTOR);
+        assert_eq!(sysret_base + 8, USER_DATA_RPL3);
+        assert_eq!(sysret_base + 16, USER_CODE_RPL3);
         assert_eq!(SFMASK_VALUE & ((1 << 8) | (1 << 9) | (1 << 10)), (1 << 8) | (1 << 9) | (1 << 10));
     }
 
