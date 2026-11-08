@@ -34,6 +34,7 @@ pub struct Superblock {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Inode {
+    pub index: u32,
     pub mode: u16,
     pub size: u32,
     pub first_block: u32,
@@ -154,6 +155,7 @@ impl<'a> SimpleFs<'a> {
             .try_into()
             .map_err(|_| SimpleFsError::InvalidInode)?;
         let inode = Inode {
+            index,
             mode,
             size,
             first_block,
@@ -162,6 +164,32 @@ impl<'a> SimpleFs<'a> {
         };
         self.validate_inode_extent(&inode)?;
         Ok(inode)
+    }
+
+    pub fn list_dir<'fs>(
+        &'fs self,
+        directory: &Inode,
+    ) -> Result<DirectoryEntries<'fs, 'a>, SimpleFsError> {
+        if !directory.is_directory() {
+            return Err(SimpleFsError::NotADirectory);
+        }
+        let stored = self.inode(directory.index)?;
+        if stored != *directory {
+            return Err(SimpleFsError::InvalidInode);
+        }
+        let legacy_flat = directory.index == self.superblock.root_inode_index
+            && directory.size == 0
+            && directory.block_count == 0;
+        if !legacy_flat && directory.size % 4 != 0 {
+            return Err(SimpleFsError::InvalidInode);
+        }
+        Ok(DirectoryEntries {
+            fs: self,
+            directory: *directory,
+            cursor: 0,
+            entry_count: directory.size / 4,
+            legacy_flat,
+        })
     }
 
     pub fn find_in_dir(&self, dir: &Inode, name: &str) -> Result<u32, SimpleFsError> {
@@ -178,17 +206,32 @@ impl<'a> SimpleFs<'a> {
         if name.contains('/') || name == "." || name == ".." || name.as_bytes().contains(&0) {
             return Err(SimpleFsError::InvalidPath);
         }
-
-        for index in 0..self.superblock.inode_count {
-            if index == self.superblock.root_inode_index {
-                continue;
-            }
-            let inode = self.inode(index)?;
+        for entry in self.list_dir(dir)? {
+            let (index, inode) = entry?;
             if inode.name_str() == Some(name) {
                 return Ok(index);
             }
         }
         Err(SimpleFsError::InodeNotFound)
+    }
+
+    pub fn resolve_path(&self, path: &str) -> Result<(u32, Inode), SimpleFsError> {
+        if !path.starts_with('/') || path.as_bytes().contains(&0) {
+            return Err(SimpleFsError::InvalidPath);
+        }
+        let mut current_index = self.superblock.root_inode_index;
+        if path == "/" {
+            return Ok((current_index, self.inode(current_index)?));
+        }
+        for component in path[1..].split('/') {
+            if component.is_empty() || component == "." || component == ".." {
+                return Err(SimpleFsError::InvalidPath);
+            }
+            let directory = self.inode(current_index)?;
+            current_index = self.find_in_dir(&directory, component)?;
+        }
+        let inode = self.inode(current_index)?;
+        Ok((current_index, inode))
     }
 
     pub fn read_file(&self, inode: &Inode, buf: &mut [u8]) -> Result<usize, SimpleFsError> {
@@ -252,17 +295,73 @@ impl<'a> SimpleFs<'a> {
         if extent_end > self.superblock.data_blocks {
             return Err(SimpleFsError::BlockOutOfRange);
         }
-        if !inode.is_directory() {
-            let needed_blocks = inode
-                .size
-                .checked_add(SYSFS_BLOCK_SIZE - 1)
-                .ok_or(SimpleFsError::InvalidInode)?
-                / SYSFS_BLOCK_SIZE;
-            if needed_blocks > inode.block_count {
+        let needed_bytes = if inode.is_directory() {
+            if inode.size % 4 != 0 {
                 return Err(SimpleFsError::InvalidInode);
             }
+            inode.size
+        } else {
+            inode.size
+        };
+        let needed_blocks = needed_bytes
+            .checked_add(SYSFS_BLOCK_SIZE - 1)
+            .ok_or(SimpleFsError::InvalidInode)?
+            / SYSFS_BLOCK_SIZE;
+        if needed_blocks > inode.block_count {
+            return Err(SimpleFsError::InvalidInode);
         }
         Ok(())
+    }
+}
+
+
+/// Allocation-free iterator over the inode indices stored in a directory extent.
+/// Legacy SYSFS images with an empty root directory use the original flat inode
+/// table convention so existing 1536-byte images remain readable.
+pub struct DirectoryEntries<'fs, 'data> {
+    fs: &'fs SimpleFs<'data>,
+    directory: Inode,
+    cursor: u32,
+    entry_count: u32,
+    legacy_flat: bool,
+}
+
+impl Iterator for DirectoryEntries<'_, '_> {
+    type Item = Result<(u32, Inode), SimpleFsError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.legacy_flat {
+            while self.cursor < self.fs.superblock.inode_count {
+                let index = self.cursor;
+                self.cursor += 1;
+                if index == self.fs.superblock.root_inode_index {
+                    continue;
+                }
+                return Some(self.fs.inode(index).map(|inode| (index, inode)));
+            }
+            return None;
+        }
+        if self.cursor >= self.entry_count {
+            return None;
+        }
+        let entry_offset = match usize::try_from(self.directory.first_block)
+            .ok()
+            .and_then(|block| block.checked_mul(SYSFS_BLOCK_SIZE as usize))
+            .and_then(|block| self.fs.data_region_offset.checked_add(block))
+            .and_then(|offset| usize::try_from(self.cursor).ok().and_then(|entry| entry.checked_mul(4)).and_then(|entry| offset.checked_add(entry)))
+        {
+            Some(offset) => offset,
+            None => {
+                self.cursor = self.entry_count;
+                return Some(Err(SimpleFsError::BlockOutOfRange));
+            }
+        };
+        self.cursor += 1;
+        let index = match read_u32(self.fs.data, entry_offset) {
+            Some(index) => index,
+            None => return Some(Err(SimpleFsError::BlockOutOfRange)),
+        };
+        Some(self.fs.inode(index).map(|inode| (index, inode)))
     }
 }
 
