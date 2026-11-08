@@ -735,7 +735,7 @@ const MSR_LSTAR: u32 = 0xC000_0082;
 const MSR_SFMASK: u32 = 0xC000_0084;
 const EFER_SCE: u64 = 1;
 const STAR_VALUE: u64 =
-    (((USER_DATA_SELECTOR - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
+    (((USER_DATA_RPL3 - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
 const SFMASK_VALUE: u64 =
     (1 << 8) | (1 << 9) | (1 << 10) | (3 << 12) | (1 << 14) | (1 << 16) | (1 << 18);
 
@@ -1124,8 +1124,8 @@ mod tests {
         let sysret_base = (STAR_VALUE >> 48) as u16;
         assert_eq!(syscall_code, KERNEL_CODE_SELECTOR);
         assert_eq!(syscall_code + 8, KERNEL_DATA_SELECTOR);
-        assert_eq!(sysret_base + 8, USER_DATA_SELECTOR);
-        assert_eq!(sysret_base + 16, USER_CODE_SELECTOR);
+        assert_eq!(sysret_base + 8, USER_DATA_RPL3);
+        assert_eq!(sysret_base + 16, USER_CODE_RPL3);
         assert_eq!(SFMASK_VALUE & ((1 << 8) | (1 << 9) | (1 << 10)), (1 << 8) | (1 << 9) | (1 << 10));
     }
 
