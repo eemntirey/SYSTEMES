@@ -198,6 +198,88 @@ mod tests {
         assert_eq!(vfs.close(handle), Err(VfsError::BadHandle));
     }
 
+    fn make_tree_image() -> Vec<u8> {
+        let mut data = vec![0; 512 * 7];
+        data[0..6].copy_from_slice(b"SYSFS1");
+        data[6..10].copy_from_slice(&1u32.to_le_bytes());
+        data[10..14].copy_from_slice(&512u32.to_le_bytes());
+        data[14..18].copy_from_slice(&6u32.to_le_bytes());
+        data[18..22].copy_from_slice(&5u32.to_le_bytes());
+        data[22..26].copy_from_slice(&0u32.to_le_bytes());
+        fn inode(data: &mut [u8], index: usize, mode: u16, size: u32, first: u32, blocks: u32, name: &[u8]) {
+            let offset = 512 + index * 64;
+            data[offset..offset + 2].copy_from_slice(&mode.to_le_bytes());
+            data[offset + 2..offset + 6].copy_from_slice(&size.to_le_bytes());
+            data[offset + 6..offset + 10].copy_from_slice(&first.to_le_bytes());
+            data[offset + 10..offset + 14].copy_from_slice(&blocks.to_le_bytes());
+            data[offset + 14..offset + 14 + name.len()].copy_from_slice(name);
+        }
+        inode(&mut data, 0, 1, 12, 0, 1, b"root");
+        inode(&mut data, 1, 0, 6, 2, 1, b"hello.txt");
+        inode(&mut data, 2, 1, 8, 1, 1, b"docs");
+        inode(&mut data, 3, 0, 7, 3, 1, b"readme.txt");
+        inode(&mut data, 4, 0, 6, 4, 1, b"notes.txt");
+        inode(&mut data, 5, 1, 0, 0, 0, b"empty");
+        data[1024..1036].copy_from_slice(&[1u32, 2, 5].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        data[1536..1544].copy_from_slice(&[3u32, 4].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        data[2048..2054].copy_from_slice(b"hello\n");
+        data[2560..2567].copy_from_slice(b"Readme\n");
+        data[3072..3078].copy_from_slice(b"Notes\n");
+        data
+    }
+
+    #[test]
+    fn opens_directories_and_reads_names_as_newline_separated_entries() {
+        let image = make_tree_image();
+        let filesystem = SimpleFs::parse(&image).unwrap();
+        let mut vfs = Vfs::new();
+        vfs.mount(filesystem).unwrap();
+
+        let root = vfs.open("/").unwrap();
+        let mut output = [0u8; 128];
+        let count = vfs.read_dir(root, &mut output).unwrap();
+        assert_eq!(&output[..count], b"hello.txt\ndocs\nempty\n");
+
+        let docs = vfs.open("/docs").unwrap();
+        let count = vfs.read_dir(docs, &mut output).unwrap();
+        assert_eq!(&output[..count], b"readme.txt\nnotes.txt\n");
+
+        let empty = vfs.open("/empty").unwrap();
+        assert_eq!(vfs.read_dir(empty, &mut output), Ok(0));
+    }
+
+    #[test]
+    fn directory_and_file_operations_report_not_directory_and_is_directory() {
+        let image = make_tree_image();
+        let filesystem = SimpleFs::parse(&image).unwrap();
+        let mut vfs = Vfs::new();
+        vfs.mount(filesystem).unwrap();
+
+        let file = vfs.open("/hello.txt").unwrap();
+        let mut output = [0u8; 128];
+        assert_eq!(vfs.read_dir(file, &mut output), Err(VfsError::NotADirectory));
+
+        let directory = vfs.open("/docs").unwrap();
+        assert_eq!(vfs.read(directory, &mut output), Err(VfsError::IsDirectory));
+        assert_eq!(vfs.read_dir(directory, &mut [0u8; 2]), Err(VfsError::BufferTooSmall));
+        let count = vfs.read_dir(directory, &mut output).unwrap();
+        assert_eq!(&output[..count], b"readme.txt\nnotes.txt\n");
+    }
+
+    #[test]
+    fn resolves_nested_files_and_rejects_missing_directory_components() {
+        let image = make_tree_image();
+        let filesystem = SimpleFs::parse(&image).unwrap();
+        let mut vfs = Vfs::new();
+        vfs.mount(filesystem).unwrap();
+
+        let handle = vfs.open("/docs/readme.txt").unwrap();
+        let mut output = [0u8; 16];
+        let count = vfs.read(handle, &mut output).unwrap();
+        assert_eq!(&output[..count], b"Readme\n");
+        assert_eq!(vfs.open("/absent/file.txt"), Err(VfsError::NotFound));
+    }
+
     #[test]
     fn rejects_invalid_paths_and_unmounted_access() {
         let image = make_test_image();
