@@ -135,7 +135,7 @@ impl<'a> Vfs<'a> {
                 break;
             }
             buf[written..written + name.len()].copy_from_slice(name.as_bytes());
-            buf[written + name.len()] = b'\\n';
+            buf[written + name.len()] = b'\n';
             written += needed;
             entry_offset += 1;
         }
