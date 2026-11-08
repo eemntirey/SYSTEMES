@@ -111,9 +111,9 @@ jobs:
           image[0:6] = b"SYSFS1"
           struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
           struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
+          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
           image[590:599] = b"hello.txt"
-          image[1024:1030] = b"hello\\n"
+          image[1024:1029] = b"hello"
           Path("build/uefi/sysfs.img").write_bytes(image)
           PY
           test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
@@ -394,9 +394,9 @@ jobs:
           image[0:6] = b"SYSFS1"
           struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
           struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
+          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
           image[590:599] = b"hello.txt"
-          image[1024:1029] = b"hello"
+          image[1024:1030] = b"hello\n"
           Path("build/uefi/sysfs.img").write_bytes(image)
           PY
           test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
