@@ -450,7 +450,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\\r", "")
+          serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\r", "")
           lines = serial.splitlines()
           if lines.count("> Z") != 1 or "> ZZ" in lines:
               raise SystemExit("single-character input was not echoed exactly once")
