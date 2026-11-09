@@ -4,23 +4,23 @@
 SYSTEMES native OS (https://github.com/eemntirey/SYSTEMES)
 
 ## Roadmap Phase
-Current: **Phase B (deferred SMP) — P1-6a complete, P1-6b next**
+Current: **Phase B (deferred SMP) — P1-6a complete (merged), P1-6b next**
 Per `docs/PLAN_PROCHAINE_ETAPE.md`:
 - Phase A: Freestanding kernel contract ✓ (merged up to PR #74)
 - Phase B: SMP + scheduling + memory
-  - P1-6a: SMP AP bring-up (INIT/SIPI) — **THIS PR #75**
-  - P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler
+  - P1-6a: SMP AP bring-up (INIT/SIPI) — **PR #75 MERGED**
+  - P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler — **NEXT**
   - P1-6c: lock-free per-CPU data structures
 - Phase C: VFS + syscalls + userland
-  - P2-1: writable VFS (other agent's PR #73)
+  - P2-1: writable VFS (other agent's PR #73, still open)
   - P2-2: extended syscall surface
   - ...
 
 ## Remote State Verification
-- `origin/main` = `38e30add` (Merge PR #74 from t11-elf-loader) — confirmed matching user's starting point
+- `origin/main` = `b3cbbe7e` (Merge PR #75 from p1-6-smp-ap-bringup) — includes P1-6a SMP bring-up
 - PR #73 (P1-5c — SYS_READDIR + `ls`) open on `p1-5c-ls-readdir` (`83a65649`), ALL technical CI ✓, only "Kilo Code Review: action_required"
 - Other agent owns PR #73, plans to merge then start P2-1 (writable VFS)
-- **This agent chose parallel independent workstream: P1-6a SMP AP bring-up** (files disjoint from PR #73)
+- **This agent completed parallel independent workstream: P1-6a SMP AP bring-up** (files disjoint from PR #73)
 
 ## Local Environment
 - `gh` CLI: NOT installed
@@ -30,12 +30,7 @@ Per `docs/PLAN_PROCHAINE_ETAPE.md`:
 - `python` 3.11.9 works, `python3` broken
 - QEMU: `C:\Program Files\qemu\qemu-system-x86_64.exe`
 - NO GNU binutils/gcc/clang locally (CI handles release builds)
-- Worktree: `.p1-6-smp-worktree` on branch `p1-6-smp-ap-bringup` (based on origin/main 38e30add)
-
-## PR #75: P1-6 SMP Application Processor Bring-up (P1-6a)
-- Branch: `p1-6-smp-ap-bringup` (head `4ecb21ce`)
-- Target: `main` (base `38e30add`)
-- Status: **CI running** (check-run "SMP application processor bring-up" in_progress)
+- Worktree: `.p1-6-smp-worktree` on branch `p1-6-smp-ap-bringup` (merged, can be removed)
 
 ### Changes
 | File | Description |
@@ -65,11 +60,11 @@ Per `docs/PLAN_PROCHAINE_ETAPE.md`:
 - CI job `smp-bringup`: QEMU with `-smp 4 -cpu max -machine q35`, greps all markers above
 
 ## Next Actions
-1. Wait for CI completion on PR #75 (head `4ecb21ce`)
-2. Verify all mandatory check-runs green (excluding "Kilo Code Review")
-3. Merge PR #75
+1. ~~Wait for CI completion on PR #75 (head `4ecb21ce`)~~ ✓
+2. ~~Verify all mandatory check-runs green (excluding "Kilo Code Review")~~ ✓
+3. ~~Merge PR #75~~ ✓ **MERGED as `b3cbbe7e`**
 4. Fetch new `main`, rebase/merge with PR #73 if needed
-5. Continue to P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler
+5. **START P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
 
 ## Repo Rules Compliance
 - No `git reset --hard` to erase work
@@ -82,11 +77,9 @@ Per `docs/PLAN_PROCHAINE_ETAPE.md`:
 - Avoid conflicts with other agents' work (disjoint files: PR #73 touches syscall.rs, vfs.rs, simple_fs.rs, shell.S, shell_elf.rs, kernel.yml, make-sysfs.py; this PR touches smp.rs, apic.rs, memory.rs, main.rs, lib.rs, Cargo.toml, interrupts.rs, kernel.yml, qemu-boot.sh)
 
 ## Resume State (if session limits)
-- Worktree: `C:\Users\eemntirey\Desktop\OSREAL\.p1-6-smp-worktree`
-- Branch: `p1-6-smp-ap-bringup` (pushed, PR #75 open)
-- Head SHA: `f68bddba` (pushed: trampoline fix + evidence docs)
-- CI status: re-run required on the new head
-- Next: monitor CI, merge when green, continue to P1-6b
+- Worktree: `C:\Users\eemntirey\Desktop\OSREAL\.p1-6-smp-worktree` (merged, can be removed)
+- Branch: `p1-6-smp-ap-bringup` (merged as `b3cbbe7e`, can be deleted)
+- Next: **start P1-6b worktree for per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
 
 ## 2026-11-09 — trampoline debug session (Codebuff)
 
@@ -133,3 +126,30 @@ Remaining known limits for P1-6a: APs park with interrupts disabled, the GDT,
 IDT and TSS are still single static tables, and the scheduler remains
 bootstrap-only. P1-6b owns per-CPU descriptor tables, per-CPU APIC timers and
 the multi-core scheduler.
+
+## 2026-11-09 — P1-6a Merged, Transition to P1-6b
+
+PR #75 merged successfully as `b3cbbe7e`. All mandatory CI checks passed:
+- Host tests: 135/135 passed
+- Release build: clean
+- `smp-bringup` CI job: QEMU with `-smp 2 -cpu max -machine q35` (180s timeout), all validation markers verified:
+  - `SYSTEMES: AP trampoline published under 1 MiB`
+  - `SYSTEMES_TEST: AP 1 started in kernel long mode`
+  - `SYSTEMES_TEST: application processors parked after validation: count=1`
+  - `SYSTEMES_TEST: cross-core SpinLock counter verified across 2 CPUs`
+  - `SYSTEMES_TEST: cross-core relaxed counter verified`
+  - `SYSTEMES_TEST: per-AP private counters verified`
+  - `SYSTEMES_TEST: SMP bring-up validation complete`
+
+Known P1-6a limits (to be addressed in P1-6b):
+- APs park with interrupts disabled
+- GDT, IDT, TSS are single static tables (shared across CPUs)
+- Scheduler runs only on bootstrap CPU
+- Only bootstrap CPU services interrupts (APIC timer)
+
+Next phase P1-6b will implement:
+1. Per-CPU GDT/IDT/TSS (separate descriptor tables per CPU)
+2. Per-CPU APIC timer initialization (each CPU runs its own timer)
+3. Multi-core scheduler (work-stealing or per-CPU run queues)
+
+PR #73 (P1-5c — SYS_READDIR + `ls`) still open; other agent to merge and start P2-1 (writable VFS).
