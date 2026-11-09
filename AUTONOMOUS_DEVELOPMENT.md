@@ -193,3 +193,31 @@ PR #73 (P1-5c — SYS_READDIR + `ls`) still open; other agent to merge and start
 4. Merge PR #76 (P1-6b)
 5. Update `AUTONOMOUS_DEVELOPMENT.md` with merge commit and CI evidence
 6. Begin P1-6c: lock-free per-CPU data structures
+
+## P1-6b PR #76 — Recovery and verified limitations (2026-11-09)
+
+PR: https://github.com/eemntirey/SYSTEMES/pull/76  
+Branch: `p1-6b-per-cpu-architecture`
+
+### Confirmed regressions and corrections
+
+- UEFI kernel read: the fixed 8 MiB read limit rejected a kernel image whose linked extent was approximately 15.8 MiB. The loader now queries `EFI_FILE_INFO.FileSize`, allocates to the actual file size, loops over short reads, checks EOF, bounds the file against `KERNEL_IMAGE_BYTES`, and emits size/status diagnostics.
+- Physical kernel reservation: the 15.8 MiB image could not be reserved at the old 2 MiB base. The kernel linker base and UEFI load address were moved together to 32 MiB; all five CI image-size calculations were updated. QEMU logs on run 354 showed `SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK` and entry into the kernel.
+- Ring 3 / SYSCALL ABI: P1-6b had repurposed RSI/RDI as pointers without changing the Rust/System V call ABI, and omitted the user RSP from the IRETQ frame. The proven BSP assembly ABI was restored: user SS/RSP/RFLAGS/CS/RIP are pushed in architectural order, and the BSP SYSCALL stack/user-RSP and Ring 3 saved-RSP symbols are again addressed explicitly. This is a BSP-only compatibility restoration, not per-CPU syscall support.
+
+### P1-6b functionality that is NOT complete
+
+- Per-CPU GDT/IDT/TSS and AP-local timer setup are present, but AP task schedulers are not initialized.
+- APs remain in an interruptible idle loop. The BSP scheduler still schedules only tasks in its own per-CPU array.
+- The prior `steal_task` function was an uncalled placeholder that only changed a source task state; it did not transfer a runnable context. It and the unused global task-pool declarations were removed rather than presented as working functionality.
+- There is no verified cross-CPU task queue, task ownership transfer, wakeup protocol, or double-execution prevention.
+- SYSCALL/SYSRET and Ring 3 currently use the restored BSP-only assembly stack. Per-CPU syscall entry, GS-base switching, and AP user-mode transitions remain unimplemented.
+
+### Validation state
+
+- Run 354 (commit `6f6449d`): UEFI file read succeeded; boot then failed at fixed physical reservation.
+- Run 355 (commit `3ec3fc7`): 32 MiB reservation, kernel load, ExitBootServices, and kernel entry succeeded. Production boot reached userland but exposed the Ring 3 frame ABI regression.
+- Run 356 (commit `13054a6`): production boots with and without SYSFS passed after restoring the BSP Ring 3/SYSCALL ABI. Several hardware-fault jobs still failed and require exact log-based diagnosis.
+- Subsequent runs are pending or in progress; their results must be checked against the exact current PR HEAD before any completion claim.
+
+**P1-6b is not complete. Do not merge PR #76.** The acceptance criteria for a functional multi-core scheduler and cross-CPU task migration remain unmet. No QEMU 1/2/4-CPU scheduler migration proof is available yet.

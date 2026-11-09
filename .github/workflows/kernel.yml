@@ -75,7 +75,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
           echo "Kernel image reservation: ${kernel_image_bytes} bytes (including .bss)"
@@ -267,7 +267,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
@@ -363,7 +363,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader and bootable ISO
@@ -560,7 +560,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
@@ -631,7 +631,7 @@ jobs:
           if-no-files-found: warn
 
   smp-scheduler:
-    name: SMP per-CPU scheduler
+    name: SMP bring-up + BSP scheduler regression
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -653,7 +653,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
@@ -675,7 +675,7 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES-SMP-SCHED -o build/uefi/systemes-smp-sched.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-smp-sched.iso
-      - name: Boot QEMU with 2 CPUs and verify SMP scheduler markers
+      - name: Boot QEMU with 2 CPUs and verify AP bring-up and BSP-only scheduler markers
         shell: bash
         run: |
           firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
@@ -707,7 +707,7 @@ jobs:
           grep -q 'SYSTEMES_TEST: cross-core relaxed counter verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: per-AP private counters verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SMP bring-up validation complete' build/uefi/debug.log
-          grep -q 'SYSTEMES: multi-core scheduler initialized on BSP' build/uefi/debug.log
+          grep -q 'SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1

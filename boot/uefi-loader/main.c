@@ -3,8 +3,7 @@
 
 #define SYSTEMES_BOOT_MAGIC 0x53595354454D4553ULL
 #define SYSTEMES_BOOT_VERSION 2U
-#define KERNEL_LOAD_ADDRESS 0x00200000ULL
-#define KERNEL_MAX_BYTES (8U * 1024U * 1024U)
+#define KERNEL_LOAD_ADDRESS 0x02000000ULL
 #ifndef KERNEL_IMAGE_BYTES
 #error KERNEL_IMAGE_BYTES must be provided from the linked kernel image
 #endif
@@ -62,6 +61,19 @@ static VOID debug_text(const CHAR8 *text) {
     while (*text) debug_out((UINT8)*text++);
 }
 
+static VOID debug_hex64(const CHAR8 *label, UINT64 value) {
+    static const CHAR8 digits[] = "0123456789ABCDEF";
+    UINTN nibble;
+    debug_text(label);
+    for (nibble = 0; nibble < 16; ++nibble) {
+        UINTN shift = (15U - nibble) * 4U;
+        debug_out((UINT8)digits[(value >> shift) & 0x0F]);
+    }
+    debug_text("\r\n");
+}
+
+static EFI_GUID FileInfoGuid = {0x09576e92, 0x6d3f, 0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+
 static VOID console_text(EFI_SYSTEM_TABLE *st, CHAR16 *text) {
     uefi_call_wrapper(st->ConOut->OutputString, 2, st->ConOut, text);
 }
@@ -79,39 +91,126 @@ static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_SYSTEM_TABLE *st, VOID **buf
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *filesystem = NULL;
     EFI_FILE_HANDLE root = NULL;
     EFI_FILE_HANDLE file = NULL;
+    EFI_FILE_INFO *file_info = NULL;
+    UINTN info_size = 0;
+    UINT64 file_size = 0;
+    UINTN total_read = 0;
+    UINT8 trailing_byte = 0;
+
+    *buffer = NULL;
+    *bytes = 0;
 
     status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, image, &LoadedImageGuid, (VOID **)&loaded);
-    if (EFI_ERROR(status)) { debug_text("SYSTEMES_UEFI_FAIL_LOADED_IMAGE\r\n"); return status; }
+    if (EFI_ERROR(status) || loaded == NULL || loaded->DeviceHandle == NULL) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_LOADED_IMAGE_STATUS=", (UINT64)status);
+        return EFI_ERROR(status) ? status : EFI_NOT_FOUND;
+    }
     debug_text("SYSTEMES_UEFI_LOADED_IMAGE_OK\r\n");
 
     status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, loaded->DeviceHandle, &SimpleFileSystemGuid, (VOID **)&filesystem);
-    if (EFI_ERROR(status)) { debug_text("SYSTEMES_UEFI_FAIL_FILESYSTEM\r\n"); return status; }
+    if (EFI_ERROR(status) || filesystem == NULL) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_FILESYSTEM_STATUS=", (UINT64)status);
+        return EFI_ERROR(status) ? status : EFI_NOT_FOUND;
+    }
     debug_text("SYSTEMES_UEFI_FILESYSTEM_OK\r\n");
 
     status = uefi_call_wrapper(filesystem->OpenVolume, 2, filesystem, &root);
-    if (EFI_ERROR(status)) { debug_text("SYSTEMES_UEFI_FAIL_OPEN_VOLUME\r\n"); return status; }
+    if (EFI_ERROR(status) || root == NULL) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_OPEN_VOLUME_STATUS=", (UINT64)status);
+        return EFI_ERROR(status) ? status : EFI_DEVICE_ERROR;
+    }
     debug_text("SYSTEMES_UEFI_VOLUME_OK\r\n");
 
     status = uefi_call_wrapper(root->Open, 5, root, &file, L"\\EFI\\BOOT\\KERNEL.BIN", EFI_FILE_MODE_READ, 0);
-    if (EFI_ERROR(status)) {
-        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_OPEN\r\n");
+    if (EFI_ERROR(status) || file == NULL) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_OPEN_STATUS=", (UINT64)status);
         uefi_call_wrapper(root->Close, 1, root);
-        return status;
+        return EFI_ERROR(status) ? status : EFI_NOT_FOUND;
     }
     debug_text("SYSTEMES_UEFI_KERNEL_OPEN_OK\r\n");
 
-    status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, KERNEL_MAX_BYTES, buffer);
-    if (EFI_ERROR(status)) goto cleanup;
+    /* Read the authoritative file length before allocating. The linked image
+       extent includes .bss; KERNEL.BIN contains the initialized load image. */
+    status = uefi_call_wrapper(file->GetInfo, 4, file, &FileInfoGuid, &info_size, NULL);
+    if (status != EFI_BUFFER_TOO_SMALL || info_size < sizeof(EFI_FILE_INFO)) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_FILE_INFO_STATUS=", (UINT64)status);
+        goto cleanup;
+    }
+    status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, info_size, (VOID **)&file_info);
+    if (EFI_ERROR(status)) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_FILE_INFO_ALLOC_STATUS=", (UINT64)status);
+        goto cleanup;
+    }
+    status = uefi_call_wrapper(file->GetInfo, 4, file, &FileInfoGuid, &info_size, file_info);
+    if (EFI_ERROR(status)) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_FILE_INFO_READ_STATUS=", (UINT64)status);
+        goto cleanup;
+    }
+    file_size = file_info->FileSize;
+    debug_hex64("SYSTEMES_UEFI_KERNEL_FILE_BYTES=", file_size);
+    debug_hex64("SYSTEMES_UEFI_KERNEL_IMAGE_BYTES=", (UINT64)KERNEL_IMAGE_BYTES);
 
-    *bytes = KERNEL_MAX_BYTES;
-    status = uefi_call_wrapper(file->Read, 3, file, bytes, *buffer);
-    if (!EFI_ERROR(status) && *bytes == KERNEL_MAX_BYTES) status = EFI_BAD_BUFFER_SIZE;
-    if (!EFI_ERROR(status)) debug_text("SYSTEMES_UEFI_KERNEL_READ_OK\r\n");
-    else debug_text("SYSTEMES_UEFI_FAIL_KERNEL_READ\r\n");
+    if (file_size == 0 || file_size > (UINT64)KERNEL_IMAGE_BYTES || file_size > (UINT64)(~(UINTN)0)) {
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_SIZE_BOUNDS\r\n");
+        status = EFI_BAD_BUFFER_SIZE;
+        goto cleanup;
+    }
+
+    status = uefi_call_wrapper(st->BootServices->AllocatePool, 3, EfiLoaderData, (UINTN)file_size, buffer);
+    if (EFI_ERROR(status) || *buffer == NULL) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_ALLOC_STATUS=", (UINT64)status);
+        if (!EFI_ERROR(status)) status = EFI_OUT_OF_RESOURCES;
+        goto cleanup;
+    }
+
+    /* Loop over short reads; a successful zero-byte read before EOF is a
+       truncation, not a completed kernel load. */
+    while ((UINT64)total_read < file_size) {
+        UINTN remaining = (UINTN)file_size - total_read;
+        UINTN chunk = remaining;
+        status = uefi_call_wrapper(file->Read, 3, file, &chunk, (UINT8 *)(*buffer) + total_read);
+        if (EFI_ERROR(status)) {
+            debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_READ_STATUS=", (UINT64)status);
+            debug_hex64("SYSTEMES_UEFI_KERNEL_BYTES_READ=", (UINT64)total_read);
+            goto cleanup;
+        }
+        if (chunk == 0 || chunk > remaining) {
+            debug_text("SYSTEMES_UEFI_FAIL_KERNEL_SHORT_READ\r\n");
+            status = EFI_END_OF_FILE;
+            goto cleanup;
+        }
+        total_read += chunk;
+    }
+
+    /* Detect a file that grew or whose reported size was inconsistent. */
+    {
+        UINTN extra = 1;
+        status = uefi_call_wrapper(file->Read, 3, file, &extra, &trailing_byte);
+        if (EFI_ERROR(status)) {
+            debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_EOF_CHECK_STATUS=", (UINT64)status);
+            goto cleanup;
+        }
+        if (extra != 0) {
+            debug_text("SYSTEMES_UEFI_FAIL_KERNEL_SIZE_CHANGED\r\n");
+            status = EFI_BAD_BUFFER_SIZE;
+            goto cleanup;
+        }
+    }
+
+    *bytes = total_read;
+    debug_hex64("SYSTEMES_UEFI_KERNEL_BYTES_READ=", (UINT64)total_read);
+    debug_text("SYSTEMES_UEFI_KERNEL_READ_OK\r\n");
+    status = EFI_SUCCESS;
 
 cleanup:
-    uefi_call_wrapper(file->Close, 1, file);
-    uefi_call_wrapper(root->Close, 1, root);
+    if (file_info != NULL) uefi_call_wrapper(st->BootServices->FreePool, 1, file_info);
+    if (file != NULL) uefi_call_wrapper(file->Close, 1, file);
+    if (root != NULL) uefi_call_wrapper(root->Close, 1, root);
+    if (EFI_ERROR(status) && *buffer != NULL) {
+        uefi_call_wrapper(st->BootServices->FreePool, 1, *buffer);
+        *buffer = NULL;
+        *bytes = 0;
+    }
     return status;
 }
 
@@ -149,14 +248,32 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     console_text(st, L"SYSTEMES UEFI loader: start\r\n");
 
     status = read_kernel(image, st, &kernel_buffer, &kernel_bytes);
-    if (EFI_ERROR(status) || kernel_bytes == 0) fail(st, L"SYSTEMES: cannot read EFI\\BOOT\\KERNEL.BIN");
-    if (kernel_bytes > KERNEL_MAX_BYTES || kernel_bytes > (UINTN)KERNEL_IMAGE_BYTES) fail(st, L"SYSTEMES: kernel image exceeds linked image bounds");
+    if (EFI_ERROR(status) || kernel_bytes == 0) {
+        debug_hex64("SYSTEMES_UEFI_KERNEL_FINAL_STATUS=", (UINT64)status);
+        fail(st, L"SYSTEMES: cannot read EFI\\BOOT\\KERNEL.BIN");
+    }
+    if (kernel_bytes > (UINTN)KERNEL_IMAGE_BYTES) fail(st, L"SYSTEMES: kernel image exceeds linked image bounds");
     debug_text("SYSTEMES_UEFI_KERNEL_FILE_OK\r\n");
 
     /* Reserve the exact linked image extent, including zero-filled .bss. */
+    if ((UINT64)KERNEL_IMAGE_BYTES == 0 || (UINT64)KERNEL_IMAGE_BYTES > (UINT64)(~(UINTN)0)) {
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_IMAGE_SIZE_INVALID\r\n");
+        fail(st, L"SYSTEMES: invalid linked kernel image size");
+    }
     kernel_pages = EFI_SIZE_TO_PAGES((UINTN)KERNEL_IMAGE_BYTES);
+    if (kernel_pages == 0 || kernel_pages > (~(UINTN)0) / EFI_PAGE_SIZE
+        || kernel_address > (~(EFI_PHYSICAL_ADDRESS)0) - ((EFI_PHYSICAL_ADDRESS)kernel_pages * EFI_PAGE_SIZE)) {
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_PAGE_RANGE_INVALID\r\n");
+        fail(st, L"SYSTEMES: kernel page range overflows physical address space");
+    }
+    debug_hex64("SYSTEMES_UEFI_KERNEL_LOAD_ADDRESS=", (UINT64)kernel_address);
+    debug_hex64("SYSTEMES_UEFI_KERNEL_PAGE_COUNT=", (UINT64)kernel_pages);
+    debug_hex64("SYSTEMES_UEFI_KERNEL_RESERVATION_BYTES=", (UINT64)kernel_pages * EFI_PAGE_SIZE);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
-    if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
+    if (EFI_ERROR(status)) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_ALLOC_PAGES_STATUS=", (UINT64)status);
+        fail(st, L"SYSTEMES: cannot reserve linked kernel physical range");
+    }
     copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
     zero_bytes((VOID *)((UINTN)kernel_address + kernel_bytes), (UINTN)KERNEL_IMAGE_BYTES - kernel_bytes);
     debug_text("SYSTEMES_UEFI_KERNEL_LOADED\r\n");

@@ -22,11 +22,15 @@
 //!    `SpinLock` — which only stabilizes when cross-core memory coherence
 //!    and the lock itself behave correctly on real symmetric harts.
 //!
-//! Known P1-6a limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
-//! - APs park after validation; the preemptive scheduler still runs only on
-//!   the bootstrap CPU because the GDT/IDT/TSS are single static tables.
-//! - Only the bootstrap CPU services interrupts; started APs keep interrupts
-//!   disabled for the remainder of the boot.
+//! P1-6b status and explicit limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
+//! - APs now install private GDT/IDT/TSS structures and start calibrated local
+//!   APIC timers, but their task schedulers are NOT initialized.
+//! - APs therefore remain in an interruptible idle loop; no task is dispatched
+//!   on an AP and no task migrates between CPUs.
+//! - The BSP scheduler remains local to its own task array. Work-stealing is
+//!   not implemented and is not claimed as a completed feature.
+//! - SYSCALL/SYSRET and the Ring 3 test path retain the validated BSP-only
+//!   assembly stack ABI; per-CPU syscall entry is not yet implemented.
 //! - The trampoline page (< 1 MiB) stays reserved for AP bring-up.
 //! - The kernel CR3 must sit below 4 GiB because the 32-bit trampoline stage
 //!   loads it with a 32-bit immediate. QEMU/OVMF images satisfy this today.
@@ -35,7 +39,8 @@ use crate::acpi::MadtInfo;
 use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
 use crate::paging::MemoryRegion;
 use crate::sync::SpinLock;
-use crate::per_cpu::systemes_ap_entry_per_cpu;
+use crate::interrupts::{initialize_cpu, MAX_CPUS};
+use crate::apic::{initialize_local_timer_on_cpu, get_timer_initial_count};
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -471,7 +476,7 @@ unsafe fn bring_up_application_processors_inner(
     if page_table_root > u32::MAX as u64 {
         return Err(SmpBringUpError::Crash3Beyond4GiB);
     }
-    let kernel_entry = systemes_ap_entry_per_cpu as *const () as usize as u64;
+    let kernel_entry = systemes_ap_entry as *const () as usize as u64;
     if kernel_entry > u32::MAX as u64 {
         return Err(SmpBringUpError::KernelEntryBeyond4GiB);
     }
@@ -610,20 +615,92 @@ unsafe fn bring_up_application_processors_inner(
     })
 }
 
+/// Entry far-jumped to from the 32-bit trampoline stage; creates a real stack.
+///
+/// # Safety
+///
+/// Only the trampoline may jump here, with interrupts off and RDI holding
+/// this CPU's Local APIC ID.
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "sysv64" fn systemes_ap_entry() -> ! {
+    core::arch::naked_asm!(
+        // The trampoline's page switches the assembler to 16/32-bit modes;
+        // restate the kernel's 64-bit mode for this function body.
+        ".code64",
+        // RDI holds the APIC ID passed from the trampoline's MMIO read.
+        // naked_asm! assembles Intel syntax, so registers carry no '%'.
+        "mov rax, rdi",
+        "shl rax, 3",
+        "lea rdx, [rip + SYSTEMES_AP_STACKS]",
+        "mov rsp, qword ptr [rdx + rax]",
+        // Stacks are published as ptr+size-16 and allocations are 16-aligned,
+        // so RSP is 16-byte aligned here and SysV keeps it aligned modulo the
+        // call's return-address push.
+        "call systemes_ap_main_rust",
+    ".Lsystemes_ap_main_park:",
+        "cli",
+        "hlt",
+        "jmp .Lsystemes_ap_main_park",
+    )
+}
+
+/// Rust body for an application processor running on its own stack.
+///
+/// # Safety
+///
+/// Only `systemes_ap_entry` may call this; RDI carries the APIC ID and the
+/// CPU must arrive with interrupts disabled and a parked-slot stack.
+#[unsafe(no_mangle)]
+unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
+    let slot = apic_id as usize;
+    // A stale slot state would mean the bootstrap CPU reused this slot.
+    // SAFETY: The BSP initializes the per-AP stack before sending SIPI, and
+    // this function runs only on the target AP with interrupts off.
+    let stack_ok = unsafe { slot < MAX_CPUS_PER_APIC_ID && SYSTEMES_AP_STACKS[slot] != 0 };
+    if !stack_ok {
+        park_forever();
+    }
+    AP_STATES[slot].store(SLOT_STATE_STARTED, Ordering::Release);
+
+    // P1-6b: Initialize per-CPU GDT/IDT/TSS on this AP.
+    if slot < MAX_CPUS {
+        // SAFETY: This CPU owns its slot and interrupts are disabled.
+        unsafe { initialize_cpu(slot) };
+    }
+
+    // P1-6b: Initialize per-CPU Local APIC timer using BSP's calibration.
+    let initial_count = get_timer_initial_count();
+    if initial_count != 0 {
+        // SAFETY: Local APIC is already initialized on this CPU via the trampoline.
+        let _ = unsafe { initialize_local_timer_on_cpu(initial_count) };
+    }
+
+    run_core_validation(slot);
+    AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
+
+    // AP task queues and cross-CPU migration are not implemented yet.
+    // Keep the AP interruptible for its local timer, but do not claim it is
+    // participating in task scheduling.
+    unsafe { asm!("sti", options(nomem, nostack)) };
+    idle_loop();
+}
+
+/// Idle-only AP loop. The scheduler is not initialized on APs in P1-6b.
+fn idle_loop() -> ! {
+    loop {
+        // yield_now is a no-op until this AP has an initialized scheduler.
+        crate::scheduler::yield_now();
+        // Local APIC timer interrupts wake the CPU; no task migration occurs.
+        unsafe { asm!("hlt", options(nomem, nostack)) };
+    }
+}
+
 /// Park the CPU with interrupts disabled until the next phase reclaims it.
 fn park_forever() -> ! {
     loop {
         // SAFETY: A parked AP halts without touching memory.
         unsafe { asm!("cli", "hlt", options(nomem, nostack)) };
-    }
-}
-
-/// Mark an AP as started in the global SMP state.
-/// Called by the AP after it initializes its per-CPU data.
-pub fn mark_ap_started(apic_id: u8) {
-    let slot = apic_id as usize;
-    if slot < MAX_CPUS_PER_APIC_ID {
-        AP_STATES[slot].store(SLOT_STATE_STARTED, Ordering::Release);
     }
 }
 

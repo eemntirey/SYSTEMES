@@ -603,7 +603,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 && systemes_kernel::scheduler::validate_initial_contexts()
             {
                 systemes_kernel::scheduler::enable_preemption();
-                unsafe { debug_write(b"SYSTEMES: multi-core scheduler initialized on BSP\r\n"); }
+                unsafe { debug_write(b"SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled\r\n"); }
             } else {
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: multi-core scheduler init failed\r\n"); }
                 halt();

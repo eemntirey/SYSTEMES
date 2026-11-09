@@ -1,10 +1,9 @@
-//! Multi-core kernel task scheduler for x86_64.
+//! Per-CPU kernel task schedulers for x86_64.
 //!
-//! Tasks share the kernel address space and are switched by cooperative yield or
-//! Local APIC timer preemption. Legacy x87/MMX/SSE state is eagerly isolated per task.
-//!
-//! P1-6b: Per-CPU run queues with work-stealing. Each CPU has its own task array
-//! and scheduler state. Tasks can migrate between CPUs via work-stealing.
+//! Each initialized CPU can schedule its own fixed task array using cooperative
+//! yield or Local APIC timer preemption. Legacy x87/MMX/SSE state is isolated
+//! per task. Cross-CPU task migration is NOT implemented: AP scheduler queues
+//! are not initialized and the earlier work-stealing placeholder was removed.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
@@ -97,10 +96,6 @@ static mut CPU_SCHEDULERS: [CpuScheduler; MAX_CPUS] = [const {
         fpu_contexts_ready: AtomicBool::new(false),
     }
 }; MAX_CPUS];
-
-/// Global task pool for work-stealing. Tasks are allocated here and assigned to CPUs.
-static GLOBAL_TASK_POOL: [Task; MAX_CPUS * MAX_TASKS] = [const { Task::new() }; MAX_CPUS * MAX_TASKS];
-static GLOBAL_TASK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn cpu_scheduler(cpu_index: usize) -> *mut CpuScheduler {
     debug_assert!(cpu_index < MAX_CPUS);
@@ -305,30 +300,6 @@ fn select_next(current: usize, states: &[TaskState]) -> Option<usize> {
         let candidate = (current + distance) % states.len();
         if states[candidate] == TaskState::Runnable {
             return Some(candidate);
-        }
-    }
-    None
-}
-
-/// Attempt to steal a runnable task from another CPU's queue.
-/// Returns the stolen task index and its CPU, or None if none available.
-fn steal_task(current_cpu: usize) -> Option<(usize, usize)> {
-    // Try to find a runnable task on another CPU
-    for cpu in 0..MAX_CPUS {
-        if cpu == current_cpu { continue; }
-        let sched = unsafe { cpu_scheduler(cpu) };
-        if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { continue; }
-        let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
-        for index in 1..count { // Skip boot task (index 0)
-            if unsafe { (*task_ptr(cpu, index)).state.load(Ordering::Acquire) } == TaskState::Runnable as u8 {
-                // Try to claim this task atomically
-                let task = unsafe { task_ptr(cpu, index) };
-                let expected = TaskState::Runnable as u8;
-                if unsafe { (*task).state.compare_exchange(expected, TaskState::Blocked as u8, Ordering::AcqRel, Ordering::Acquire).is_ok() } {
-                    // Successfully stole - mark as runnable on current CPU
-                    return Some((index, cpu));
-                }
-            }
         }
     }
     None
