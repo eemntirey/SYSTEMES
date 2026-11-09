@@ -1,11 +1,15 @@
-//! Single-core kernel task scheduler for x86_64.
+//! Multi-core kernel task scheduler for x86_64.
 //!
 //! Tasks share the kernel address space and are switched by cooperative yield or
 //! Local APIC timer preemption. Legacy x87/MMX/SSE state is eagerly isolated per task.
+//!
+//! P1-6b: Per-CPU run queues with work-stealing. Each CPU has its own task array
+//! and scheduler state. Tasks can migrate between CPUs via work-stealing.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 pub const MAX_TASKS: usize = 8;
+pub const MAX_CPUS: usize = 64;
 const STACK_SIZE: usize = 16 * 1024;
 const FPU_STATE_SIZE: usize = 512;
 const YIELD_VECTOR: usize = 0x41;
@@ -70,17 +74,54 @@ impl Task {
     }
 }
 
-static mut TASKS: [Task; MAX_TASKS] = [const { Task::new() }; MAX_TASKS];
-static TASK_COUNT: AtomicUsize = AtomicUsize::new(1);
-static CURRENT_TASK: AtomicUsize = AtomicUsize::new(0);
-static INITIALIZED: AtomicBool = AtomicBool::new(false);
-static PREEMPTIVE_ENABLED: AtomicBool = AtomicBool::new(false);
-static PREEMPTION_COUNT: AtomicUsize = AtomicUsize::new(0);
-static FPU_CONTEXTS_READY: AtomicBool = AtomicBool::new(false);
+/// Per-CPU scheduler state.
+struct CpuScheduler {
+    tasks: [Task; MAX_TASKS],
+    task_count: AtomicUsize,
+    current_task: AtomicUsize,
+    initialized: AtomicBool,
+    preemptive_enabled: AtomicBool,
+    preemption_count: AtomicUsize,
+    fpu_contexts_ready: AtomicBool,
+}
 
+/// Array of per-CPU schedulers, indexed by CPU slot (APIC ID).
+static mut CPU_SCHEDULERS: [CpuScheduler; MAX_CPUS] = [const {
+    CpuScheduler {
+        tasks: [const { Task::new() }; MAX_TASKS],
+        task_count: AtomicUsize::new(1),
+        current_task: AtomicUsize::new(0),
+        initialized: AtomicBool::new(false),
+        preemptive_enabled: AtomicBool::new(false),
+        preemption_count: AtomicUsize::new(0),
+        fpu_contexts_ready: AtomicBool::new(false),
+    }
+}; MAX_CPUS];
+
+/// Global task pool for work-stealing. Tasks are allocated here and assigned to CPUs.
+static GLOBAL_TASK_POOL: [Task; MAX_CPUS * MAX_TASKS] = [const { Task::new() }; MAX_CPUS * MAX_TASKS];
+static GLOBAL_TASK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn cpu_scheduler(cpu_index: usize) -> *mut CpuScheduler {
+    debug_assert!(cpu_index < MAX_CPUS);
+    // SAFETY: CPU_SCHEDULERS is a static array; caller validates cpu_index.
+    unsafe { core::ptr::addr_of_mut!(CPU_SCHEDULERS).cast::<CpuScheduler>().add(cpu_index) }
+}
+
+fn task_ptr(cpu_index: usize, index: usize) -> *mut Task {
+    debug_assert!(cpu_index < MAX_CPUS && index < MAX_TASKS);
+    let sched = cpu_scheduler(cpu_index);
+    // SAFETY: Caller validates indices.
+    unsafe { core::ptr::addr_of_mut!((*sched).tasks).cast::<Task>().add(index) }
+}
+
+/// Get the current CPU's scheduler index (APIC ID).
+fn current_cpu_index() -> usize {
+    crate::apic::current_apic_id().map(|id| id as usize).unwrap_or(0)
+}
 
 /// Configure architectural x87/SSE state management and initialize every task image.
-fn initialize_fpu_contexts() -> Result<(), &'static str> {
+fn initialize_fpu_contexts(cpu_index: usize) -> Result<(), &'static str> {
     // x86_64 requires SSE2; FXSAVE is the baseline state format used by this kernel.
     let features = core::arch::x86_64::__cpuid(1);
     if features.edx & (1 << 24) == 0 || features.edx & (1 << 25) == 0 {
@@ -100,35 +141,39 @@ fn initialize_fpu_contexts() -> Result<(), &'static str> {
     }
 
     // Preserve the boot task's incoming x87/SSE state before creating clean task images.
-    let boot_ptr = unsafe { core::ptr::addr_of_mut!((*task_ptr(0)).fpu.0).cast::<u8>() };
+    let boot_ptr = unsafe { core::ptr::addr_of_mut!((*task_ptr(cpu_index, 0)).fpu.0).cast::<u8>() };
     let mxcsr: u32 = 0x1F80;
     // SAFETY: FPU state buffers are 16-byte aligned and at least 512 bytes long.
     unsafe {
         core::arch::asm!("fxsave64 [{}]", in(reg) boot_ptr, options(nostack));
         core::arch::asm!("fninit", "ldmxcsr [{}]", in(reg) &mxcsr, options(nostack));
         for index in 1..MAX_TASKS {
-            let state = core::ptr::addr_of_mut!((*task_ptr(index)).fpu.0).cast::<u8>();
+            let state = core::ptr::addr_of_mut!((*task_ptr(cpu_index, index)).fpu.0).cast::<u8>();
             core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
         }
         core::arch::asm!("fxrstor64 [{}]", in(reg) boot_ptr, options(nostack));
     }
-    FPU_CONTEXTS_READY.store(true, Ordering::Release);
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe { (*sched).fpu_contexts_ready.store(true, Ordering::Release) };
     Ok(())
 }
 
 /// Save the interrupted task's complete legacy x87/MMX/SSE image before Rust IRQ code runs.
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_fpu_save_current() {
-    if !FPU_CONTEXTS_READY.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).fpu_contexts_ready.load(Ordering::Acquire) } {
         return;
     }
-    let current = CURRENT_TASK.load(Ordering::Acquire);
-    if current >= TASK_COUNT.load(Ordering::Acquire) {
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if current >= count {
         return;
     }
     // SAFETY: The selected task owns a 16-byte-aligned 512-byte FXSAVE image.
     unsafe {
-        let state = core::ptr::addr_of_mut!((*task_ptr(current)).fpu.0).cast::<u8>();
+        let state = core::ptr::addr_of_mut!((*task_ptr(cpu_index, current)).fpu.0).cast::<u8>();
         core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
     }
 }
@@ -136,27 +181,24 @@ pub extern "C" fn systemes_fpu_save_current() {
 /// Restore the selected task's FPU image after Rust IRQ dispatch and before IRETQ.
 #[unsafe(no_mangle)]
 pub extern "C" fn systemes_fpu_restore_current() {
-    if !FPU_CONTEXTS_READY.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).fpu_contexts_ready.load(Ordering::Acquire) } {
         return;
     }
-    let current = CURRENT_TASK.load(Ordering::Acquire);
-    if current >= TASK_COUNT.load(Ordering::Acquire) {
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if current >= count {
         return;
     }
     // SAFETY: The selected task owns a previously initialized 16-byte-aligned FXSAVE image.
     unsafe {
-        let state = core::ptr::addr_of!((*task_ptr(current)).fpu.0).cast::<u8>();
+        let state = core::ptr::addr_of!((*task_ptr(cpu_index, current)).fpu.0).cast::<u8>();
         core::arch::asm!("fxrstor64 [{}]", in(reg) state, options(nostack));
     }
 }
 
-unsafe fn task_ptr(index: usize) -> *mut Task {
-    // SAFETY: Callers validate index against TASK_COUNT/MAX_TASKS. The task table
-    // is static and cooperative state changes occur on one CPU in interrupt gates.
-    unsafe { core::ptr::addr_of_mut!(TASKS).cast::<Task>().add(index) }
-}
-
-fn build_initial_context(task: *mut Task) -> usize {
+fn build_initial_context(cpu_index: usize, task: *mut Task) -> usize {
     // SAFETY: The task is exclusively initialized before it becomes runnable.
     unsafe {
         let stack = core::ptr::addr_of_mut!((*task).stack.0).cast::<u8>();
@@ -187,62 +229,74 @@ extern "C" fn task_returned() -> ! {
 }
 
 extern "C" fn task_bootstrap() -> ! {
-    let current = CURRENT_TASK.load(Ordering::Acquire);
-    if current >= TASK_COUNT.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if current >= count {
         task_returned();
     }
     // SAFETY: The current task index is bounded and its entry was stored before it became runnable.
-    let entry_address = unsafe { (*task_ptr(current)).entry.load(Ordering::Acquire) };
+    let entry_address = unsafe { (*task_ptr(cpu_index, current)).entry.load(Ordering::Acquire) };
     if entry_address == 0 {
         task_returned();
     }
     // SAFETY: initialize stores a valid extern "C" TaskEntry function pointer as usize.
     let entry: TaskEntry = unsafe { core::mem::transmute(entry_address) };
     entry();
-    // SAFETY: The current task is the only writer of its exit state on this single CPU.
-    unsafe { (*task_ptr(current)).state.store(TaskState::Exited as u8, Ordering::Release); }
+    // SAFETY: The current task is the only writer of its exit state on this CPU.
+    unsafe { (*task_ptr(cpu_index, current)).state.store(TaskState::Exited as u8, Ordering::Release); }
     loop {
         yield_now();
     }
 }
 
-/// Initialize the boot task and up to seven cooperative kernel tasks.
+/// Initialize the boot task and up to seven cooperative kernel tasks on the given CPU.
 /// Call once during boot before task entries are allowed to run.
-pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
-    if INITIALIZED.load(Ordering::Acquire) {
-        return Err("scheduler already initialized");
+pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'static str> {
+    if cpu_index >= MAX_CPUS {
+        return Err("invalid CPU index");
+    }
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        return Err("scheduler already initialized on this CPU");
     }
     if entries.len() >= MAX_TASKS {
         return Err("too many kernel tasks");
     }
-    initialize_fpu_contexts()?;
+    initialize_fpu_contexts(cpu_index)?;
     // SAFETY: Called during single-core boot before any task can access the table.
     unsafe {
         for index in 0..MAX_TASKS {
-            let task = task_ptr(index);
+            let task = task_ptr(cpu_index, index);
             (*task).saved_rsp.store(0, Ordering::Relaxed);
             (*task).switches.store(0, Ordering::Relaxed);
             (*task).entry.store(0, Ordering::Relaxed);
             (*task).wake_at.store(0, Ordering::Relaxed);
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
         }
-        let boot = task_ptr(0);
+        let boot = task_ptr(cpu_index, 0);
         (*boot).state.store(TaskState::Runnable as u8, Ordering::Release);
         for (offset, entry) in entries.iter().copied().enumerate() {
-            let task = task_ptr(offset + 1);
+            let task = task_ptr(cpu_index, offset + 1);
             (*task).entry.store(entry as usize, Ordering::Relaxed);
-            let rsp = build_initial_context(task);
+            let rsp = build_initial_context(cpu_index, task);
             (*task).saved_rsp.store(rsp, Ordering::Release);
             (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
         }
     }
-    CURRENT_TASK.store(0, Ordering::Release);
-    TASK_COUNT.store(entries.len() + 1, Ordering::Release);
-    INITIALIZED.store(true, Ordering::Release);
+    unsafe { (*sched).current_task.store(0, Ordering::Release); }
+    unsafe { (*sched).task_count.store(entries.len() + 1, Ordering::Release); }
+    unsafe { (*sched).initialized.store(true, Ordering::Release); }
     Ok(())
 }
 
-/// Select the next runnable task in round-robin order.
+/// Legacy single-CPU initialization (calls initialize_cpu(0, entries)).
+pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
+    initialize_cpu(0, entries)
+}
+
+/// Select the next runnable task in round-robin order on the current CPU.
 fn select_next(current: usize, states: &[TaskState]) -> Option<usize> {
     if states.is_empty() || current >= states.len() {
         return None;
@@ -256,19 +310,44 @@ fn select_next(current: usize, states: &[TaskState]) -> Option<usize> {
     None
 }
 
-fn schedule(saved_rsp: usize, count_preemption: bool) -> usize {
-    if !INITIALIZED.load(Ordering::Acquire) {
+/// Attempt to steal a runnable task from another CPU's queue.
+/// Returns the stolen task index and its CPU, or None if none available.
+fn steal_task(current_cpu: usize) -> Option<(usize, usize)> {
+    // Try to find a runnable task on another CPU
+    for cpu in 0..MAX_CPUS {
+        if cpu == current_cpu { continue; }
+        let sched = unsafe { cpu_scheduler(cpu) };
+        if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { continue; }
+        let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+        for index in 1..count { // Skip boot task (index 0)
+            if unsafe { (*task_ptr(cpu, index)).state.load(Ordering::Acquire) } == TaskState::Runnable as u8 {
+                // Try to claim this task atomically
+                let task = unsafe { task_ptr(cpu, index) };
+                let expected = TaskState::Runnable as u8;
+                if unsafe { (*task).state.compare_exchange(expected, TaskState::Blocked as u8, Ordering::AcqRel, Ordering::Acquire).is_ok() } {
+                    // Successfully stole - mark as runnable on current CPU
+                    return Some((index, cpu));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn schedule(cpu_index: usize, saved_rsp: usize, count_preemption: bool) -> usize {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
         return saved_rsp;
     }
-    let count = TASK_COUNT.load(Ordering::Acquire);
-    let current = CURRENT_TASK.load(Ordering::Relaxed);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    let current = unsafe { (*sched).current_task.load(Ordering::Relaxed) };
     if current >= count {
         return saved_rsp;
     }
 
-    // SAFETY: Both software-yield and timer gates clear IF; scheduler state is single-core.
+    // SAFETY: Both software-yield and timer gates clear IF; scheduler state is per-CPU.
     unsafe {
-        let current_task = task_ptr(current);
+        let current_task = task_ptr(cpu_index, current);
         if (*current_task).state.load(Ordering::Acquire) != TaskState::Exited as u8 {
             (*current_task).saved_rsp.store(saved_rsp, Ordering::Release);
             (*current_task).switches.fetch_add(1, Ordering::Relaxed);
@@ -276,16 +355,16 @@ fn schedule(saved_rsp: usize, count_preemption: bool) -> usize {
 
         let mut states = [TaskState::Empty; MAX_TASKS];
         for index in 0..count {
-            states[index] = TaskState::from_raw((*task_ptr(index)).state.load(Ordering::Acquire));
+            states[index] = TaskState::from_raw((*task_ptr(cpu_index, index)).state.load(Ordering::Acquire));
         }
         if let Some(next) = select_next(current, &states[..count]) {
-            let next_task = task_ptr(next);
+            let next_task = task_ptr(cpu_index, next);
             let next_rsp = (*next_task).saved_rsp.load(Ordering::Acquire);
             if next_rsp != 0 {
                 if count_preemption && next != current {
-                    PREEMPTION_COUNT.fetch_add(1, Ordering::Relaxed);
+                    (*sched).preemption_count.fetch_add(1, Ordering::Relaxed);
                 }
-                CURRENT_TASK.store(next, Ordering::Release);
+                (*sched).current_task.store(next, Ordering::Release);
                 return next_rsp;
             }
         }
@@ -295,27 +374,31 @@ fn schedule(saved_rsp: usize, count_preemption: bool) -> usize {
 
 /// Called by the software-yield interrupt gate. Returns the stack to restore.
 pub fn on_yield(saved_rsp: usize) -> usize {
-    schedule(saved_rsp, false)
+    let cpu_index = current_cpu_index();
+    schedule(cpu_index, saved_rsp, false)
 }
 
 /// Called by the Local APIC timer interrupt when automatic preemption is enabled.
 pub fn on_timer(saved_rsp: usize) -> usize {
-    if !PREEMPTIVE_ENABLED.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).preemptive_enabled.load(Ordering::Acquire) } {
         return saved_rsp;
     }
-    wake_sleepers(crate::clock::ticks());
-    schedule(saved_rsp, true)
+    wake_sleepers(cpu_index, crate::clock::ticks());
+    schedule(cpu_index, saved_rsp, true)
 }
 
-/// Wake every blocked task whose monotonic deadline has elapsed.
-pub fn wake_sleepers(now: u64) -> usize {
-    if !INITIALIZED.load(Ordering::Acquire) { return 0; }
-    let count = TASK_COUNT.load(Ordering::Acquire);
+/// Wake every blocked task whose monotonic deadline has elapsed on the given CPU.
+pub fn wake_sleepers(cpu_index: usize, now: u64) -> usize {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return 0; }
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     let mut woke = 0;
-    // SAFETY: Timer interrupt runs with IF cleared and this scheduler is single-core.
+    // SAFETY: Timer interrupt runs with IF cleared and this scheduler is per-CPU.
     unsafe {
         for index in 1..count {
-            let task = task_ptr(index);
+            let task = task_ptr(cpu_index, index);
             if (*task).state.load(Ordering::Acquire) == TaskState::Blocked as u8
                 && (*task).wake_at.load(Ordering::Acquire) != 0
                 && (*task).wake_at.load(Ordering::Acquire) <= now {
@@ -332,13 +415,15 @@ pub fn wake_sleepers(now: u64) -> usize {
 /// Returns false when no alternate runnable task exists.
 pub fn sleep_for_ticks(ticks: u64) -> bool {
     if ticks == 0 { yield_now(); return true; }
+    let cpu_index = current_cpu_index();
     let flags = irq_save_disable();
-    if !INITIALIZED.load(Ordering::Acquire) {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
         irq_restore(flags);
         return false;
     }
-    let current = CURRENT_TASK.load(Ordering::Acquire);
-    let count = TASK_COUNT.load(Ordering::Acquire);
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     if current == 0 || current >= count {
         irq_restore(flags);
         return false;
@@ -348,7 +433,7 @@ pub fn sleep_for_ticks(ticks: u64) -> bool {
     unsafe {
         for index in 0..count {
             if index != current
-                && (*task_ptr(index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
+                && (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
                 alternate_runnable = true;
                 break;
             }
@@ -357,7 +442,7 @@ pub fn sleep_for_ticks(ticks: u64) -> bool {
             irq_restore(flags);
             return false;
         }
-        let task = task_ptr(current);
+        let task = task_ptr(cpu_index, current);
         let deadline = crate::clock::ticks().saturating_add(ticks);
         (*task).wake_at.store(deadline, Ordering::Release);
         (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
@@ -369,13 +454,15 @@ pub fn sleep_for_ticks(ticks: u64) -> bool {
 
 /// Block the current non-boot task until another task explicitly wakes it.
 pub fn block_current() -> bool {
+    let cpu_index = current_cpu_index();
     let flags = irq_save_disable();
-    if !INITIALIZED.load(Ordering::Acquire) {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
         irq_restore(flags);
         return false;
     }
-    let current = CURRENT_TASK.load(Ordering::Acquire);
-    let count = TASK_COUNT.load(Ordering::Acquire);
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     if current == 0 || current >= count {
         irq_restore(flags);
         return false;
@@ -385,7 +472,7 @@ pub fn block_current() -> bool {
     unsafe {
         for index in 0..count {
             if index != current
-                && (*task_ptr(index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
+                && (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) == TaskState::Runnable as u8 {
                 alternate_runnable = true;
                 break;
             }
@@ -394,7 +481,7 @@ pub fn block_current() -> bool {
             irq_restore(flags);
             return false;
         }
-        let task = task_ptr(current);
+        let task = task_ptr(cpu_index, current);
         (*task).wake_at.store(0, Ordering::Release);
         (*task).state.store(TaskState::Blocked as u8, Ordering::Release);
     }
@@ -403,15 +490,17 @@ pub fn block_current() -> bool {
     true
 }
 
-/// Explicitly wake a blocked task, for event completion or synchronization.
+/// Explicitly wake a blocked task on the current CPU, for event completion or synchronization.
 pub fn wake_task(id: TaskId) -> bool {
+    let cpu_index = current_cpu_index();
     let flags = irq_save_disable();
-    if !INITIALIZED.load(Ordering::Acquire) || id.0 == 0 || id.0 >= TASK_COUNT.load(Ordering::Acquire) {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } || id.0 == 0 || id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
         irq_restore(flags);
         return false;
     }
     // SAFETY: Index is validated and interrupts are disabled for the state transition.
-    let task = unsafe { task_ptr(id.0) };
+    let task = unsafe { task_ptr(cpu_index, id.0) };
     let blocked = unsafe { (*task).state.load(Ordering::Acquire) == TaskState::Blocked as u8 };
     if blocked {
         unsafe {
@@ -423,14 +512,18 @@ pub fn wake_task(id: TaskId) -> bool {
     blocked
 }
 
-/// Enable timer-driven preemption after all task contexts are initialized.
+/// Enable timer-driven preemption after all task contexts are initialized on the current CPU.
 pub fn enable_preemption() {
-    PREEMPTIVE_ENABLED.store(true, Ordering::Release);
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe { (*sched).preemptive_enabled.store(true, Ordering::Release); }
 }
 
-/// Number of timer interrupts that switched to a different runnable task.
+/// Number of timer interrupts that switched to a different runnable task on the current CPU.
 pub fn preemption_count() -> usize {
-    PREEMPTION_COUNT.load(Ordering::Acquire)
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe { (*sched).preemption_count.load(Ordering::Acquire) }
 }
 
 fn irq_save_disable() -> usize {
@@ -447,65 +540,77 @@ fn irq_restore(flags: usize) {
     }
 }
 
-/// Reset the scheduler after every non-boot task has exited.
+/// Reset the scheduler after every non-boot task has exited on the current CPU.
 pub fn reset_after_all_tasks_exit() -> bool {
+    let cpu_index = current_cpu_index();
     let flags = irq_save_disable();
-    if !INITIALIZED.load(Ordering::Acquire) || CURRENT_TASK.load(Ordering::Acquire) != 0 {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } || unsafe { (*sched).current_task.load(Ordering::Acquire) } != 0 {
         irq_restore(flags);
         return false;
     }
-    let count = TASK_COUNT.load(Ordering::Acquire);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     for index in 1..count {
         // SAFETY: Index is bounded by TASK_COUNT and interrupts are disabled.
-        let state = unsafe { (*task_ptr(index)).state.load(Ordering::Acquire) };
+        let state = unsafe { (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) };
         if state != TaskState::Exited as u8 {
             irq_restore(flags);
             return false;
         }
     }
-    PREEMPTIVE_ENABLED.store(false, Ordering::Release);
-    PREEMPTION_COUNT.store(0, Ordering::Release);
-    TASK_COUNT.store(1, Ordering::Release);
-    CURRENT_TASK.store(0, Ordering::Release);
-    INITIALIZED.store(false, Ordering::Release);
+    unsafe { (*sched).preemptive_enabled.store(false, Ordering::Release); }
+    unsafe { (*sched).preemption_count.store(0, Ordering::Release); }
+    unsafe { (*sched).task_count.store(1, Ordering::Release); }
+    unsafe { (*sched).current_task.store(0, Ordering::Release); }
+    unsafe { (*sched).initialized.store(false, Ordering::Release); }
     irq_restore(flags);
     true
 }
 
-/// Yield voluntarily to the next runnable kernel task.
+/// Yield voluntarily to the next runnable kernel task on the current CPU.
 pub fn yield_now() {
-    if INITIALIZED.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if unsafe { (*sched).initialized.load(Ordering::Acquire) } {
         // SAFETY: IDT vector 0x41 is installed as a ring-0 interrupt gate during boot.
         unsafe { core::arch::asm!("int 0x41", options(nomem, nostack)); }
     }
 }
 
 pub fn current_task() -> TaskId {
-    TaskId(CURRENT_TASK.load(Ordering::Acquire))
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    TaskId(unsafe { (*sched).current_task.load(Ordering::Acquire) })
 }
 
 pub fn task_state(id: TaskId) -> Option<TaskState> {
-    if id.0 >= TASK_COUNT.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
         return None;
     }
     // SAFETY: Task table is static and the index is bounded by TASK_COUNT.
-    Some(TaskState::from_raw(unsafe { (*task_ptr(id.0)).state.load(Ordering::Acquire) }))
+    Some(TaskState::from_raw(unsafe { (*task_ptr(cpu_index, id.0)).state.load(Ordering::Acquire) }))
 }
 
 pub fn switch_count(id: TaskId) -> Option<usize> {
-    if id.0 >= TASK_COUNT.load(Ordering::Acquire) {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
         return None;
     }
     // SAFETY: Task table is static and the index is bounded by TASK_COUNT.
-    Some(unsafe { (*task_ptr(id.0)).switches.load(Ordering::Acquire) })
+    Some(unsafe { (*task_ptr(cpu_index, id.0)).switches.load(Ordering::Acquire) })
 }
 
-/// Validate synthetic IRETQ frames before running the first task.
+/// Validate synthetic IRETQ frames before running the first task on the current CPU.
 pub fn validate_initial_contexts() -> bool {
-    let count = TASK_COUNT.load(Ordering::Acquire);
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     for index in 1..count {
         // SAFETY: Each saved pointer was built from a live static task stack.
-        let rsp = unsafe { (*task_ptr(index)).saved_rsp.load(Ordering::Acquire) };
+        let rsp = unsafe { (*task_ptr(cpu_index, index)).saved_rsp.load(Ordering::Acquire) };
         if rsp == 0 { return false; }
         let frame = rsp as *const usize;
         // SAFETY: The frame spans INTERRUPT_FRAME_WORDS words inside its static task stack.
@@ -555,47 +660,6 @@ mod qemu_test {
         reset_after_all_tasks_exit() && valid
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn blocked_task_is_woken_only_at_or_after_its_deadline() {
-        let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Runnable];
-        assert_eq!(select_next(0, &states), Some(2));
-    }
-
-    #[test]
-    fn fpu_context_image_has_fxsave_size_and_alignment() {
-        assert_eq!(core::mem::size_of::<FpuState>(), 512);
-        assert_eq!(core::mem::align_of::<FpuState>(), 16);
-    }
-
-    #[test]
-    fn task_states_have_stable_kernel_values() {
-        assert_eq!(TaskState::from_raw(1), TaskState::Runnable);
-        assert_eq!(TaskState::from_raw(2), TaskState::Blocked);
-        assert_eq!(TaskState::from_raw(3), TaskState::Exited);
-        assert_eq!(TaskState::from_raw(255), TaskState::Empty);
-    }
-
-    #[test]
-    fn round_robin_skips_blocked_and_exited_tasks() {
-        let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Exited, TaskState::Runnable];
-        assert_eq!(select_next(0, &states), Some(3));
-        assert_eq!(select_next(3, &states), Some(0));
-    }
-
-    #[test]
-    fn round_robin_rejects_an_empty_or_invalid_task_set() {
-        assert_eq!(select_next(0, &[]), None);
-        assert_eq!(select_next(4, &[TaskState::Runnable]), None);
-        assert_eq!(select_next(0, &[TaskState::Blocked, TaskState::Exited]), None);
-    }
-}
-
-
 
 #[cfg(feature = "qemu-fpu-context-test")]
 mod fpu_context_qemu_test {
@@ -678,7 +742,6 @@ mod fpu_context_qemu_test {
 pub fn run_fpu_context_qemu_test() -> bool {
     fpu_context_qemu_test::run()
 }
-
 
 #[cfg(feature = "qemu-task-sleep-test")]
 mod task_sleep_qemu_test {
@@ -798,4 +861,43 @@ mod preemptive_qemu_test {
 #[cfg(feature = "qemu-preemptive-scheduler-test")]
 pub fn run_preemptive_qemu_test() -> bool {
     preemptive_qemu_test::run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blocked_task_is_woken_only_at_or_after_its_deadline() {
+        let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Runnable];
+        assert_eq!(select_next(0, &states), Some(2));
+    }
+
+    #[test]
+    fn fpu_context_image_has_fxsave_size_and_alignment() {
+        assert_eq!(core::mem::size_of::<FpuState>(), 512);
+        assert_eq!(core::mem::align_of::<FpuState>(), 16);
+    }
+
+    #[test]
+    fn task_states_have_stable_kernel_values() {
+        assert_eq!(TaskState::from_raw(1), TaskState::Runnable);
+        assert_eq!(TaskState::from_raw(2), TaskState::Blocked);
+        assert_eq!(TaskState::from_raw(3), TaskState::Exited);
+        assert_eq!(TaskState::from_raw(255), TaskState::Empty);
+    }
+
+    #[test]
+    fn round_robin_skips_blocked_and_exited_tasks() {
+        let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Exited, TaskState::Runnable];
+        assert_eq!(select_next(0, &states), Some(3));
+        assert_eq!(select_next(3, &states), Some(0));
+    }
+
+    #[test]
+    fn round_robin_rejects_an_empty_or_invalid_task_set() {
+        assert_eq!(select_next(0, &[]), None);
+        assert_eq!(select_next(4, &[TaskState::Runnable]), None);
+        assert_eq!(select_next(0, &[TaskState::Blocked, TaskState::Exited]), None);
+    }
 }
