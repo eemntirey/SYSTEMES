@@ -84,7 +84,7 @@ Per `docs/PLAN_PROCHAINE_ETAPE.md`:
 ## Resume State (if session limits)
 - Worktree: `C:\Users\eemntirey\Desktop\OSREAL\.p1-6-smp-worktree`
 - Branch: `p1-6-smp-ap-bringup` (pushed, PR #75 open)
-- Head SHA: `49f76e5c` (trampoline fix, see below)
+- Head SHA: `f68bddba` (pushed: trampoline fix + evidence docs)
 - CI status: re-run required on the new head
 - Next: monitor CI, merge when green, continue to P1-6b
 
@@ -111,7 +111,8 @@ identified five independent defects, all fixed in `49f76e5c`:
    already stored `PARKED`, so the wait timed out. It now accepts any state at
    or past `STARTED`.
 
-Evidence on `49f76e5c` (WSL Ubuntu, QEMU/OVMF, `-smp 4 -cpu max -machine q35`):
+Evidence on `49f76e5c` (WSL Ubuntu, QEMU/OVMF, `-smp 4 -cpu max -machine q35`),
+pushed as `f68bddba` together with this log:
 
 ```
 SYSTEMES_KERNEL_OK
