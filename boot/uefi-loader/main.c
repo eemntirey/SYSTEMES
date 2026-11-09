@@ -256,13 +256,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
 
     /* Reserve the exact linked image extent, including zero-filled .bss. */
     if ((UINT64)KERNEL_IMAGE_BYTES == 0 || (UINT64)KERNEL_IMAGE_BYTES > (UINT64)(~(UINTN)0)) {
-        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_IMAGE_SIZE_INVALID\\r\\n");
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_IMAGE_SIZE_INVALID\r\n");
         fail(st, L"SYSTEMES: invalid linked kernel image size");
     }
     kernel_pages = EFI_SIZE_TO_PAGES((UINTN)KERNEL_IMAGE_BYTES);
     if (kernel_pages == 0 || kernel_pages > (~(UINTN)0) / EFI_PAGE_SIZE
         || kernel_address > (~(EFI_PHYSICAL_ADDRESS)0) - ((EFI_PHYSICAL_ADDRESS)kernel_pages * EFI_PAGE_SIZE)) {
-        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_PAGE_RANGE_INVALID\\r\\n");
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_PAGE_RANGE_INVALID\r\n");
         fail(st, L"SYSTEMES: kernel page range overflows physical address space");
     }
     debug_hex64("SYSTEMES_UEFI_KERNEL_LOAD_ADDRESS=", (UINT64)kernel_address);
