@@ -75,7 +75,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
           echo "Kernel image reservation: ${kernel_image_bytes} bytes (including .bss)"
@@ -267,7 +267,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
@@ -363,7 +363,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader and bootable ISO
@@ -560,7 +560,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
@@ -653,7 +653,7 @@ jobs:
           test -s build/uefi/KERNEL.BIN
           kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
           test -n "$kernel_end"
-          kernel_image_bytes=$((kernel_end - 0x00200000))
+          kernel_image_bytes=$((kernel_end - 0x02000000))
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=$kernel_image_bytes" >> "$GITHUB_ENV"
       - name: Build GNU-EFI loader
