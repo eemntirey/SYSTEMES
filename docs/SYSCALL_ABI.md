@@ -39,6 +39,13 @@ Errors are returned in `RAX` as negative errno values:
 | `-36` | `ENAMETOOLONG` | Path exceeds the supported length |
 | `-38` | `ENOSYS` | Unknown syscall number |
 
+A Ring 3 CPU fault terminates only the offending process. `#PF`, `#GP`, `#UD`,
+`#DE`, `#SS`, `#NP`, `#MF`, `#AC`, `#XM` and `#BR` close the process descriptors
+and resume the kernel continuation with status `128 + vector` (for example
+`142` for `#PF`). `interrupts::user_fault_vector()` reports the vector, or
+`NO_USER_FAULT` when the process exited through `SYS_EXIT`. Faults taken at
+Ring 0 and `#DF` remain fatal; `#BP` stays resumable so `INT3` debugging works.
+
 `SYS_EXIT` returns through the saved ring-0 continuation, not `SYSRET`. The
 kernel restores its address space and releases the exiting process's user
 pages and page-table frames before continuing to idle. `SYS_YIELD` is
