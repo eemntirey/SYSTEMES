@@ -35,6 +35,8 @@ use crate::acpi::MadtInfo;
 use crate::memory::{PhysicalFrameAllocator, PAGE_SIZE};
 use crate::paging::MemoryRegion;
 use crate::sync::SpinLock;
+use crate::interrupts::{initialize_cpu, MAX_CPUS};
+use crate::apic::{initialize_local_timer_on_cpu, get_timer_initial_count};
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -656,9 +658,37 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
         park_forever();
     }
     AP_STATES[slot].store(SLOT_STATE_STARTED, Ordering::Release);
+
+    // P1-6b: Initialize per-CPU GDT/IDT/TSS on this AP.
+    if slot < MAX_CPUS {
+        // SAFETY: This CPU owns its slot and interrupts are disabled.
+        unsafe { initialize_cpu(slot) };
+    }
+
+    // P1-6b: Initialize per-CPU Local APIC timer using BSP's calibration.
+    let initial_count = get_timer_initial_count();
+    if initial_count != 0 {
+        // SAFETY: Local APIC is already initialized on this CPU via the trampoline.
+        let _ = unsafe { initialize_local_timer_on_cpu(initial_count) };
+    }
+
     run_core_validation(slot);
     AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
-    park_forever();
+
+    // P1-6b: Instead of parking forever, enable interrupts and join the scheduler idle loop.
+    // The scheduler will handle task switching when tasks are available.
+    unsafe { asm!("sti", options(nomem, nostack)) };
+    idle_loop();
+}
+
+/// Idle loop for APs: run the scheduler when tasks are available, otherwise halt.
+fn idle_loop() -> ! {
+    loop {
+        // Check if there's work to do on this CPU
+        crate::scheduler::yield_now();
+        // If no task switch happened, halt until next interrupt
+        unsafe { asm!("hlt", options(nomem, nostack)) };
+    }
 }
 
 /// Park the CPU with interrupts disabled until the next phase reclaims it.

@@ -36,6 +36,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-smap-violation-test",
         feature = "qemu-smep-violation-test",
         feature = "qemu-smp-test",
+        feature = "qemu-smp-scheduler-test",
     ));
 
 unsafe extern "C" {
@@ -292,18 +293,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ist_configuration() {
+    if !systemes_kernel::interrupts::verify_ist_configuration(0) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TSS stacks or IDT IST routing invalid\r\n"); }
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\r\n") };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\r\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\r\n") };
-    if !systemes_kernel::interrupts::verify_local_apic_gates() {
+    if !systemes_kernel::interrupts::verify_local_apic_gates(0) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ring3_configuration() {
+    if !systemes_kernel::interrupts::verify_ring3_configuration(0) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 GDT or DPL3 interrupt gate invalid\r\n"); }
         halt();
     }
@@ -541,7 +542,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(&digits[..length]);
                         debug_write(b" started in kernel long mode\r\n");
                     }
-                    debug_write(b"SYSTEMES_TEST: application processors parked after validation: count=");
+                    debug_write(b"SYSTEMES_TEST: application processors joined scheduler: count=");
                     let length = encode_decimal(summary.started_count as u64, &mut digits);
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
@@ -561,6 +562,38 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     debug_write(smp_failure_name(error));
                     debug_write(b"\r\n");
                 }
+                halt();
+            }
+        }
+
+        // P1-6b: Initialize multi-core scheduler on BSP after APs have joined.
+        #[cfg(feature = "qemu-smp-scheduler-test")]
+        {
+            // Initialize scheduler on BSP (CPU 0) with test tasks.
+            // APs initialize their own schedulers in systemes_ap_main_rust.
+            static SMP_TASK_A_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            static SMP_TASK_B_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+            extern "C" fn smp_worker_a() {
+                for _ in 0..10 {
+                    SMP_TASK_A_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+            extern "C" fn smp_worker_b() {
+                for _ in 0..10 {
+                    SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+
+            if systemes_kernel::scheduler::initialize_cpu(0, &[smp_worker_a, smp_worker_b]).is_ok()
+                && systemes_kernel::scheduler::validate_initial_contexts()
+            {
+                systemes_kernel::scheduler::enable_preemption();
+                unsafe { debug_write(b"SYSTEMES: multi-core scheduler initialized on BSP\r\n"); }
+            } else {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: multi-core scheduler init failed\r\n"); }
                 halt();
             }
         }

@@ -1,5 +1,8 @@
 //! xAPIC Local APIC timer initialization, PIT-referenced calibration and
 //! INIT/SIPI validation for application processor bring-up.
+//!
+//! P1-6b: Per-CPU Local APIC timer initialization. Each CPU initializes its own
+//! timer after setting up its GDT/IDT/TSS.
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -207,7 +210,45 @@ pub unsafe fn calibrate_and_initialize_local_timer(target_hz: u32) -> Result<Tim
         lapic_write(base, LAPIC_TIMER_INITIAL, calibration.initial_count);
     }
     crate::clock::initialize();
+    // Store the initial count for APs to use.
+    set_timer_initial_count(calibration.initial_count);
     Ok(calibration)
+}
+
+/// Initialize the Local APIC timer on this CPU using a pre-calibrated initial count.
+/// This is used by application processors after the BSP has calibrated the timer.
+///
+/// # Safety
+///
+/// Must be called after the Local APIC is initialized on this CPU (via
+/// `initialize_local_apic`). The caller must ensure the timer is not already running.
+pub unsafe fn initialize_local_timer_on_cpu(initial_count: u32) -> Result<(), ApicInitError> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) {
+        return Err(ApicInitError::TimerUnavailable);
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return Err(ApicInitError::TimerUnavailable);
+    }
+    unsafe {
+        lapic_write(base, LAPIC_TIMER_DIVIDE, 0x3);
+        lapic_write(base, LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic mode
+        lapic_write(base, LAPIC_TIMER_INITIAL, initial_count);
+    }
+    Ok(())
+}
+
+/// Get the calibrated initial count for the timer (set by BSP during calibration).
+static TIMER_INITIAL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Store the calibrated initial count for use by APs.
+pub fn set_timer_initial_count(count: u32) {
+    TIMER_INITIAL_COUNT.store(count as usize, Ordering::Release);
+}
+
+/// Get the calibrated initial count.
+pub fn get_timer_initial_count() -> u32 {
+    TIMER_INITIAL_COUNT.load(Ordering::Acquire) as u32
 }
 
 pub fn is_active() -> bool { APIC_ACTIVE.load(Ordering::Acquire) }
