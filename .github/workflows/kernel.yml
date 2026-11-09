@@ -631,7 +631,7 @@ jobs:
           if-no-files-found: warn
 
   smp-scheduler:
-    name: SMP per-CPU scheduler
+    name: SMP bring-up + BSP scheduler regression
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -675,7 +675,7 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES-SMP-SCHED -o build/uefi/systemes-smp-sched.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-smp-sched.iso
-      - name: Boot QEMU with 2 CPUs and verify SMP scheduler markers
+      - name: Boot QEMU with 2 CPUs and verify AP bring-up and BSP-only scheduler markers
         shell: bash
         run: |
           firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
@@ -707,7 +707,7 @@ jobs:
           grep -q 'SYSTEMES_TEST: cross-core relaxed counter verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: per-AP private counters verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SMP bring-up validation complete' build/uefi/debug.log
-          grep -q 'SYSTEMES: multi-core scheduler initialized on BSP' build/uefi/debug.log
+          grep -q 'SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
             exit 1
