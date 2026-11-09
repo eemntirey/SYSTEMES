@@ -11,7 +11,7 @@ Les niveaux sont cumulatifs : une capacité n'est déclarée QEMU-validée que s
 | Ordonnanceur préemptif — PR #53, merge `a32bb337dfe52793a424d960433b8df84d3a2dc8` | Oui | Oui | 40/40 | Oui | Non validé |
 | Contexte x87/SSE par tâche — PR #54 intégré | FXSAVE64/FXRSTOR64 | Oui | 41/41 | Oui | Non validé |
 | TSS/RSP0/IST + blocage/sommeil/réveil — PR #57 combinée, HEAD `ac99cd93cfc7353a87631b7b3448eb4bb4faa21b`, run `42375231895` | Oui | Oui | Oui | Oui (6/6 checks) | Non validé |
-| Récupération des fautes Ring 3 — branche `p1-4-user-fault-recovery`, HEAD `a46657c70d37c5b43fadb97fac4f412de1777a45` | Oui | Oui | 135/135 | Oui (QEMU/OVMF, preuve locale) | Non validé |
+| Récupération des fautes Ring 3 — branche `p1-5-user-fault-recovery`, commit `b7ba640c` | Oui | Oui | 127/127 | Oui (QEMU/OVMF, preuve locale) | Non validé |
 
 ## Limites actuellement confirmées
 

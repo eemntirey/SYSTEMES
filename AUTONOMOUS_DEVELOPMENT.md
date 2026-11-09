@@ -39,7 +39,7 @@
 
 ## Preuves
 
-- Tests hôte : `cargo test --all-features` → **135/135**.
+- Tests hôte : `cargo test --all-features` → **127/127**.
 - Cible noyau : `cargo check --all-features --target x86_64-unknown-none` → OK.
 - QEMU/OVMF (build UEFI + ISO + disque SYSFS, jeu de features CI + nouvelle
   feature) : boot complet jusqu'au shell, entrée série réémise, **aucun**
