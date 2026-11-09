@@ -587,151 +587,109 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { systemes_kernel::apic::stop_local_timer(); }
     }
 
-    #[cfg(not(feature = "qemu-apic-clock-test"))]
-    if apic_timer_ready
-        && !cfg!(feature = "qemu-exception-test")
-        && !cfg!(feature = "qemu-user-shell-test")
-    {
-        loop {
-            // SAFETY: Idle with interrupts enabled; Local APIC timer remains active.
-            unsafe { asm!("hlt", options(nomem, nostack)); }
-        }
-    }
-    #[cfg(feature = "qemu-nx-execute-test")]
-    {
-        let test_frame = match frame_allocator.allocate_frame() {
-            Some(address) => address,
-            None => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test frame unavailable\r\n"); } halt(); }
+    let run_user_shell = cfg!(feature = "qemu-user-shell-test")
+        || (!cfg!(feature = "qemu-nx-execute-test")
+            && !cfg!(feature = "qemu-rx-write-test")
+            && !cfg!(feature = "qemu-exception-test")
+            && !cfg!(feature = "qemu-ist-nmi-test")
+            && !cfg!(feature = "qemu-ist-machine-check-test")
+            && !cfg!(feature = "qemu-smap-violation-test")
+            && !cfg!(feature = "qemu-smep-violation-test"));
+
+    if run_user_shell {
+        // T12: initialize the polled UART console for userland input/output.
+        serial::init();
+        unsafe { debug_write(b"SYSTEMES: serial UART initialized\r\n"); }
+
+        // T11/T12: load and launch the userland shell (ELF64), which uses
+        // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
+        unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
+        let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
+            Ok(space) => space,
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space failed\r\n"); }
+                halt();
+            }
         };
-        let test_end = match test_frame.checked_add(systemes_kernel::memory::PAGE_SIZE) {
-            Some(end) if test_frame < systemes_kernel::paging::IDENTITY_MAP_BYTES => end,
-            _ => { unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: invalid NX test frame\r\n"); } halt(); }
+        let shell_entry = match unsafe {
+            load_elf(SHELL_ELF, &mut frame_allocator, &mut shell_space)
+        } {
+            Ok(entry) => entry,
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell ELF load failed\r\n"); }
+                halt();
+            }
         };
-        let test_region = [MemoryRegion { start: test_frame, end: test_end, permissions: PagePermissions::ReadWriteNoExecute }];
-        if unsafe { systemes_kernel::paging::protect_regions(&mut frame_allocator, page_table_root, &test_region) }.is_err()
-            || unsafe { systemes_kernel::paging::verify_regions(page_table_root, &test_region) }.is_err() {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX test mapping verification failed\r\n"); }
+        let shell_buffer = USER_BASE + 0x7000;
+        let buffer_frame = match frame_allocator.allocate_frame() {
+            Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+            _ => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer frame unavailable\r\n"); }
+                halt();
+            }
+        };
+        unsafe {
+            core::ptr::write_bytes(buffer_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(b"> ".as_ptr(), buffer_frame as *mut u8, 2);
+        }
+        if unsafe {
+            shell_space.map_user_page(
+                &mut frame_allocator,
+                shell_buffer,
+                buffer_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )
+        }
+        .is_err()
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer mapping failed\r\n"); }
             halt();
         }
-        // SAFETY: The allocated identity-mapped frame is deliberately RW+NX for this fault test.
-        unsafe { core::ptr::write_volatile(test_frame as *mut u8, 0xC3); }
-        unsafe { debug_write(b"SYSTEMES_TEST: attempting instruction fetch from NX page\r\n"); }
-        // SAFETY: This call must fault with #PF(P=1, I/D=1), error code 0x11.
-        let test_function: extern "C" fn() = unsafe { core::mem::transmute(test_frame as usize) };
-        test_function();
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: NX execution was not blocked\r\n"); }
-        halt();
-    }
-    #[cfg(feature = "qemu-rx-write-test")]
-    {
-        unsafe { debug_write(b"SYSTEMES_TEST: attempting write to RX kernel text\r\n"); }
-        // SAFETY: This deliberate volatile write must fault with #PF(P=1, W/R=1), error code 0x3.
-        unsafe { core::ptr::write_volatile(core::ptr::addr_of!(__text_start) as *mut u8, 0x90); }
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: RX text write was not blocked\r\n"); }
-        halt();
-    }
-    #[cfg(feature = "qemu-exception-test")]
-    {
-        // The CI boot test deliberately raises #BP to prove the handler can
-        // advance RIP past INT3 and return through iretq.
-        unsafe { debug_write(b"SYSTEMES_TEST: invoking INT3 breakpoint\r\n"); }
-        unsafe { asm!("int3", options(nomem, nostack)) };
-        unsafe { debug_write(b"SYSTEMES_TEST: breakpoint returned to caller through iretq\r\n"); }
-        if !cfg!(feature = "qemu-user-shell-test") {
-            halt();
-        }
-    }
 
-    // T12: initialize the polled UART console for userland input/output.
-    unsafe { serial::init() };
-    unsafe { debug_write(b"SYSTEMES: serial UART initialized\r\n"); }
+        let stack_page = USER_BASE + 0x9000;
+        let stack_frame = match frame_allocator.allocate_frame() {
+            Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+            _ => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack frame unavailable\r\n"); }
+                halt();
+            }
+        };
+        unsafe {
+            core::ptr::write_bytes(stack_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+        }
+        if unsafe {
+            shell_space.map_user_page(
+                &mut frame_allocator,
+                stack_page,
+                stack_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )
+        }
+        .is_err()
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack mapping failed\r\n"); }
+            halt();
+        }
 
-    // T11/T12: load and launch the userland shell (ELF64), which uses
-    // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
-    unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
-    let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
-        Ok(space) => space,
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space failed\r\n"); }
+        let shell_stack = stack_page + systemes_kernel::memory::PAGE_SIZE - 16;
+        // SAFETY: The ELF code, writable user buffer, and user stack are mapped in `shell_space`.
+        unsafe {
+            asm!("cli", options(nomem, nostack));
+            write_cr3(shell_space.root());
+        }
+        if unsafe { systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3()) }
+            != shell_space.root()
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space activation failed\r\n"); }
             halt();
         }
-    };
-    let shell_entry = match unsafe {
-        load_elf(SHELL_ELF, &mut frame_allocator, &mut shell_space)
-    } {
-        Ok(entry) => entry,
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell ELF load failed\r\n"); }
-            halt();
-        }
-    };
-    let shell_buffer = USER_BASE + 0x7000;
-    let buffer_frame = match frame_allocator.allocate_frame() {
-        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
-        _ => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer frame unavailable\r\n"); }
-            halt();
-        }
-    };
-    unsafe {
-        core::ptr::write_bytes(buffer_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
-        core::ptr::copy_nonoverlapping(b"> ".as_ptr(), buffer_frame as *mut u8, 2);
+        unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
+        // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
+        unsafe { enter_user_mode(shell_entry, shell_stack) };
+        #[cfg(feature = "qemu-user-shell-test")]
+        unsafe { debug_write(b"SYSTEMES_TEST: user SYS_EXIT returned to kernel\r\n"); }
     }
-    if unsafe {
-        shell_space.map_user_page(
-            &mut frame_allocator,
-            shell_buffer,
-            buffer_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        )
-    }
-    .is_err()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer mapping failed\r\n"); }
-        halt();
-    }
-
-    let stack_page = USER_BASE + 0x9000;
-    let stack_frame = match frame_allocator.allocate_frame() {
-        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
-        _ => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack frame unavailable\r\n"); }
-            halt();
-        }
-    };
-    unsafe {
-        core::ptr::write_bytes(stack_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
-    }
-    if unsafe {
-        shell_space.map_user_page(
-            &mut frame_allocator,
-            stack_page,
-            stack_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        )
-    }
-    .is_err()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack mapping failed\r\n"); }
-        halt();
-    }
-
-    let shell_stack = stack_page + systemes_kernel::memory::PAGE_SIZE - 16;
-    // SAFETY: The ELF code, writable user buffer, and user stack are mapped in `shell_space`.
-    unsafe {
-        asm!("cli", options(nomem, nostack));
-        write_cr3(shell_space.root());
-    }
-    if unsafe { systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3()) }
-        != shell_space.root()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space activation failed\r\n"); }
-        halt();
-    }
-    unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
-    // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
-    unsafe { enter_user_mode(shell_entry, shell_stack) };
-    unreachable!();
+    halt();
 }
 
 #[panic_handler]

@@ -212,6 +212,30 @@ unsafe extern "C" {
     fn systemes_syscall_entry();
 }
 
+/// Return from a SYSCALL-based user exit to the kernel continuation saved by
+/// `enter_user_mode`. Never returns.
+///
+/// # Safety
+///
+/// Only valid when `enter_user_mode` saved `SYSTEMES_RING3_SAVED_KERNEL_RSP`
+/// for the current CPU and the syscall is executing on the shared kernel stack.
+pub unsafe fn return_from_user_mode() -> ! {
+    // SAFETY: Assembly restores the kernel RSP/segments and returns to the
+    // instruction after `systemes_enter_ring3`.
+    unsafe {
+        asm!(
+            "mov ax, {kdata}",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov ss, ax",
+            "mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]",
+            "ret",
+            kdata = const KERNEL_DATA_SELECTOR,
+            options(noreturn)
+        )
+    }
+}
+
 global_asm!(r#"
 .global systemes_load_gdt
 .type systemes_load_gdt, @function
@@ -829,21 +853,16 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
 }
 
-/// Enter ring 3 at `rip` with `rsp` as the user stack. Does not return on its
-/// own: ring-3 code that halts or faults will re-enter the kernel through the
-/// IDT/TSS, which restores ring 0 and resumes execution here.
+/// Enter ring 3 at `rip` with `rsp` as the user stack. Returns only when user
+/// code exits via SYS_EXIT (which restores the saved kernel continuation).
 ///
 /// # Safety
 ///
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
-pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) {
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp) };
-    // If ring-3 code returns (e.g. via a handled fault), halt the CPU.
-    loop {
-        unsafe { asm!("cli; hlt", options(nomem, nostack)) };
-    }
 }
 
 

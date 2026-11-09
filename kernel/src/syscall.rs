@@ -13,6 +13,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 pub const SYS_GET_API_VERSION: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ: u64 = 2;
+pub const SYS_EXIT: u64 = 60;
+pub const SYS_YIELD: u64 = 24;
 pub const API_VERSION: u64 = 1;
 const ERROR_NO_SYS: u64 = (-38i64) as u64;
 const ERROR_BAD_FD: u64 = (-9i64) as u64;
@@ -60,6 +62,19 @@ pub(crate) extern "C" fn systemes_syscall_dispatch(frame: *mut SyscallFrame) -> 
     frame.r11 = (frame.r11 & USER_FLAGS_MASK) | 0x02;
     match frame.rax {
         SYS_GET_API_VERSION => API_VERSION,
+        SYS_YIELD => {
+            crate::scheduler::yield_now();
+            0
+        }
+        SYS_EXIT => {
+            unsafe { debug_write(b"SYSTEMES: user process exited, code=0x") };
+            let status = frame.rdi;
+            unsafe { crate::console::debug_hex(status) };
+            unsafe { debug_write(b"\r\n") };
+            // Return to the kernel entry path saved by enter_user_mode.
+            // SAFETY: enter_user_mode saved a valid kernel continuation RSP.
+            unsafe { crate::interrupts::return_from_user_mode() };
+        }
         SYS_WRITE => {
             if frame.rdi != 1 {
                 ERROR_BAD_FD
