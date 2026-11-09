@@ -36,6 +36,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-smap-violation-test",
         feature = "qemu-smep-violation-test",
         feature = "qemu-smp-test",
+        feature = "qemu-smp-scheduler-test",
     ));
 
 unsafe extern "C" {
@@ -277,6 +278,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\r\n"); }
+    // CPU contexts are indexed by the hardware APIC ID, not an assumed slot zero.
+    let bsp_cpu_index = systemes_kernel::interrupts::bootstrap_cpu_index();
+    if bsp_cpu_index >= systemes_kernel::interrupts::MAX_CPUS {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: BSP APIC ID exceeds supported CPU slots\r\n"); }
+        halt();
+    }
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
     if unsafe { systemes_kernel::interrupts::initialize_syscalls() }.is_err() {
@@ -292,18 +299,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ist_configuration() {
+    if !systemes_kernel::interrupts::verify_ist_configuration(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TSS stacks or IDT IST routing invalid\r\n"); }
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\r\n") };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\r\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\r\n") };
-    if !systemes_kernel::interrupts::verify_local_apic_gates() {
+    if !systemes_kernel::interrupts::verify_local_apic_gates(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ring3_configuration() {
+    if !systemes_kernel::interrupts::verify_ring3_configuration(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 GDT or DPL3 interrupt gate invalid\r\n"); }
         halt();
     }
@@ -349,6 +356,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\r\n") };
+    // interrupts::initialize already installed this BSP's private GDT/IDT/TSS.
+    // Do not initialize the legacy per_cpu module here: it owns a second set of
+    // descriptor tables and would replace the stacks used by exception dispatch.
     let supervisor_protection = match systemes_kernel::uaccess::enable() {
         Ok(features) => features,
         Err(_) => {
@@ -561,6 +571,39 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     debug_write(smp_failure_name(error));
                     debug_write(b"\r\n");
                 }
+                halt();
+            }
+        }
+
+        // Initialize the BSP scheduler only. AP run queues are not initialized
+        // in P1-6b; APs remain interruptible in their idle loop and no task
+        // migration between CPUs is implemented.
+        #[cfg(feature = "qemu-smp-scheduler-test")]
+        {
+            // The BSP scheduler regression test uses the BSP's actual APIC slot.
+            static SMP_TASK_A_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            static SMP_TASK_B_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+            extern "C" fn smp_worker_a() {
+                for _ in 0..10 {
+                    SMP_TASK_A_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+            extern "C" fn smp_worker_b() {
+                for _ in 0..10 {
+                    SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+
+            if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[smp_worker_a, smp_worker_b]).is_ok()
+                && systemes_kernel::scheduler::validate_initial_contexts()
+            {
+                systemes_kernel::scheduler::enable_preemption();
+                unsafe { debug_write(b"SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled\r\n"); }
+            } else {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: multi-core scheduler init failed\r\n"); }
                 halt();
             }
         }

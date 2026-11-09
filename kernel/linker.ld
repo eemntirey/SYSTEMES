@@ -4,7 +4,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x00200000;
+    . = 0x02000000;
     .text : ALIGN(4096) {
         __text_start = .;
         KEEP(*(.text._start))

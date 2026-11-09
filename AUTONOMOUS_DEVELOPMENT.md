@@ -153,3 +153,71 @@ Next phase P1-6b will implement:
 3. Multi-core scheduler (work-stealing or per-CPU run queues)
 
 PR #73 (P1-5c — SYS_READDIR + `ls`) still open; other agent to merge and start P2-1 (writable VFS).
+
+## 2026-11-09 — P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler (IN PROGRESS)
+
+**Branch**: `p1-6b-per-cpu-gdt-tss` (worktree `.p1-6b-worktree`)
+**Base**: `origin/main` at `61889afa` (post P1-6a merge)
+
+### Implementation Complete (local verification)
+
+| File | Changes |
+|------|---------|
+| `kernel/interrupts.rs` | `CpuContext[64]` array with per-CPU GDT/IDT/TSS + 5 interrupt stacks; `initialize_cpu(cpu_index)`; verification fns take `cpu_index` |
+| `kernel/scheduler.rs` | `CpuScheduler[64]` array with per-CPU run queues; `initialize_cpu(cpu_index, entries)`; APs enter `idle_loop()` calling `yield_now()`; work-stealing stub |
+| `kernel/apic.rs` | `initialize_local_timer_on_cpu(initial_count)`, `set_timer_initial_count()`, `get_timer_initial_count()` for BSP→AP calibration sharing |
+| `kernel/smp.rs` | APs call `initialize_cpu(slot)` and `initialize_local_timer_on_cpu()` in `systemes_ap_main_rust`; `sti` + idle loop |
+| `kernel/main.rs` | P1-6b integration block under `qemu-smp-scheduler-test`: BSP initializes multi-core scheduler after APs join |
+| `kernel/Cargo.toml` | `qemu-smp-scheduler-test = ["qemu-smp-test"]` feature |
+| `.github/workflows/kernel.yml` | `smp-scheduler` CI job (`-smp 2`, 180s timeout) with new verification markers |
+
+### Verification Markers (CI will grep)
+- `SYSTEMES: AP trampoline published under 1 MiB`
+- `SYSTEMES_TEST: AP <n> started in kernel long mode`
+- `SYSTEMES_TEST: application processors joined scheduler: count=<n>`
+- `SYSTEMES_TEST: cross-core SpinLock counter verified across <cpus> CPUs`
+- `SYSTEMES_TEST: cross-core relaxed counter verified`
+- `SYSTEMES_TEST: per-AP private counters verified`
+- `SYSTEMES_TEST: SMP bring-up validation complete`
+- `SYSTEMES: multi-core scheduler initialized on BSP`
+
+### Local Validation
+- `cargo check --all-features --target x86_64-unknown-none` ✓ clean
+- `cargo test --all-features` ✓ 135/135 passed
+- `cargo rustc --release --target x86_64-unknown-none --features qemu-smp-scheduler-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld` ✓ clean
+
+### Next Steps
+1. Push branch → create PR to main (at https://github.com/eemntirey/SYSTEMES/pull/new/p1-6b-per-cpu-gdt-tss)
+2. Wait for CI `smp-scheduler` job to complete (QEMU `-smp 2`)
+3. Verify all mandatory check-runs green on exact head SHA
+4. Merge PR #76 (P1-6b)
+5. Update `AUTONOMOUS_DEVELOPMENT.md` with merge commit and CI evidence
+6. Begin P1-6c: lock-free per-CPU data structures
+
+## P1-6b PR #76 — Recovery and verified limitations (2026-11-09)
+
+PR: https://github.com/eemntirey/SYSTEMES/pull/76  
+Branch: `p1-6b-per-cpu-architecture`
+
+### Confirmed regressions and corrections
+
+- UEFI kernel read: the fixed 8 MiB read limit rejected a kernel image whose linked extent was approximately 15.8 MiB. The loader now queries `EFI_FILE_INFO.FileSize`, allocates to the actual file size, loops over short reads, checks EOF, bounds the file against `KERNEL_IMAGE_BYTES`, and emits size/status diagnostics.
+- Physical kernel reservation: the 15.8 MiB image could not be reserved at the old 2 MiB base. The kernel linker base and UEFI load address were moved together to 32 MiB; all five CI image-size calculations were updated. QEMU logs on run 354 showed `SYSTEMES_UEFI_EXIT_BOOT_SERVICES_OK` and entry into the kernel.
+- Ring 3 / SYSCALL ABI: P1-6b had repurposed RSI/RDI as pointers without changing the Rust/System V call ABI, and omitted the user RSP from the IRETQ frame. The proven BSP assembly ABI was restored: user SS/RSP/RFLAGS/CS/RIP are pushed in architectural order, and the BSP SYSCALL stack/user-RSP and Ring 3 saved-RSP symbols are again addressed explicitly. This is a BSP-only compatibility restoration, not per-CPU syscall support.
+
+### P1-6b functionality that is NOT complete
+
+- Per-CPU GDT/IDT/TSS and AP-local timer setup are present, but AP task schedulers are not initialized.
+- APs remain in an interruptible idle loop. The BSP scheduler still schedules only tasks in its own per-CPU array.
+- The prior `steal_task` function was an uncalled placeholder that only changed a source task state; it did not transfer a runnable context. It and the unused global task-pool declarations were removed rather than presented as working functionality.
+- There is no verified cross-CPU task queue, task ownership transfer, wakeup protocol, or double-execution prevention.
+- SYSCALL/SYSRET and Ring 3 currently use the restored BSP-only assembly stack. Per-CPU syscall entry, GS-base switching, and AP user-mode transitions remain unimplemented.
+
+### Validation state
+
+- Run 354 (commit `6f6449d`): UEFI file read succeeded; boot then failed at fixed physical reservation.
+- Run 355 (commit `3ec3fc7`): 32 MiB reservation, kernel load, ExitBootServices, and kernel entry succeeded. Production boot reached userland but exposed the Ring 3 frame ABI regression.
+- Run 356 (commit `13054a6`): production boots with and without SYSFS passed after restoring the BSP Ring 3/SYSCALL ABI. Several hardware-fault jobs still failed and require exact log-based diagnosis.
+- Subsequent runs are pending or in progress; their results must be checked against the exact current PR HEAD before any completion claim.
+
+**P1-6b is not complete. Do not merge PR #76.** The acceptance criteria for a functional multi-core scheduler and cross-CPU task migration remain unmet. No QEMU 1/2/4-CPU scheduler migration proof is available yet.

@@ -3,10 +3,14 @@
 //! The kernel remains in the UEFI-provided long-mode environment. This module
 //! installs its own GDT and IDT, then dispatches the Local APIC timer and task-yield vector.
 //! It also configures SYSCALL/SYSRET for fast Ring 3 transitions.
+//!
+//! P1-6b: Per-CPU GDT/IDT/TSS support. Each CPU has its own descriptor tables and
+//! interrupt stacks. The bootstrap CPU initializes its own tables first, then each
+//! application processor initializes its own tables after SMP bring-up.
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use crate::console::{debug_hex, debug_write};
 
@@ -28,62 +32,86 @@ const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 const USER_EXIT_VECTOR: u64 = 0x80;
 
+/// Maximum number of CPUs supported (matches smp::MAX_CPUS_PER_APIC_ID).
+pub const MAX_CPUS: usize = 64;
+
 pub(crate) const RING3_TEST_MAGIC: u64 = 0x5233_5F54_4553_5421;
 
 /// Vector raised by the INT3 instruction.
 pub const BREAKPOINT_VECTOR: u64 = 3;
 
-static mut GDT: [u64; 7] = [
-    0,
-    0x00AF_9A00_0000_FFFF,
-    0x00CF_9200_0000_FFFF,
-    0,
-    0,
-    USER_DATA_DESCRIPTOR,
-    USER_CODE_DESCRIPTOR,
-];
-
 #[repr(C, packed)]
 struct TaskStateSegment {
-    reserved0: u32, rsp0: u64, rsp1: u64, rsp2: u64, reserved1: u64,
-    ist1: u64, ist2: u64, ist3: u64, ist4: u64, ist5: u64, ist6: u64, ist7: u64,
-    reserved2: u64, reserved3: u16, iomap_base: u16,
+    reserved0: u32,
+    rsp0: u64,
+    rsp1: u64,
+    rsp2: u64,
+    reserved1: u64,
+    ist1: u64,
+    ist2: u64,
+    ist3: u64,
+    ist4: u64,
+    ist5: u64,
+    ist6: u64,
+    ist7: u64,
+    reserved2: u64,
+    reserved3: u16,
+    iomap_base: u16,
 }
 
 #[repr(align(4096))]
 struct InterruptStack([u8; INTERRUPT_STACK_SIZE]);
 
-static mut TSS: TaskStateSegment = TaskStateSegment {
-    reserved0: 0, rsp0: 0, rsp1: 0, rsp2: 0, reserved1: 0,
-    ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0,
-    reserved2: 0, reserved3: 0, iomap_base: core::mem::size_of::<TaskStateSegment>() as u16,
-};
-static mut PRIVILEGE_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
-static mut DOUBLE_FAULT_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
-static mut NMI_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
-static mut MACHINE_CHECK_STACK: InterruptStack = InterruptStack([0; INTERRUPT_STACK_SIZE]);
+/// Per-CPU context containing descriptor tables and interrupt stacks.
+#[repr(C, align(4096))]
+struct CpuContext {
+    gdt: [u64; 7],
+    tss: TaskStateSegment,
+    idt: [IdtEntry; 256],
+    privilege_stack: InterruptStack,
+    double_fault_stack: InterruptStack,
+    nmi_stack: InterruptStack,
+    machine_check_stack: InterruptStack,
+}
+
+impl CpuContext {
+    const fn new() -> Self {
+        Self {
+            gdt: [0; 7],
+            tss: TaskStateSegment {
+                reserved0: 0, rsp0: 0, rsp1: 0, rsp2: 0, reserved1: 0,
+                ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0,
+                reserved2: 0, reserved3: 0,
+                iomap_base: core::mem::size_of::<TaskStateSegment>() as u16,
+            },
+            idt: [IdtEntry::MISSING; 256],
+            privilege_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+            double_fault_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+            nmi_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+            machine_check_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+        }
+    }
+}
+
+/// Per-CPU contexts, indexed by CPU slot (APIC ID).
+static mut CPU_CONTEXTS: [CpuContext; MAX_CPUS] = [const { CpuContext::new() }; MAX_CPUS];
+
+/// Track which CPU contexts have been initialized.
+static CPU_INIT_STATE: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
+
+/* Validated BSP-only compatibility ABI. AP-local syscall stacks and GS-based
+   user/kernel GS switching are not yet implemented; do not pass user RSI/RDI
+   as kernel pointers to these entry stubs. */
 #[unsafe(no_mangle)]
 static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
     InterruptStack([0; INTERRUPT_STACK_SIZE]);
 #[unsafe(no_mangle)]
 static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
-#[unsafe(no_mangle)]
-static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
-
 #[unsafe(no_mangle)]
 static mut SYSTEMES_RING3_SAVED_KERNEL_RSP: u64 = 0;
-
-const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
-    let low = (limit as u64 & 0xFFFF)
-        | ((base & 0x00FF_FFFF) << 16)
-        | (0x89u64 << 40)
-        | ((((limit as u64) >> 16) & 0x0F) << 48)
-        | (((base >> 24) & 0xFF) << 56);
-    [low, base >> 32]
-}
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -171,11 +199,9 @@ pub const fn is_resumable_exception(vector: u64) -> bool {
     vector == BREAKPOINT_VECTOR
 }
 
-static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
-
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
-    fn systemes_load_tr();
+    fn systemes_load_tr(selector: u16);
     fn systemes_enter_ring3(user_rip: u64, user_rsp: u64, user_rflags: u64);
     fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
@@ -232,6 +258,12 @@ systemes_load_gdt:
     mov ss, ax
     ret
 
+.global systemes_load_tr
+systemes_load_tr:
+    mov ax, di
+    ltr ax
+    ret
+
 .global systemes_enter_ring3
 systemes_enter_ring3:
     push rbx
@@ -261,12 +293,6 @@ systemes_ring3_exit_trampoline:
     pop r12
     pop rbp
     pop rbx
-    ret
-
-.global systemes_load_tr
-systemes_load_tr:
-    mov ax, {tss_selector}
-    ltr ax
     ret
 
 .global systemes_isr0
@@ -614,7 +640,6 @@ systemes_exception_common:
 "#,
     kernel_code_selector = const KERNEL_CODE_SELECTOR,
     kernel_data_selector = const KERNEL_DATA_SELECTOR,
-    tss_selector = const TSS_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
     interrupt_stack_size = const INTERRUPT_STACK_SIZE,
@@ -629,9 +654,14 @@ pub fn verify_task_register() -> bool {
 }
 
 /// Validate the live TSS stack pointers and the IST selectors installed in the IDT.
-pub fn verify_ist_configuration() -> bool {
-    let tss = addr_of!(TSS);
-    let idt = addr_of!(IDT) as *const IdtEntry;
+pub fn verify_ist_configuration(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS || CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) != 2 {
+        return false;
+    }
+    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
+    let ctx = unsafe { (addr_of!(CPU_CONTEXTS) as *const CpuContext).add(cpu_index) };
+    let tss = unsafe { addr_of!((*ctx).tss) };
+    let idt = unsafe { addr_of!((*ctx).idt) as *const IdtEntry };
     let rsp0 = unsafe { core::ptr::addr_of!((*tss).rsp0).read_unaligned() };
     let ist1 = unsafe { core::ptr::addr_of!((*tss).ist1).read_unaligned() };
     let ist2 = unsafe { core::ptr::addr_of!((*tss).ist2).read_unaligned() };
@@ -651,8 +681,13 @@ pub fn verify_ist_configuration() -> bool {
 }
 
 /// Verify the Local APIC timer, cooperative-yield and spurious-vector IDT gates.
-pub fn verify_local_apic_gates() -> bool {
-    let idt = addr_of!(IDT) as *const IdtEntry;
+pub fn verify_local_apic_gates(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
+    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
+    let ctx = unsafe { (addr_of!(CPU_CONTEXTS) as *const CpuContext).add(cpu_index) };
+    let idt = unsafe { addr_of!((*ctx).idt) as *const IdtEntry };
     let timer = unsafe { &*idt.add(0x40) };
     let yield_gate = unsafe { &*idt.add(0x41) };
     let spurious = unsafe { &*idt.add(0xFF) };
@@ -686,9 +721,14 @@ pub fn verify_local_apic_gates() -> bool {
 }
 
 /// Verify that the user descriptors and the DPL3 exit gate are installed.
-pub fn verify_ring3_configuration() -> bool {
-    let gdt = addr_of!(GDT).cast::<u64>();
-    let idt = addr_of!(IDT) as *const IdtEntry;
+pub fn verify_ring3_configuration(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
+    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
+    let ctx = unsafe { (addr_of!(CPU_CONTEXTS) as *const CpuContext).add(cpu_index) };
+    let gdt = unsafe { addr_of!((*ctx).gdt).cast::<u64>() };
+    let idt = unsafe { addr_of!((*ctx).idt) as *const IdtEntry };
     // SAFETY: GDT entries 5/6 are the user data/code descriptors.
     let user_data = unsafe { gdt.add(5).read() };
     let user_code = unsafe { gdt.add(6).read() };
@@ -729,7 +769,7 @@ pub enum SyscallInitError {
 ///
 /// Must run at CPL0 after the kernel GDT is active and before user code can
 /// execute `SYSCALL`. This kernel currently uses one shared syscall stack and
-/// therefore supports only one CPU.
+/// therefore supports only one CPU at a time for syscalls (the BSP).
 pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
     let maximum_extended_leaf = core::arch::x86_64::__cpuid(0x8000_0000).eax;
     if maximum_extended_leaf < 0x8000_0001
@@ -817,11 +857,15 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
-    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
+    crate::interrupts::set_user_exit_status(0);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
-    user_exit_status()
+    crate::interrupts::user_exit_status()
 }
+
+/// Per-CPU syscall exit status (for ring-3 test compatibility).
+#[unsafe(export_name = "SYSTEMES_SYSCALL_EXIT_STATUS")]
+static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn set_user_exit_status(status: u64) {
     SYSTEMES_SYSCALL_EXIT_STATUS.store(status, Ordering::Release);
@@ -831,18 +875,49 @@ pub(crate) fn user_exit_status() -> u64 {
     SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
 }
 
-/// Install a private ring-0 GDT and gates for all architecturally defined
-/// exception vectors 0..31. Hardware interrupts remain disabled.
-pub unsafe fn initialize() {
-    // SAFETY: This runs during single-core boot before the kernel enables IRQs.
+/// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
+pub fn bootstrap_cpu_index() -> usize {
+    (core::arch::x86_64::__cpuid(1).ebx >> 24) as usize
+}
+
+fn current_cpu_index() -> usize {
+    crate::apic::current_apic_id()
+        .map(|id| id as usize)
+        .unwrap_or_else(bootstrap_cpu_index)
+}
+
+/// Initialize this CPU's private GDT, IDT, and TSS.
+///
+/// # Safety
+///
+/// Must run at CPL0 with interrupts disabled. Each CPU calls this once during
+/// its bring-up. The caller must ensure `cpu_index` is unique per CPU.
+pub unsafe fn initialize_cpu(cpu_index: usize) {
+    if cpu_index >= MAX_CPUS {
+        return;
+    }
+    if CPU_INIT_STATE[cpu_index]
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        while CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) == 1 {
+            core::hint::spin_loop();
+        }
+        return;
+    }
+    // SAFETY: This CPU owns the unique APIC-ID slot; keep local interrupts off
+    // until its private GDT, TSS, and IDT are fully published.
     unsafe { asm!("cli", options(nomem, nostack)) };
 
+    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
+    let ctx = unsafe { (addr_of_mut!(CPU_CONTEXTS) as *mut CpuContext).add(cpu_index) };
+
     // Initialize independent emergency stacks before exposing IST-backed gates.
-    let rsp0_top = unsafe { addr_of_mut!(PRIVILEGE_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
-    let df_top = unsafe { addr_of_mut!(DOUBLE_FAULT_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
-    let nmi_top = unsafe { addr_of_mut!(NMI_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
-    let mc_top = unsafe { addr_of_mut!(MACHINE_CHECK_STACK.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
-    let tss = addr_of_mut!(TSS);
+    let rsp0_top = unsafe { addr_of_mut!((*ctx).privilege_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let df_top = unsafe { addr_of_mut!((*ctx).double_fault_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let nmi_top = unsafe { addr_of_mut!((*ctx).nmi_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let mc_top = unsafe { addr_of_mut!((*ctx).machine_check_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let tss = unsafe { addr_of_mut!((*ctx).tss) };
     unsafe {
         core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(rsp0_top);
         core::ptr::addr_of_mut!((*tss).ist1).write_unaligned(df_top);
@@ -853,10 +928,15 @@ pub unsafe fn initialize() {
 
     let tss_base = tss as u64;
     let [tss_low, tss_high] = encode_tss_descriptor(tss_base, (core::mem::size_of::<TaskStateSegment>() - 1) as u32);
-    let gdt = addr_of_mut!(GDT).cast::<u64>();
+    let gdt = unsafe { addr_of_mut!((*ctx).gdt).cast::<u64>() };
     unsafe {
+        gdt.add(0).write(0); // null descriptor
+        gdt.add(1).write(0x00AF_9A00_0000_FFFF); // kernel code
+        gdt.add(2).write(0x00CF_9200_0000_FFFF); // kernel data
         gdt.add(3).write(tss_low);
         gdt.add(4).write(tss_high);
+        gdt.add(5).write(USER_DATA_DESCRIPTOR);
+        gdt.add(6).write(USER_CODE_DESCRIPTOR);
     }
     let gdt_pointer = DescriptorTablePointer {
         limit: (core::mem::size_of::<[u64; 7]>() - 1) as u16,
@@ -864,8 +944,8 @@ pub unsafe fn initialize() {
     };
     // SAFETY: GDT/TSS are static, identity-mapped, and remain alive for the kernel lifetime.
     unsafe { systemes_load_gdt(&gdt_pointer) };
-    // SAFETY: The TSS descriptor at selector 0x18 is present and references the static TSS.
-    unsafe { systemes_load_tr() };
+    // SAFETY: The TSS descriptor at selector 0x18 is present and references this CPU's static TSS.
+    unsafe { systemes_load_tr(TSS_SELECTOR) };
 
     let handlers: [usize; EXCEPTION_VECTOR_COUNT] = [
         systemes_isr0 as *const () as usize,
@@ -901,7 +981,7 @@ pub unsafe fn initialize() {
         systemes_isr30 as *const () as usize,
         systemes_isr31 as *const () as usize
     ];
-    let idt = addr_of_mut!(IDT) as *mut IdtEntry;
+    let idt = unsafe { addr_of_mut!((*ctx).idt) as *mut IdtEntry };
     for (vector, handler) in handlers.iter().enumerate() {
         let ist = match vector { 2 => 2, 8 => 1, 18 => 3, _ => 0 };
         // SAFETY: Each index is below EXCEPTION_VECTOR_COUNT and IDT has 256 entries.
@@ -928,6 +1008,14 @@ pub unsafe fn initialize() {
             options(readonly, nostack, preserves_flags)
         )
     };
+
+    CPU_INIT_STATE[cpu_index].store(2, Ordering::Release);
+}
+
+/// Initialize the bootstrap CPU's descriptor tables (legacy entry point for compatibility).
+pub unsafe fn initialize() {
+    // SAFETY: Called during early boot on BSP only.
+    unsafe { initialize_cpu(bootstrap_cpu_index()) };
 }
 
 /// Dispatch CPU exceptions. INT3 resumes unchanged; the dedicated Ring 3 test
@@ -943,7 +1031,8 @@ pub extern "C" fn systemes_exception_dispatch(
     if vector == 2 {
         let rsp: u64;
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = unsafe { addr_of!(NMI_STACK.0) as *const u8 as u64 };
+        let cpu_index = current_cpu_index();
+        let start = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].nmi_stack.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
@@ -957,7 +1046,8 @@ pub extern "C" fn systemes_exception_dispatch(
     if vector == 18 {
         let rsp: u64;
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = unsafe { addr_of!(MACHINE_CHECK_STACK.0) as *const u8 as u64 };
+        let cpu_index = current_cpu_index();
+        let start = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].machine_check_stack.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
@@ -988,12 +1078,9 @@ pub extern "C" fn systemes_exception_dispatch(
                 let kernel_rsp = unsafe {
                     addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile()
                 };
-                // Rewrite the privilege-return stack slots along with CS.
                 unsafe {
                     privilege_frame.add(20).write(kernel_rsp);
-                    privilege_frame
-                        .add(21)
-                        .write(KERNEL_DATA_SELECTOR as u64);
+                    privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                 }
                 RING3_ACTIVE.store(false, Ordering::Release);
                 RING3_EXIT_VALIDATED.store(true, Ordering::Release);
@@ -1043,6 +1130,15 @@ fn valid_ring3_exit_frame(
         && user_rsp == expected_user_rsp
         && frame.rflags & 0x2 != 0
         && frame.rflags & (1 << 9) == 0
+}
+
+const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
+    let low = (limit as u64 & 0xFFFF)
+        | ((base & 0x00FF_FFFF) << 16)
+        | (0x89u64 << 40)
+        | ((((limit as u64) >> 16) & 0x0F) << 48)
+        | (((base >> 24) & 0xFF) << 56);
+    [low, base >> 32]
 }
 
 #[cfg(test)]
