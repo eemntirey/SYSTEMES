@@ -577,6 +577,19 @@ pub fn yield_now() {
     }
 }
 
+/// Enter the per-CPU scheduler loop.
+/// This function is called by each CPU (BSP and APs) after initialization.
+/// It runs the scheduler on the current CPU until all tasks exit.
+pub fn run_cpu_loop() -> ! {
+    // Enable interrupts and enter the idle loop.
+    // Each CPU will handle its own timer interrupts and schedule tasks.
+    unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
+    loop {
+        // SAFETY: The scheduler runs with interrupts enabled; HLT waits for the next IRQ.
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)) };
+    }
+}
+
 pub fn current_task() -> TaskId {
     let cpu_index = current_cpu_index();
     let sched = unsafe { cpu_scheduler(cpu_index) };
