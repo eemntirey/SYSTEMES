@@ -3,7 +3,7 @@
 
 #define SYSTEMES_BOOT_MAGIC 0x53595354454D4553ULL
 #define SYSTEMES_BOOT_VERSION 2U
-#define KERNEL_LOAD_ADDRESS 0x00200000ULL
+#define KERNEL_LOAD_ADDRESS 0x02000000ULL
 #ifndef KERNEL_IMAGE_BYTES
 #error KERNEL_IMAGE_BYTES must be provided from the linked kernel image
 #endif
@@ -255,9 +255,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     debug_text("SYSTEMES_UEFI_KERNEL_FILE_OK\r\n");
 
     /* Reserve the exact linked image extent, including zero-filled .bss. */
+    if ((UINT64)KERNEL_IMAGE_BYTES == 0 || (UINT64)KERNEL_IMAGE_BYTES > (UINT64)(~(UINTN)0)) {
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_IMAGE_SIZE_INVALID\\r\\n");
+        fail(st, L"SYSTEMES: invalid linked kernel image size");
+    }
     kernel_pages = EFI_SIZE_TO_PAGES((UINTN)KERNEL_IMAGE_BYTES);
+    if (kernel_pages == 0 || kernel_pages > (~(UINTN)0) / EFI_PAGE_SIZE
+        || kernel_address > (~(EFI_PHYSICAL_ADDRESS)0) - ((EFI_PHYSICAL_ADDRESS)kernel_pages * EFI_PAGE_SIZE)) {
+        debug_text("SYSTEMES_UEFI_FAIL_KERNEL_PAGE_RANGE_INVALID\\r\\n");
+        fail(st, L"SYSTEMES: kernel page range overflows physical address space");
+    }
+    debug_hex64("SYSTEMES_UEFI_KERNEL_LOAD_ADDRESS=", (UINT64)kernel_address);
+    debug_hex64("SYSTEMES_UEFI_KERNEL_PAGE_COUNT=", (UINT64)kernel_pages);
+    debug_hex64("SYSTEMES_UEFI_KERNEL_RESERVATION_BYTES=", (UINT64)kernel_pages * EFI_PAGE_SIZE);
     status = uefi_call_wrapper(st->BootServices->AllocatePages, 4, AllocateAddress, EfiLoaderCode, kernel_pages, &kernel_address);
-    if (EFI_ERROR(status)) fail(st, L"SYSTEMES: cannot reserve kernel load address 0x200000");
+    if (EFI_ERROR(status)) {
+        debug_hex64("SYSTEMES_UEFI_FAIL_KERNEL_ALLOC_PAGES_STATUS=", (UINT64)status);
+        fail(st, L"SYSTEMES: cannot reserve linked kernel physical range");
+    }
     copy_bytes((VOID *)(UINTN)kernel_address, kernel_buffer, kernel_bytes);
     zero_bytes((VOID *)((UINTN)kernel_address + kernel_bytes), (UINTN)KERNEL_IMAGE_BYTES - kernel_bytes);
     debug_text("SYSTEMES_UEFI_KERNEL_LOADED\r\n");
