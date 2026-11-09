@@ -25,8 +25,8 @@
 //! P1-6b status and explicit limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
 //! - APs now install private GDT/IDT/TSS structures and start calibrated local
 //!   APIC timers, but their task schedulers are NOT initialized.
-//! - APs therefore remain in an interruptible idle loop; no task is dispatched
-//!   on an AP and no task migrates between CPUs.
+//! - APs therefore remain in an interruptible idle loop; no AP run queue is
+//!   populated, no task is dispatched on an AP, and no task migrates between CPUs.
 //! - The BSP scheduler remains local to its own task array. Work-stealing is
 //!   not implemented and is not claimed as a completed feature.
 //! - SYSCALL/SYSRET and the Ring 3 test path retain the validated BSP-only
@@ -686,7 +686,7 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     idle_loop();
 }
 
-/// Idle-only AP loop. The scheduler is not initialized on APs in P1-6b.
+/// Idle-only AP loop. No AP run queue is populated or scheduled in P1-6b.
 fn idle_loop() -> ! {
     loop {
         // yield_now is a no-op until this AP has an initialized scheduler.
