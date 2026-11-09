@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissions, USER_BASE}, console::debug_write, interrupts::enter_user_mode, elf_loader::load_elf, memory::PhysicalFrameAllocator, paging::{MemoryRegion, PagePermissions, IDENTITY_MAP_BYTES}, serial, shell_elf::SHELL_ELF, BootInfo, BOOT_INFO_MAGIC, BOOT_INFO_VERSION};
@@ -40,12 +41,11 @@ enum VirtioVfsError {
     VfsClose,
 }
 
-/// Probe the virtio-blk disk, mount its SYSFS image and verify `/hello.txt`.
-/// Runs on every boot (not only under a QEMU test feature): when no disk is
-/// present the kernel continues without the VFS.
-fn probe_virtio_vfs(
+/// Read the whole virtio-blk disk into memory and return the raw SYSFS image.
+/// Runs on every boot: when no disk is present the kernel continues without the VFS.
+fn probe_virtio_disk(
     allocator: &mut PhysicalFrameAllocator,
-) -> Result<(), VirtioVfsError> {
+) -> Result<Vec<u8>, VirtioVfsError> {
     let pci = unsafe { systemes_kernel::pci::discover_virtio_blk() }
         .map_err(|_| VirtioVfsError::DeviceNotFound)?;
     let mut device = unsafe { systemes_kernel::virtio_blk::VirtioBlk::configure(pci, allocator) }
@@ -76,7 +76,14 @@ fn probe_virtio_vfs(
         image[offset..offset + 512].copy_from_slice(&contents);
     }
 
-    let filesystem = systemes_kernel::simple_fs::SimpleFs::parse(&image)
+    systemes_kernel::simple_fs::SimpleFs::parse(&image)
+        .map_err(|_| VirtioVfsError::Filesystem)?;
+    Ok(image)
+}
+
+/// Verify `/hello.txt` contains `"hello"` on a parsed SYSFS image.
+fn verify_vfs_hello(image: &[u8]) -> Result<(), VirtioVfsError> {
+    let filesystem = systemes_kernel::simple_fs::SimpleFs::parse(image)
         .map_err(|_| VirtioVfsError::Filesystem)?;
     let mut vfs = systemes_kernel::vfs::Vfs::new();
     vfs.mount(filesystem).map_err(|_| VirtioVfsError::VfsMount)?;
@@ -90,19 +97,35 @@ fn probe_virtio_vfs(
     if close_result.is_err() {
         return Err(VirtioVfsError::VfsClose);
     }
-    unsafe {
-        debug_write(
-            b"SYSTEMES: virtio-blk VFS mounted; /hello.txt = \"hello\" (normal boot)\r\n",
-        );
-    }
     Ok(())
+}
+
+/// Read an entire file from a SYSFS image into an independent `Vec<u8>`.
+fn read_vfs_file(image: &[u8], path: &str) -> Result<Vec<u8>, VirtioVfsError> {
+    let filesystem = systemes_kernel::simple_fs::SimpleFs::parse(image)
+        .map_err(|_| VirtioVfsError::Filesystem)?;
+    let mut vfs = systemes_kernel::vfs::Vfs::new();
+    vfs.mount(filesystem).map_err(|_| VirtioVfsError::VfsMount)?;
+    let handle = vfs.open(path).map_err(|_| VirtioVfsError::VfsOpen)?;
+    let mut contents = alloc::vec::Vec::new();
+    let mut chunk = [0u8; 512];
+    loop {
+        let n = vfs.read(handle, &mut chunk).map_err(|_| VirtioVfsError::VfsRead)?;
+        if n == 0 {
+            break;
+        }
+        contents.extend_from_slice(&chunk[..n]);
+    }
+    vfs.close(handle).map_err(|_| VirtioVfsError::VfsClose)?;
+    Ok(contents)
 }
 
 #[cfg(feature = "qemu-virtio-vfs-test")]
 fn run_qemu_virtio_vfs_test(
     allocator: &mut PhysicalFrameAllocator,
 ) -> Result<(), VirtioVfsError> {
-    probe_virtio_vfs(allocator)?;
+    let image = probe_virtio_disk(allocator)?;
+    verify_vfs_hello(&image)?;
     unsafe {
         debug_write(b"SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified\r\n");
     }
@@ -275,17 +298,26 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\r\n"); }
+    let vfs_image: Option<Vec<u8>> = match probe_virtio_disk(&mut frame_allocator) {
+        Ok(image) => Some(image),
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES: virtio-blk VFS unavailable (no disk)\r\n"); }
+            None
+        }
+    };
+    if let Some(ref image) = vfs_image {
+        if verify_vfs_hello(image).is_ok() {
+            unsafe {
+                debug_write(
+                    b"SYSTEMES: virtio-blk VFS mounted; /hello.txt = \"hello\" (normal boot)\r\n",
+                );
+            }
+        }
+    }
     #[cfg(feature = "qemu-virtio-vfs-test")]
     match run_qemu_virtio_vfs_test(&mut frame_allocator) {
         Ok(()) => {}
         Err(_) => halt(),
-    }
-    #[cfg(not(feature = "qemu-virtio-vfs-test"))]
-    match probe_virtio_vfs(&mut frame_allocator) {
-        Ok(()) => {}
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES: virtio-blk VFS unavailable (no disk)\r\n"); }
-        }
     }
     #[cfg(feature = "qemu-heap-test")]
     {
@@ -579,6 +611,24 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
         // T11/T12: load and launch the userland shell (ELF64), which uses
         // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
+        // The ELF is loaded from the VFS (`/shell`) when a virtio-blk disk is
+        // present, falling back to the embedded image otherwise.
+        let shell_data: Vec<u8> = match &vfs_image {
+            Some(image) => match read_vfs_file(image, "/shell") {
+                Ok(data) => {
+                    unsafe { debug_write(b"SYSTEMES: shell loaded from VFS (/shell)\r\n"); }
+                    data
+                }
+                Err(_) => {
+                    unsafe { debug_write(b"SYSTEMES: /shell not found on VFS; embedded shell\r\n"); }
+                    SHELL_ELF.to_vec()
+                }
+            },
+            None => {
+                unsafe { debug_write(b"SYSTEMES: no virtio-blk disk; embedded shell\r\n"); }
+                SHELL_ELF.to_vec()
+            }
+        };
         unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
         let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
             Ok(space) => space,
@@ -588,7 +638,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             }
         };
         let shell_entry = match unsafe {
-            load_elf(SHELL_ELF, &mut frame_allocator, &mut shell_space)
+            load_elf(&shell_data, &mut frame_allocator, &mut shell_space)
         } {
             Ok(entry) => entry,
             Err(_) => {
