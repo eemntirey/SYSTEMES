@@ -551,7 +551,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(&digits[..length]);
                         debug_write(b" started in kernel long mode\r\n");
                     }
-                    debug_write(b"SYSTEMES_TEST: application processors joined scheduler: count=");
+                    debug_write(b"SYSTEMES_TEST: application processors parked after validation: count=");
                     let length = encode_decimal(summary.started_count as u64, &mut digits);
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
@@ -575,11 +575,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             }
         }
 
-        // P1-6b: Initialize multi-core scheduler on BSP after APs have joined.
+        // Initialize the BSP scheduler only. AP run queues are not initialized
+        // in P1-6b; APs remain interruptible in their idle loop and no task
+        // migration between CPUs is implemented.
         #[cfg(feature = "qemu-smp-scheduler-test")]
         {
-            // Initialize scheduler on BSP (CPU 0) with test tasks.
-            // APs initialize their own schedulers in systemes_ap_main_rust.
+            // The BSP scheduler regression test uses the BSP's actual APIC slot.
             static SMP_TASK_A_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
             static SMP_TASK_B_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
