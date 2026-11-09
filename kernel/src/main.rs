@@ -278,6 +278,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: CPU NX capability detected and EFER.NXE enabled\r\n"); }
+    // CPU contexts are indexed by the hardware APIC ID, not an assumed slot zero.
+    let bsp_cpu_index = systemes_kernel::interrupts::bootstrap_cpu_index();
+    if bsp_cpu_index >= systemes_kernel::interrupts::MAX_CPUS {
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: BSP APIC ID exceeds supported CPU slots\r\n"); }
+        halt();
+    }
     // SAFETY: CPU tables are installed during single-core boot while IRQs remain disabled.
     unsafe { systemes_kernel::interrupts::initialize() };
     if unsafe { systemes_kernel::interrupts::initialize_syscalls() }.is_err() {
@@ -293,18 +299,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TR did not load TSS selector 0x18\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ist_configuration(0) {
+    if !systemes_kernel::interrupts::verify_ist_configuration(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: TSS stacks or IDT IST routing invalid\r\n"); }
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: TSS TR=0x18 verified; RSP0/IST1/IST2/IST3 and IDT routing verified\r\n") };
     unsafe { debug_write(b"SYSTEMES: GDT initialized\r\n") };
     unsafe { debug_write(b"SYSTEMES: IDT initialized for CPU exceptions 0..31\r\n") };
-    if !systemes_kernel::interrupts::verify_local_apic_gates(0) {
+    if !systemes_kernel::interrupts::verify_local_apic_gates(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Local APIC IDT gates invalid\r\n"); }
         halt();
     }
-    if !systemes_kernel::interrupts::verify_ring3_configuration(0) {
+    if !systemes_kernel::interrupts::verify_ring3_configuration(bsp_cpu_index) {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 GDT or DPL3 interrupt gate invalid\r\n"); }
         halt();
     }
@@ -593,7 +599,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
 
-            if systemes_kernel::scheduler::initialize_cpu(0, &[smp_worker_a, smp_worker_b]).is_ok()
+            if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[smp_worker_a, smp_worker_b]).is_ok()
                 && systemes_kernel::scheduler::validate_initial_contexts()
             {
                 systemes_kernel::scheduler::enable_preemption();
