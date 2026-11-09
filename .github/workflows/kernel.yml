@@ -100,22 +100,10 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-k1.iso
-      - name: Create SYSFS virtio-blk test disk
+      - name: Create shared SYSFS virtio-blk test disk
         run: |
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-
-          image = bytearray(3 * 512)
-          image[0:6] = b"SYSFS1"
-          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
-          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 5, 0, 1)
-          image[590:599] = b"hello.txt"
-          image[1024:1029] = b"hello"
-          Path("build/uefi/sysfs.img").write_bytes(image)
-          PY
-          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
+          python3 scripts/make-sysfs.py --output build/uefi/sysfs.img
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 3584
       - name: Boot ISO in QEMU with OVMF
         shell: bash
         run: |
@@ -383,22 +371,10 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-k1.iso
-      - name: Create SYSFS virtio-blk test disk
+      - name: Create shared SYSFS virtio-blk test disk
         run: |
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-
-          image = bytearray(3 * 512)
-          image[0:6] = b"SYSFS1"
-          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
-          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
-          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
-          image[590:599] = b"hello.txt"
-          image[1024:1030] = b"hello\n"
-          Path("build/uefi/sysfs.img").write_bytes(image)
-          PY
-          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
+          python3 scripts/make-sysfs.py --output build/uefi/sysfs.img
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 3584
       - name: Boot production kernel and drive the shell over serial
         shell: bash
         run: |
@@ -435,6 +411,11 @@ jobs:
             sleep 2.2
             send_line uptime
             send_line 'uptime extra'
+            send_line ls
+            send_line 'ls /docs'
+            send_line 'ls /absent'
+            send_line 'ls /hello.txt'
+            send_line 'ls '
             send_line 'cat /hello.txt'
             send_line 'cat /absent'
             send_line cat
@@ -466,7 +447,7 @@ jobs:
               "> Z",
               "Unknown command. Type help.",
               "> help",
-              "Commands: help, echo <text>, uptime, cat <path>, exit",
+              "Commands: help, echo <text>, uptime, cat <path>, ls [path], exit",
               "> echo hellx\x08 \x08o",
               "hello",
               "> uptime",
@@ -474,9 +455,23 @@ jobs:
               "> uptime extra",
           ]
           if "${{ matrix.disk }}" == "yes":
-              expected.extend(["> cat /hello.txt", "hello", "> cat /absent", "cat: not found"])
+              expected.extend([
+                  "> ls", "hello.txt", "docs",
+                  "> ls /docs", "readme.txt", "notes.txt",
+                  "> ls /absent", "ls: error",
+                  "> ls /hello.txt", "ls: error",
+                  "> ls ", "ls: usage",
+                  "> cat /hello.txt", "hello", "> cat /absent", "cat: not found",
+              ])
           else:
-              expected.extend(["> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem"])
+              expected.extend([
+                  "> ls", "ls: no filesystem",
+                  "> ls /docs", "ls: no filesystem",
+                  "> ls /absent", "ls: no filesystem",
+                  "> ls /hello.txt", "ls: no filesystem",
+                  "> ls ", "ls: usage",
+                  "> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem",
+              ])
           expected.extend(["> cat", "cat: usage", "> unknown", "Unknown command. Type help.", "> exit"])
           cursor = 0
           for item in expected:
@@ -503,15 +498,19 @@ jobs:
           expected_hello_lines = 2 if "${{ matrix.disk }}" == "yes" else 1
           if lines.count("hello") != expected_hello_lines:
               raise SystemExit(f"expected {expected_hello_lines} hello output lines, got {lines.count('hello')}")
-          print("QEMU shell transcript verified: echo, cat, file-not-found, no-filesystem, usage, help and exit")
+          print("QEMU shell transcript verified: echo, cat, ls, directory entries, errors, help and exit")
           PY
           grep -qF '> help' build/uefi/serial.log
-          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, exit' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, ls [path], exit' build/uefi/serial.log
           grep -qF 'cat: usage' build/uefi/serial.log
+          grep -qF 'ls: usage' build/uefi/serial.log
           if [ "${{ matrix.disk }}" = "yes" ]; then
             grep -qF 'cat: not found' build/uefi/serial.log
+            grep -qF 'ls: error' build/uefi/serial.log
+            grep -q 'SYSTEMES_TEST: user SYS_READDIR succeeded' build/uefi/debug.log
           else
             grep -qF 'cat: no filesystem' build/uefi/serial.log
+            grep -qF 'ls: no filesystem' build/uefi/serial.log
           fi
           grep -qF '> uptime extra' build/uefi/serial.log
           grep -qF 'hello' build/uefi/serial.log
