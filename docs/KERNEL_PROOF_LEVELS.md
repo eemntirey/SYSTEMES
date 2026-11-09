@@ -11,6 +11,7 @@ Les niveaux sont cumulatifs : une capacité n'est déclarée QEMU-validée que s
 | Ordonnanceur préemptif — PR #53, merge `a32bb337dfe52793a424d960433b8df84d3a2dc8` | Oui | Oui | 40/40 | Oui | Non validé |
 | Contexte x87/SSE par tâche — PR #54 intégré | FXSAVE64/FXRSTOR64 | Oui | 41/41 | Oui | Non validé |
 | TSS/RSP0/IST + blocage/sommeil/réveil — PR #57 combinée, HEAD `ac99cd93cfc7353a87631b7b3448eb4bb4faa21b`, run `42375231895` | Oui | Oui | Oui | Oui (6/6 checks) | Non validé |
+| Réveil des processeurs applicatifs (P1-6a) — PR #75, branche `p1-6-smp-ap-bringup`, commit `49f76e5c` | Oui | Oui | 135/135 | Oui (`-smp 4`, AP 1..3 + compteurs croisés) | Non validé |
 
 ## Limites actuellement confirmées
 
@@ -21,4 +22,5 @@ Les niveaux sont cumulatifs : une capacité n'est déclarée QEMU-validée que s
 - Ordonnanceur préemptif : trois tâches CPU-bound validées sous préemption timer QEMU ; mono-cœur uniquement.
 - FPU/SIMD : x87/MMX/SSE sauvegardés/restaurés par tâche ; tests x87 et XMM15 validés sous QEMU.
 - TSS/IST : TR=0x18, RSP0 et routage IST1/2/3 vérifiés ; IST2/IST3 testés par interruptions logicielles, pas par NMI/Machine Check électriques ni Double Fault réel.
+- SMP : trampoline INIT/SIPI dans une page basse réservée avant la carte d'identité ; les AP entrent en mode long, valident les compteurs croisés puis s'arrêtent interruptions masquées. GDT/IDT/TSS restent des tables uniques et l'ordonnanceur reste mono-cœur (P1-6b). Le noyau et son point d'entrée doivent rester sous 4 Gio pour le tronçon 32 bits.
 - Aucun de ces jalons n'est validé sur matériel physique.
