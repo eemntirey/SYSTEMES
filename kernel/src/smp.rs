@@ -22,11 +22,15 @@
 //!    `SpinLock` — which only stabilizes when cross-core memory coherence
 //!    and the lock itself behave correctly on real symmetric harts.
 //!
-//! Known P1-6a limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
-//! - APs park after validation; the preemptive scheduler still runs only on
-//!   the bootstrap CPU because the GDT/IDT/TSS are single static tables.
-//! - Only the bootstrap CPU services interrupts; started APs keep interrupts
-//!   disabled for the remainder of the boot.
+//! P1-6b status and explicit limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
+//! - APs now install private GDT/IDT/TSS structures and start calibrated local
+//!   APIC timers, but their task schedulers are NOT initialized.
+//! - APs therefore remain in an interruptible idle loop; no task is dispatched
+//!   on an AP and no task migrates between CPUs.
+//! - The BSP scheduler remains local to its own task array. Work-stealing is
+//!   not implemented and is not claimed as a completed feature.
+//! - SYSCALL/SYSRET and the Ring 3 test path retain the validated BSP-only
+//!   assembly stack ABI; per-CPU syscall entry is not yet implemented.
 //! - The trampoline page (< 1 MiB) stays reserved for AP bring-up.
 //! - The kernel CR3 must sit below 4 GiB because the 32-bit trampoline stage
 //!   loads it with a 32-bit immediate. QEMU/OVMF images satisfy this today.
@@ -675,18 +679,19 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     run_core_validation(slot);
     AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
 
-    // P1-6b: Instead of parking forever, enable interrupts and join the scheduler idle loop.
-    // The scheduler will handle task switching when tasks are available.
+    // AP task queues and cross-CPU migration are not implemented yet.
+    // Keep the AP interruptible for its local timer, but do not claim it is
+    // participating in task scheduling.
     unsafe { asm!("sti", options(nomem, nostack)) };
     idle_loop();
 }
 
-/// Idle loop for APs: run the scheduler when tasks are available, otherwise halt.
+/// Idle-only AP loop. The scheduler is not initialized on APs in P1-6b.
 fn idle_loop() -> ! {
     loop {
-        // Check if there's work to do on this CPU
+        // yield_now is a no-op until this AP has an initialized scheduler.
         crate::scheduler::yield_now();
-        // If no task switch happened, halt until next interrupt
+        // Local APIC timer interrupts wake the CPU; no task migration occurs.
         unsafe { asm!("hlt", options(nomem, nostack)) };
     }
 }
