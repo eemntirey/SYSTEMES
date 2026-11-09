@@ -25,9 +25,8 @@ fn halt() -> ! {
     }
 }
 
-#[cfg(feature = "qemu-virtio-vfs-test")]
-#[derive(Clone, Copy)]
-enum VirtioVfsTestError {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VirtioVfsError {
     DeviceNotFound,
     DeviceInitialization,
     SectorRead,
@@ -41,48 +40,30 @@ enum VirtioVfsTestError {
     VfsClose,
 }
 
-#[cfg(feature = "qemu-virtio-vfs-test")]
-fn run_qemu_virtio_vfs_test(
+/// Probe the virtio-blk disk, mount its SYSFS image and verify `/hello.txt`.
+/// Runs on every boot (not only under a QEMU test feature): when no disk is
+/// present the kernel continues without the VFS.
+fn probe_virtio_vfs(
     allocator: &mut PhysicalFrameAllocator,
-) -> Result<(), VirtioVfsTestError> {
+) -> Result<(), VirtioVfsError> {
     let pci = unsafe { systemes_kernel::pci::discover_virtio_blk() }
-        .map_err(|_| VirtioVfsTestError::DeviceNotFound)?;
+        .map_err(|_| VirtioVfsError::DeviceNotFound)?;
     let mut device = unsafe { systemes_kernel::virtio_blk::VirtioBlk::configure(pci, allocator) }
-        .map_err(|_| VirtioVfsTestError::DeviceInitialization)?;
+        .map_err(|_| VirtioVfsError::DeviceInitialization)?;
 
     let mut header = [0; 512];
-    unsafe { device.read_sector(0, &mut header, allocator) }.map_err(|error| {
-        let message = match error {
-            systemes_kernel::virtio_blk::VirtioBlkError::OutOfFrames =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk has no DMA frames\r\n" as &[u8],
-            systemes_kernel::virtio_blk::VirtioBlkError::InvalidFrame =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk DMA frame is invalid\r\n",
-            systemes_kernel::virtio_blk::VirtioBlkError::SectorOutOfRange =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk sector is out of range\r\n",
-            systemes_kernel::virtio_blk::VirtioBlkError::RequestFailed =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk used ring response is invalid\r\n",
-            systemes_kernel::virtio_blk::VirtioBlkError::IoError =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk returned I/O error\r\n",
-            systemes_kernel::virtio_blk::VirtioBlkError::UnsupportedRequest =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk rejected read request\r\n",
-            systemes_kernel::virtio_blk::VirtioBlkError::DmaTimeout =>
-                b"SYSTEMES_TEST_FAIL: virtio-blk DMA request timed out\r\n",
-            _ => b"SYSTEMES_TEST_FAIL: virtio-blk sector read failed\r\n",
-        };
-        unsafe { debug_write(message); }
-        VirtioVfsTestError::SectorRead
-    })?;
-    unsafe { debug_write(b"SYSTEMES_TEST: virtio-blk DMA sector read verified\r\n"); }
+    unsafe { device.read_sector(0, &mut header, allocator) }
+        .map_err(|_| VirtioVfsError::SectorRead)?;
 
     let image_size = systemes_kernel::simple_fs::SimpleFs::required_image_size(&header)
-        .map_err(|_| VirtioVfsTestError::InvalidImage)?;
+        .map_err(|_| VirtioVfsError::InvalidImage)?;
     if image_size > 64 * 1024 || image_size % 512 != 0 {
-        return Err(VirtioVfsTestError::ImageTooLarge);
+        return Err(VirtioVfsError::ImageTooLarge);
     }
     let mut image = alloc::vec::Vec::new();
     image
         .try_reserve_exact(image_size)
-        .map_err(|_| VirtioVfsTestError::Allocation)?;
+        .map_err(|_| VirtioVfsError::Allocation)?;
     image.resize(image_size, 0);
     image[..512].copy_from_slice(&header);
 
@@ -90,26 +71,38 @@ fn run_qemu_virtio_vfs_test(
     for sector in 1..sectors {
         let mut contents = [0; 512];
         unsafe { device.read_sector(sector as u64, &mut contents, allocator) }
-            .map_err(|_| VirtioVfsTestError::SectorRead)?;
+            .map_err(|_| VirtioVfsError::SectorRead)?;
         let offset = sector * 512;
         image[offset..offset + 512].copy_from_slice(&contents);
     }
 
     let filesystem = systemes_kernel::simple_fs::SimpleFs::parse(&image)
-        .map_err(|_| VirtioVfsTestError::Filesystem)?;
+        .map_err(|_| VirtioVfsError::Filesystem)?;
     let mut vfs = systemes_kernel::vfs::Vfs::new();
-    vfs.mount(filesystem)
-        .map_err(|_| VirtioVfsTestError::VfsMount)?;
-    let handle = vfs.open("/hello.txt").map_err(|_| VirtioVfsTestError::VfsOpen)?;
+    vfs.mount(filesystem).map_err(|_| VirtioVfsError::VfsMount)?;
+    let handle = vfs.open("/hello.txt").map_err(|_| VirtioVfsError::VfsOpen)?;
     let mut contents = [0; 5];
     let read_result = vfs.read(handle, &mut contents);
     let close_result = vfs.close(handle);
     if read_result != Ok(contents.len()) || contents != *b"hello" {
-        return Err(VirtioVfsTestError::VfsRead);
+        return Err(VirtioVfsError::VfsRead);
     }
     if close_result.is_err() {
-        return Err(VirtioVfsTestError::VfsClose);
+        return Err(VirtioVfsError::VfsClose);
     }
+    unsafe {
+        debug_write(
+            b"SYSTEMES: virtio-blk VFS mounted; /hello.txt = \"hello\" (normal boot)\r\n",
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "qemu-virtio-vfs-test")]
+fn run_qemu_virtio_vfs_test(
+    allocator: &mut PhysicalFrameAllocator,
+) -> Result<(), VirtioVfsError> {
+    probe_virtio_vfs(allocator)?;
     unsafe {
         debug_write(b"SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified\r\n");
     }
@@ -283,33 +276,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
     unsafe { debug_write(b"SYSTEMES: 1 MiB dynamic kernel heap initialized\r\n"); }
     #[cfg(feature = "qemu-virtio-vfs-test")]
-    if let Err(error) = run_qemu_virtio_vfs_test(&mut frame_allocator) {
-        let message = match error {
-            VirtioVfsTestError::DeviceNotFound =>
-                b"SYSTEMES_KERNEL_FAIL: virtio-blk PCI discovery failed\r\n" as &[u8],
-            VirtioVfsTestError::DeviceInitialization =>
-                b"SYSTEMES_KERNEL_FAIL: virtio-blk initialization failed\r\n",
-            VirtioVfsTestError::SectorRead =>
-                b"SYSTEMES_KERNEL_FAIL: virtio-blk DMA sector read failed\r\n",
-            VirtioVfsTestError::InvalidImage =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS superblock is invalid\r\n",
-            VirtioVfsTestError::ImageTooLarge =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS image exceeds test limit\r\n",
-            VirtioVfsTestError::Allocation =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS image allocation failed\r\n",
-            VirtioVfsTestError::Filesystem =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS image parsing failed\r\n",
-            VirtioVfsTestError::VfsMount =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS mount failed\r\n",
-            VirtioVfsTestError::VfsOpen =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS open failed\r\n",
-            VirtioVfsTestError::VfsRead =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS read returned invalid content\r\n",
-            VirtioVfsTestError::VfsClose =>
-                b"SYSTEMES_KERNEL_FAIL: SYSFS VFS close failed\r\n",
-        };
-        unsafe { debug_write(message); }
-        halt();
+    match run_qemu_virtio_vfs_test(&mut frame_allocator) {
+        Ok(()) => {}
+        Err(_) => halt(),
+    }
+    #[cfg(not(feature = "qemu-virtio-vfs-test"))]
+    match probe_virtio_vfs(&mut frame_allocator) {
+        Ok(()) => {}
+        Err(_) => {
+            unsafe { debug_write(b"SYSTEMES: virtio-blk VFS unavailable (no disk)\r\n"); }
+        }
     }
     #[cfg(feature = "qemu-heap-test")]
     {

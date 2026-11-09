@@ -82,7 +82,7 @@ static FPU_CONTEXTS_READY: AtomicBool = AtomicBool::new(false);
 /// Configure architectural x87/SSE state management and initialize every task image.
 fn initialize_fpu_contexts() -> Result<(), &'static str> {
     // x86_64 requires SSE2; FXSAVE is the baseline state format used by this kernel.
-    let features = unsafe { core::arch::x86_64::__cpuid(1) };
+    let features = core::arch::x86_64::__cpuid(1);
     if features.edx & (1 << 24) == 0 || features.edx & (1 << 25) == 0 {
         return Err("CPU does not support FXSAVE and SSE");
     }
@@ -162,14 +162,14 @@ fn build_initial_context(task: *mut Task) -> usize {
         let stack = core::ptr::addr_of_mut!((*task).stack.0).cast::<u8>();
         let top = stack.add(STACK_SIZE) as usize;
         let fake_return = (top - 8) as *mut usize;
-        fake_return.write(task_returned as usize);
+        fake_return.write(task_returned as *const () as usize);
         let frame = (top - 8 - INTERRUPT_FRAME_WORDS * core::mem::size_of::<usize>()) as *mut usize;
         for index in 0..SAVED_REGISTER_COUNT {
             frame.add(index).write(0);
         }
         frame.add(15).write(YIELD_VECTOR);
         frame.add(16).write(0);
-        frame.add(17).write(task_bootstrap as usize);
+        frame.add(17).write(task_bootstrap as *const () as usize);
         frame.add(18).write(KERNEL_CODE_SELECTOR);
         frame.add(19).write(INITIAL_RFLAGS);
         // Long-mode IRETQ restores the synthetic RSP and SS words after RFLAGS.
@@ -512,7 +512,7 @@ pub fn validate_initial_contexts() -> bool {
         let valid = unsafe {
             frame.add(15).read() == YIELD_VECTOR
                 && frame.add(16).read() == 0
-                && frame.add(17).read() == task_bootstrap as usize
+                && frame.add(17).read() == task_bootstrap as *const () as usize
                 && frame.add(18).read() == KERNEL_CODE_SELECTOR
                 && frame.add(19).read() == INITIAL_RFLAGS
                 && frame.add(20).read() != 0
