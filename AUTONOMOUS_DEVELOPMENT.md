@@ -153,3 +153,35 @@ git -C <repo> log --oneline origin/main -5
 git -C <repo> branch -r | grep -v HEAD
 ```
 Compare against "Completed Phases" above. Continue from "Next Action".
+
+---
+
+## Parallel session — P1-4 Ring 3 fault recovery (2026-11-09)
+
+- **Branch**: `p1-4-user-fault-recovery`, commit `a46657c70d37c5b43fadb97fac4f412de1777a45`
+- **State**: implemented and proven locally; not yet pushed or merged.
+- **What it adds**: a Ring 3 CPU fault now terminates only the offending process
+  (descriptors closed, vector recorded, exit status `128 + vector`) and returns
+  through the kernel exit trampoline; Ring 0 faults remain fatal. New
+  `qemu-user-fault-test` boot test faults on an unmapped user page, checks
+  `vector=0xE`/`cr2`, status 142, frame reclamation, then launches a second
+  process to prove the kernel still runs user code.
+- **Verification (local, WSL/Linux)**: host tests 135/135; `cargo check` for
+  `x86_64-unknown-none`; UEFI/ISO build and QEMU/OVMF boot with
+  `qemu-user-fault-test` plus the existing CI feature set. Markers proved:
+  `SYSTEMES: killing user process: vector=0xE ... cr2=0x...`,
+  `SYSTEMES: user process terminated; kernel resumed`, fault exit status 142,
+  new process after the fault, frames reclaimed, shell still reachable and
+  echoed input, no `SYSTEMES_KERNEL_FAIL`.
+- **CI wiring**: `uefi-qemu-boot` feature list and marker greps include the new
+  test; `scripts/qemu-boot.sh --ci-features` mirrors it.
+- **Known limit**: user faults are handled for the single Ring 3 process model;
+  the syscall stack is still shared (mono-cœur), and physical-hardware
+  validation is outstanding.
+- **Blocker**: another agent is active in the same working copy (branches
+  `p1-5c-ls-readdir`, `p2-1-stat-spawn`, uncommitted `SYS_STAT`/`SYS_READDIR`
+  work). All edits for this session were isolated in `.p1-4-worktree` and the
+  commit above; the shared checkout was not modified further.
+- **Next action**: push `p1-4-user-fault-recovery`, open a PR to `main` after the
+  concurrent p1-5c merge, and require every check green on the PR SHA before
+  merging.

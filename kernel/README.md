@@ -16,7 +16,7 @@ Le noyau est un binaire Rust `no_std`, ciblé sur `x86_64-unknown-none`. Il dém
 - Contexte FPU/SIMD : sauvegarde/restauration x87/MMX/SSE par tâche avec FXSAVE64/FXRSTOR64 (512 octets alignés sur 16 octets)
 - Cycle de vie des tâches : états Runnable/Blocked/Exited, sommeil sur horloge monotone et réveil par échéance ou événement
 - CPU : GDT noyau/user, IDT, TSS x86_64 chargé dans TR=0x18, RSP0 dédié et piles IST1/IST2/IST3 pour #DF/NMI/#MC
-- Exceptions : #BP reprenable (le CPU sauvegarde l'adresse suivant `INT3` ; le handler restaure le contexte et exécute `iretq`) ; #PF/#GP/#DF restent fatales et tracées
+- Exceptions : #BP reprenable (le CPU sauvegarde l'adresse suivant `INT3` ; le handler restaure le contexte et exécute `iretq`) ; une faute Ring 3 (#PF, #GP, #UD, #DE, #SS, #NP, #MF, #AC, #XM, #BR) termine uniquement le processus fautif et rend la main au noyau ; les fautes Ring 0 et #DF restent fatales et tracées
 - Diagnostic : module console partagé (port QEMU `0xE9`, formatage hexadécimal/décimal testé hôte), sauts de ligne CRLF réels (la CI rejette les séquences littérales `\r\n`)
 
 ## Capacités T11–T14 validées sur `t11-elf-loader`
@@ -27,13 +27,19 @@ Le shell utilisateur minimal lit et écrit sur l'UART via `SYS_READ` et `SYS_WRI
 
 Le pilote virtio-blk effectue une lecture DMA synchrone d'un secteur depuis un périphérique PCI virtio-blk legacy/transitional en QEMU. Le test monte ensuite l'image SYSFS sur le VFS en lecture seule et vérifie `mount/open/read/close` sur le contenu lu du disque. Ces scénarios sont exécutés dans le job CI QEMU/OVMF, séparément des tests hôte.
 
+## Récupération des fautes Ring 3
+
+Une exception levée en Ring 3 est traitée comme la fin du processus fautif, pas comme une panique noyau. Le dispatcher vérifie que la frame interrompue est bien CPL3, ferme la table de fichiers du processus, enregistre le vecteur et le statut `128 + vecteur` (142 pour `#PF`), puis réécrit la frame d'exception pour revenir à la trampoline de sortie noyau avec la pile noyau sauvegardée. Le code de reprise dans `_start` restaure CR3, libère l'espace d'adressage et les frames du processus, et peut lancer un autre processus. Une faute prise en Ring 0 reste fatale : elle signale un bug noyau, jamais une faute utilisateur.
+
+Le test QEMU `qemu-user-fault-test` lance un programme qui écrit dans une page utilisateur non mappée, vérifie `vector=0xE` et `cr2`, constate le statut 142 et l'absence de fuite de frames, puis lance un second processus qui sort proprement avec `SYS_EXIT` : la preuve couvre donc l'arrêt, le nettoyage et la reprise du service.
+
 Au démarrage, le noyau valide le contrat UEFI, initialise l'allocateur de frames, installe sa GDT, son TSS et son IDT, charge TR=0x18, vérifie RSP0 et le routage IST, puis construit et active ses propres tables de pages et applique les protections W^X. La CI valide également les violations NX/RX, les protections SMEP/SMAP lorsque le CPU les expose, ainsi que les commutations IST2/IST3.
 
 ## Limites actuelles
 
 T11–T14 constituent un bring-up minimal, pas un OS généraliste : l'ELF de test est intégré en mémoire et n'est pas chargé depuis le VFS; le shell ne fournit pas encore un interpréteur de commandes. SYSFS est un format personnalisé en lecture seule, et l'intégration VFS testée reste dans le noyau. Le pilote de stockage ne prend en charge que le transport PCI legacy/transitional à BAR I/O, avec une seule file et des lectures synchrones; le transport virtio moderne et les disques physiques ne sont pas validés. `SYS_READ`/`SYS_WRITE` ne couvrent que l'UART, et l'entrée utilise une pile syscall statique partagée : le noyau reste mono-cœur.
 
-Le heap est limité à une arène statique de 1 Mio. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. Les tâches noyau partagent l'espace noyau. Les appels syscall `READ`/`WRITE` rejettent les plages utilisateur invalides avant d'y accéder, mais les fautes #PF/#GP provoquées par du code Ring 3 restent fatales. Les scénarios `int 2` et `int 18` valident les portes IDT et le mécanisme IST mais ne remplacent pas des essais matériels réels de NMI/Machine Check. Seul le #BP déclenché par `INT3` est reprenable ; les autres exceptions restent fatales.
+Le heap est limité à une arène statique de 1 Mio. La MADT consomme les enregistrements Local APIC xAPIC, IOAPIC et Interrupt Source Override ; x2APIC et le démarrage des AP ne sont pas livrés. Le timer Local APIC est calibré sur PIT channel 2 et l'horloge monotone avance à 100 Hz. Les tâches noyau partagent l'espace noyau. Les appels syscall `READ`/`WRITE` rejettent les plages utilisateur invalides avant d'y accéder. Une faute Ring 3 termine le processus ; les fautes Ring 0 restent fatales. Les scénarios `int 2` et `int 18` valident les portes IDT et le mécanisme IST mais ne remplacent pas des essais matériels réels de NMI/Machine Check. Seul le #BP déclenché par `INT3` est reprenable ; les autres exceptions Ring 0 restent fatales.
 
 Un démarrage réussi sous QEMU/OVMF ne prouve pas la compatibilité avec un PC physique. La validation matérielle doit être consignée séparément.
 

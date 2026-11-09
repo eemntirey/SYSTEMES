@@ -69,7 +69,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test,qemu-user-fs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test,qemu-user-fs-test,qemu-user-fault-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -161,6 +161,11 @@ jobs:
           grep -q 'SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user process exited and kernel resumed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: exited process frames reclaimed' build/uefi/debug.log
+          grep -q 'SYSTEMES: killing user process: vector=0x000000000000000E' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: Ring 3 page fault killed only the user process' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: fault exit status=142 vector=0x000000000000000E' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: kernel launched a new user process after the fault' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: faulted process frames reclaimed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user shell address space activated' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_WRITE succeeded' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_READ received UART input' build/uefi/debug.log
