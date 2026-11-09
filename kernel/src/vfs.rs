@@ -196,6 +196,7 @@ fn map_fs_error(error: SimpleFsError) -> VfsError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
     use std::vec;
     use std::vec::Vec;
 
