@@ -1064,13 +1064,13 @@ pub extern "C" fn systemes_exception_dispatch(
                 RING3_ACTIVE.store(false, Ordering::Release);
                 RING3_EXIT_VALIDATED.store(true, Ordering::Release);
                 unsafe {
-                    debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\\r\\n");
+                    debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\r\n");
                 }
                 return;
             }
         }
         unsafe {
-            debug_write(b"SYSTEMES_KERNEL_FAIL: invalid Ring 3 exit frame\\r\\n");
+            debug_write(b"SYSTEMES_KERNEL_FAIL: invalid Ring 3 exit frame\r\n");
         }
     }
 
