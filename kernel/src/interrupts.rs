@@ -72,9 +72,6 @@ struct CpuContext {
     double_fault_stack: InterruptStack,
     nmi_stack: InterruptStack,
     machine_check_stack: InterruptStack,
-    syscall_kernel_stack: InterruptStack,
-    syscall_user_rsp: u64,
-    ring3_saved_kernel_rsp: u64,
     initialized: bool,
 }
 
@@ -93,9 +90,6 @@ impl CpuContext {
             double_fault_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             nmi_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             machine_check_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
-            syscall_kernel_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
-            syscall_user_rsp: 0,
-            ring3_saved_kernel_rsp: 0,
             initialized: false,
         }
     }
@@ -106,6 +100,20 @@ static mut CPU_CONTEXTS: [CpuContext; MAX_CPUS] = [const { CpuContext::new() }; 
 
 /// Track which CPU contexts have been initialized.
 static CPU_INITIALIZED: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
+
+/* Preserve the proven BSP Ring 3/SYSCALL ABI until per-CPU GS-based entry
+   is implemented and validated. These symbols are consumed directly by
+   the entry assembly and are not Rust function arguments. */
+#[unsafe(no_mangle)]
+static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
+    InterruptStack([0; INTERRUPT_STACK_SIZE]);
+#[unsafe(no_mangle)]
+static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
+static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
+static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
+#[unsafe(no_mangle)]
+static mut SYSTEMES_RING3_SAVED_KERNEL_RSP: u64 = 0;
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -266,8 +274,9 @@ systemes_enter_ring3:
     push r13
     push r14
     push r15
-    mov qword ptr [rsi], rsp
+    mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
     push {user_data_selector}
+    push rsi
     push rdx
     push {user_code_selector}
     push rdi
@@ -279,7 +288,7 @@ systemes_ring3_exit_trampoline:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov rsp, qword ptr [rdi]
+    mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]
     pop r15
     pop r14
     pop r13
@@ -478,10 +487,10 @@ systemes_user_exit:
 
 .global systemes_syscall_entry
 systemes_syscall_entry:
-    mov qword ptr [rsi], rsp
-    lea rsp, [rdi]
+    mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
+    lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
     add rsp, {interrupt_stack_size}
-    push qword ptr [rsi]
+    push qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     push rax
     push rbx
     push rcx
@@ -518,7 +527,7 @@ systemes_syscall_entry:
     pop rbx
     pop rax
     add rsp, 8
-    mov rsp, qword ptr [rsi]
+    mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     sysretq
 .Lsystemes_syscall_exit:
     mov rax, qword ptr [rip + SYSTEMES_SYSCALL_EXIT_STATUS]
@@ -784,10 +793,7 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
 
 /// Confirm the enabled syscall bit and programmed selectors/entry mask.
 pub fn verify_syscall_configuration() -> bool {
-    // Use CPU 0's syscall stack for verification
-    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
-    let ctx = unsafe { (addr_of!(CPU_CONTEXTS) as *const CpuContext) };
-    let stack_start = unsafe { addr_of!((*ctx).syscall_kernel_stack) as *const u8 as usize };
+    let stack_start = addr_of!(SYSTEMES_SYSCALL_KERNEL_STACK) as *const u8 as usize;
     let stack_top = stack_start + core::mem::size_of::<InterruptStack>();
     read_msr(MSR_EFER) & EFER_SCE != 0
         && read_msr(MSR_STAR) == STAR_VALUE
@@ -835,14 +841,14 @@ fn write_msr(msr: u32, value: u64) {
 /// interrupts. The user code must use a supported exit path: `int 0x80` or `SYS_EXIT`.
 #[cfg(feature = "qemu-ring3-test")]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
-    // Use CPU 0's context for ring3 test
-    // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
-    let _ctx = unsafe { (addr_of_mut!(CPU_CONTEXTS) as *mut CpuContext) };
-    // Simplified: just use the existing atomic for test coordination
-    crate::interrupts::set_user_exit_status(0);
+    RING3_EXIT_VALIDATED.store(false, Ordering::Release);
+    RING3_EXPECTED_USER_RSP.store(user_rsp, Ordering::Release);
+    RING3_ACTIVE.store(true, Ordering::Release);
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(user_rip, user_rsp, USER_TEST_RFLAGS) };
-    crate::interrupts::user_exit_status() != 0
+    RING3_ACTIVE.store(false, Ordering::Release);
+    RING3_EXIT_VALIDATED.load(Ordering::Acquire)
 }
 
 /// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
@@ -1031,8 +1037,7 @@ pub extern "C" fn systemes_exception_dispatch(
         }
     }
 
-    if vector == USER_EXIT_VECTOR {
-        // Check if this is a ring-3 test exit
+    if vector == USER_EXIT_VECTOR && RING3_ACTIVE.load(Ordering::Acquire) {
         if let Some(frame_ref) = unsafe { frame.as_mut() } {
             let privilege_frame = frame.cast::<u64>();
             // A CPL3 interrupt frame appends the interrupted RSP and SS after RFLAGS.
@@ -1043,32 +1048,29 @@ pub extern "C" fn systemes_exception_dispatch(
                     frame_ref,
                     user_rsp,
                     user_ss,
-                    // Note: In multi-CPU, we'd need per-CPU expected RSP. For now use global.
-                    crate::interrupts::user_exit_status(),
+                    RING3_EXPECTED_USER_RSP.load(Ordering::Acquire),
                 )
             {
                 frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
                 let kernel_rsp = unsafe {
-                    addr_of!(CPU_CONTEXTS[0].ring3_saved_kernel_rsp).read_volatile()
+                    addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile()
                 };
-                // Rewrite the privilege-return stack slots along with CS.
                 unsafe {
                     privilege_frame.add(20).write(kernel_rsp);
-                    privilege_frame
-                        .add(21)
-                        .write(KERNEL_DATA_SELECTOR as u64);
+                    privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                 }
-                crate::interrupts::set_user_exit_status(1);
+                RING3_ACTIVE.store(false, Ordering::Release);
+                RING3_EXIT_VALIDATED.store(true, Ordering::Release);
                 unsafe {
-                    debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\r\n");
+                    debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\\r\\n");
                 }
                 return;
             }
         }
         unsafe {
-            debug_write(b"SYSTEMES_KERNEL_FAIL: invalid Ring 3 exit frame\r\n");
+            debug_write(b"SYSTEMES_KERNEL_FAIL: invalid Ring 3 exit frame\\r\\n");
         }
     }
 
