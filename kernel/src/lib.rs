@@ -5,6 +5,8 @@
 //! This crate deliberately contains no Windows, WPF, WebView2, or standard-library
 //! dependencies. The UEFI loader will populate BootInfo before transferring control.
 
+extern crate alloc;
+
 pub mod acpi;
 pub mod address_space;
 pub mod apic;
@@ -14,7 +16,9 @@ pub mod heap;
 pub mod interrupts;
 pub mod memory;
 pub mod paging;
+pub mod rootfs;
 pub mod scheduler;
+pub mod sync;
 pub mod syscall;
 pub mod uaccess;
 pub mod elf_loader;
@@ -25,6 +29,7 @@ pub mod pci;
 pub mod virtio_blk;
 pub mod simple_fs;
 pub mod vfs;
+pub mod file_descriptors;
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;
 pub const BOOT_INFO_VERSION: u32 = 2;

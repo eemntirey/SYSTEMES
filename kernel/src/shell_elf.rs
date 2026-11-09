@@ -1,29 +1,66 @@
-//! Small Ring 3 console program that prompts, reads one UART byte, and exits on 'q'.
+//! Ring 3 userland command shell (ELF64, x86_64).
 //!
-//! No byte is re-echoed by the shell itself: the terminal provides local echo, so
-//! the serial log shows a single character per keypress (fixes the doubled echo).
+//! The bytecode is assembled from `kernel/userland/shell.S`. It deliberately
+//! uses only the documented syscall ABI; command parsing and line editing stay
+//! in user mode.
 
 use crate::address_space::USER_BASE;
 
 const SHELL_CODE: &[u8] = &[
-    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1          ; SYS_WRITE
-    0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1          ; fd = 1
-    0x48, 0xBE, 0x00, 0x70, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // mov rsi, USER_BASE+0x7000
-    0xBA, 0x02, 0x00, 0x00, 0x00, // mov edx, 2          ; len = 2 ("> ")
-    0x0F, 0x05,                   // syscall             ; write prompt
-    0xB8, 0x02, 0x00, 0x00, 0x00, // mov eax, 2          ; SYS_READ
-    0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1          ; fd = 1
-    0x48, 0xBE, 0x00, 0x70, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // mov rsi, USER_BASE+0x7000
-    0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1          ; len = 1
-    0x0F, 0x05,                   // syscall             ; read 1 byte
-    0x3C, 0x71,                   // cmp al, 0x71        ; 'q' ?
-    0x74, 0x02,                   // je do_exit
-    0xEB, 0xC4,                   // jmp loop            ; back to prompt
-    0xB8, 0x3C, 0x00, 0x00, 0x00, // do_exit: mov eax, 60; SYS_EXIT
-    0xBF, 0x00, 0x00, 0x00, 0x00, // mov edi, 0          ; exit code 0
-    0x0F, 0x05,                   // syscall             ; exit to kernel
-    0xF4,                         // hlt
-    0xEB, 0xFD,                   // jmp -2                ; spin if returned
+    69, 49, 228, 73, 189, 0, 112, 0, 0, 128, 0, 0, 0, 77, 141, 181,
+    0, 1, 0, 0, 69, 49, 228, 72, 141, 53, 174, 2, 0, 0, 186, 2,
+    0, 0, 0, 232, 151, 2, 0, 0, 184, 2, 0, 0, 0, 191, 1, 0,
+    0, 0, 76, 137, 246, 186, 1, 0, 0, 0, 15, 5, 72, 133, 192, 126,
+    231, 65, 15, 182, 6, 60, 10, 116, 79, 60, 13, 116, 75, 60, 8, 116,
+    44, 60, 127, 116, 40, 60, 32, 114, 207, 65, 131, 252, 127, 115, 201, 67,
+    136, 68, 37, 0, 65, 255, 196, 184, 1, 0, 0, 0, 191, 1, 0, 0,
+    0, 76, 137, 246, 186, 1, 0, 0, 0, 15, 5, 235, 171, 69, 133, 228,
+    116, 166, 65, 255, 204, 72, 141, 53, 68, 2, 0, 0, 186, 3, 0, 0,
+    0, 232, 41, 2, 0, 0, 235, 144, 72, 141, 53, 47, 2, 0, 0, 186,
+    2, 0, 0, 0, 232, 22, 2, 0, 0, 69, 133, 228, 15, 132, 98, 255,
+    255, 255, 65, 131, 252, 4, 117, 28, 65, 129, 125, 0, 101, 120, 105, 116,
+    15, 132, 238, 1, 0, 0, 65, 129, 125, 0, 104, 101, 108, 112, 15, 132,
+    180, 1, 0, 0, 65, 131, 252, 6, 117, 23, 65, 129, 125, 0, 117, 112,
+    116, 105, 117, 13, 102, 65, 129, 125, 4, 109, 101, 15, 132, 56, 1, 0,
+    0, 65, 131, 252, 3, 117, 20, 102, 65, 129, 125, 0, 99, 97, 117, 11,
+    65, 128, 125, 2, 116, 15, 132, 179, 0, 0, 0, 65, 131, 252, 4, 15,
+    130, 191, 0, 0, 0, 65, 129, 125, 0, 99, 97, 116, 32, 15, 133, 177,
+    0, 0, 0, 68, 137, 230, 131, 238, 4, 133, 246, 15, 132, 141, 0, 0,
+    0, 73, 141, 125, 4, 184, 6, 0, 0, 0, 15, 5, 72, 131, 248, 254,
+    116, 80, 72, 131, 248, 237, 116, 96, 72, 133, 192, 120, 113, 73, 137, 199,
+    184, 2, 0, 0, 0, 76, 137, 255, 73, 141, 181, 0, 2, 0, 0, 186,
+    0, 1, 0, 0, 15, 5, 72, 133, 192, 126, 24, 72, 137, 194, 184, 1,
+    0, 0, 0, 191, 1, 0, 0, 0, 73, 141, 181, 0, 2, 0, 0, 15,
+    5, 235, 205, 184, 7, 0, 0, 0, 76, 137, 255, 15, 5, 233, 130, 254,
+    255, 255, 72, 141, 53, 142, 1, 0, 0, 186, 16, 0, 0, 0, 232, 28,
+    1, 0, 0, 233, 108, 254, 255, 255, 72, 141, 53, 136, 1, 0, 0, 186,
+    20, 0, 0, 0, 232, 6, 1, 0, 0, 233, 86, 254, 255, 255, 72, 141,
+    53, 134, 1, 0, 0, 186, 12, 0, 0, 0, 232, 240, 0, 0, 0, 233,
+    64, 254, 255, 255, 65, 131, 252, 5, 15, 130, 192, 0, 0, 0, 65, 129,
+    125, 0, 101, 99, 104, 111, 15, 133, 178, 0, 0, 0, 65, 128, 125, 4,
+    32, 15, 133, 167, 0, 0, 0, 68, 137, 226, 131, 234, 5, 15, 142, 17,
+    254, 255, 255, 184, 1, 0, 0, 0, 191, 1, 0, 0, 0, 73, 141, 117,
+    5, 15, 5, 72, 141, 53, 180, 0, 0, 0, 186, 2, 0, 0, 0, 232,
+    155, 0, 0, 0, 233, 235, 253, 255, 255, 184, 5, 0, 0, 0, 15, 5,
+    49, 210, 185, 100, 0, 0, 0, 72, 247, 241, 73, 141, 181, 255, 0, 0,
+    0, 185, 10, 0, 0, 0, 49, 210, 72, 247, 241, 128, 194, 48, 72, 255,
+    206, 136, 22, 72, 133, 192, 117, 238, 73, 141, 149, 255, 0, 0, 0, 72,
+    41, 242, 198, 4, 22, 115, 72, 255, 194, 198, 4, 22, 13, 72, 255, 194,
+    198, 4, 22, 10, 72, 255, 194, 184, 1, 0, 0, 0, 191, 1, 0, 0,
+    0, 15, 5, 233, 140, 253, 255, 255, 72, 141, 53, 68, 0, 0, 0, 186,
+    55, 0, 0, 0, 232, 38, 0, 0, 0, 233, 118, 253, 255, 255, 72, 141,
+    53, 101, 0, 0, 0, 186, 29, 0, 0, 0, 232, 16, 0, 0, 0, 233,
+    96, 253, 255, 255, 184, 3, 0, 0, 0, 49, 255, 15, 5, 15, 11, 184,
+    1, 0, 0, 0, 191, 1, 0, 0, 0, 15, 5, 195, 62, 32, 13, 10,
+    8, 32, 8, 67, 111, 109, 109, 97, 110, 100, 115, 58, 32, 104, 101, 108,
+    112, 44, 32, 101, 99, 104, 111, 32, 60, 116, 101, 120, 116, 62, 44, 32,
+    117, 112, 116, 105, 109, 101, 44, 32, 99, 97, 116, 32, 60, 112, 97, 116,
+    104, 62, 44, 32, 101, 120, 105, 116, 13, 10, 85, 110, 107, 110, 111, 119,
+    110, 32, 99, 111, 109, 109, 97, 110, 100, 46, 32, 84, 121, 112, 101, 32,
+    104, 101, 108, 112, 46, 13, 10, 99, 97, 116, 58, 32, 110, 111, 116, 32,
+    102, 111, 117, 110, 100, 13, 10, 99, 97, 116, 58, 32, 110, 111, 32, 102,
+    105, 108, 101, 115, 121, 115, 116, 101, 109, 13, 10, 99, 97, 116, 58, 32,
+    117, 115, 97, 103, 101, 13, 10,
 ];
 
 const fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -71,7 +108,7 @@ const fn build_shell_elf() -> [u8; 128 + SHELL_CODE.len()] {
     put_u64(&mut elf, 80, USER_BASE + 0x6000);
     put_u64(&mut elf, 88, USER_BASE + 0x6000);
     put_u64(&mut elf, 96, SHELL_CODE.len() as u64);
-    put_u64(&mut elf, 104, 4096);
+    put_u64(&mut elf, 104, SHELL_CODE.len() as u64);
     put_u64(&mut elf, 112, 1);
 
     let mut index = 0;
@@ -87,23 +124,39 @@ pub const SHELL_ELF: &[u8] = &build_shell_elf();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::elf_loader::{ElfImage, ElfError};
+    use crate::elf_loader::{ElfError, ElfImage};
 
     #[test]
-    fn shell_elf_is_a_valid_executable_image() {
+    fn shell_elf_is_a_valid_rx_executable_image() {
         let image = ElfImage::parse(SHELL_ELF).expect("shell ELF should parse");
         assert_eq!(image.entry, USER_BASE + 0x6000);
         assert_eq!(image.segment_count, 1);
         assert_eq!(image.segments[0].flags, 5);
+        assert_eq!(image.segments[0].filesz, SHELL_CODE.len() as u64);
     }
 
     #[test]
-    fn shell_code_uses_read_and_write_syscalls() {
-        assert_eq!(SHELL_CODE.windows(2).filter(|bytes| *bytes == [0x0F, 0x05]).count(), 3);
+    fn shell_uses_documented_read_write_and_exit_syscalls() {
+        let syscall_count = SHELL_CODE
+            .windows(2)
+            .filter(|bytes| *bytes == [0x0F, 0x05])
+            .count();
+        assert_eq!(syscall_count, 11);
+        assert!(SHELL_CODE.windows(5).any(|bytes| bytes == [0xB8, 6, 0, 0, 0]));
+        assert!(SHELL_CODE.windows(5).any(|bytes| bytes == [0xB8, 7, 0, 0, 0]));
+        assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"help"));
+        assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"echo"));
+        assert!(SHELL_ELF.windows(4).any(|bytes| bytes == b"exit"));
+        assert!(SHELL_ELF.windows(6).any(|bytes| bytes == b"uptime"));
+        assert!(SHELL_ELF.windows(10).any(|bytes| bytes == b"cat <path>"));
+        assert!(SHELL_ELF.windows(14).any(|bytes| bytes == b"cat: not found"));
+        assert!(SHELL_ELF.windows(18).any(|bytes| bytes == b"cat: no filesystem"));
+        assert!(SHELL_ELF.windows(10).any(|bytes| bytes == b"cat: usage"));
+        assert!(SHELL_ELF.windows(7).any(|bytes| bytes == b"Unknown"));
     }
 
     #[test]
-    fn shell_has_no_writable_executable_segment() {
+    fn shell_segment_is_not_writable_and_executable() {
         let image = ElfImage::parse(SHELL_ELF).expect("shell ELF should parse");
         assert_ne!(image.segments[0].flags & 3, 3);
         assert_eq!(

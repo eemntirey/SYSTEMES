@@ -70,10 +70,10 @@ pub fn enable_write_protect() -> Result<(), PagingError> {
 }
 
 pub fn enable_nx() -> Result<(), PagingError> {
-    // SAFETY: CPUID is available on the x86_64 target.
+    // CPUID is a safe intrinsic; leaf 0 reports the highest basic leaf.
     let max = __cpuid(0x8000_0000).eax;
     if max < 0x8000_0001 { return Err(PagingError::NxUnsupported); }
-    // SAFETY: Extended CPUID leaf is supported by the preceding check.
+    // The extended-maximum check above guarantees leaf 0x8000_0001 exists.
     if __cpuid(0x8000_0001).edx & CPUID_NX == 0 {
         return Err(PagingError::NxUnsupported);
     }
@@ -224,7 +224,7 @@ pub unsafe fn map_mmio_uncached(
 ) -> Result<*mut u8, PagingError> {
     const PWT: u64 = 1 << 3;
     const PCD: u64 = 1 << 4;
-    // SAFETY: CPUID leaf 1 is available on the x86_64 target.
+    // CPUID leaf 1 is architecturally available on x86_64.
     if __cpuid(1).edx & CPUID_PAT == 0 {
         return Err(PagingError::PatUnsupported);
     }

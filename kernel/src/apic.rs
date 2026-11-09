@@ -109,7 +109,7 @@ pub unsafe fn initialize_local_apic(
     allocator: &mut PhysicalFrameAllocator,
     page_table_root: u64,
 ) -> Result<(), ApicInitError> {
-    // SAFETY: CPUID leaf 1 is available on the x86_64 target.
+    // CPUID leaf 1 is architecturally available on x86_64.
     if core::arch::x86_64::__cpuid(1).edx & CPUID_APIC == 0 {
         return Err(ApicInitError::CpuApicUnsupported);
     }

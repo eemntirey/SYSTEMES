@@ -17,6 +17,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Verify embedded shell matches its assembly source
+        run: |
+          as --64 kernel/userland/shell.S -o /tmp/systemes-shell.o
+          objcopy -O binary -j .text /tmp/systemes-shell.o /tmp/systemes-shell.bin
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          rust = Path("kernel/src/shell_elf.rs").read_text()
+          match = re.search(
+              r"const SHELL_CODE:\s*&\[u8\]\s*=\s*&\[(.*?)\];",
+              rust,
+              re.S,
+          )
+          if not match:
+              raise SystemExit("SHELL_CODE byte array was not found")
+          embedded = bytes(int(value) for value in re.findall(r"\d+", match.group(1)))
+          assembled = Path("/tmp/systemes-shell.bin").read_bytes()
+          if embedded != assembled:
+              limit = min(len(embedded), len(assembled))
+              offset = next((i for i in range(limit) if embedded[i] != assembled[i]), limit)
+              raise SystemExit(
+                  f"Embedded shell differs from shell.S: embedded={len(embedded)} bytes, "
+                  f"assembled={len(assembled)} bytes, first difference={offset}"
+              )
+          print(f"Embedded ELF shell matches shell.S ({len(embedded)} bytes)")
+          PY
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,7 +69,7 @@ jobs:
           targets: x86_64-unknown-none
       - name: Build freestanding kernel
         run: |
-          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --features qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test,qemu-user-fs-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
           mkdir -p build/uefi
           objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
           test -s build/uefi/KERNEL.BIN
@@ -142,11 +169,16 @@ jobs:
           grep -q 'SYSTEMES_TEST: Ring 3 user stack write verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SYSCALL/SYSRET fast path executed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: Syscall return value verified in user stack' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: SYS_YIELD returned to user process' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user process exited and kernel resumed' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: exited process frames reclaimed' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user shell address space activated' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_WRITE succeeded' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: user SYS_READ received UART input' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: virtio-blk DMA sector read verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: virtio SYSFS mount/open/read/close verified' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_OPEN/READ/CLOSE succeeded' build/uefi/debug.log
           grep -qF '> Z' build/uefi/serial.log
           grep -q 'SYSTEMES_EXCEPTION: vector=0x0000000000000003 error=0x0000000000000000' build/uefi/debug.log
           grep -q 'SYSTEMES: breakpoint handled, execution resumed' build/uefi/debug.log
@@ -297,4 +329,210 @@ jobs:
             build/uefi/serial.log
             build/uefi/debug.log
             build/uefi/qemu.log
+          if-no-files-found: warn
+
+  production-boot:
+    name: Production boot — ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: userland shell with SYSFS disk
+            disk: yes
+            expect: 'SYSTEMES: SYSFS root mounted from virtio-blk'
+          - label: userland shell without disk
+            disk: no
+            expect: 'SYSTEMES: no virtio-blk disk found'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install toolchain and firmware tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnu-efi binutils dosfstools mtools xorriso qemu-system-x86 ovmf
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-none
+      - name: Build freestanding kernel without test features
+        run: |
+          cargo rustc --manifest-path kernel/Cargo.toml --release --target x86_64-unknown-none --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld
+          mkdir -p build/uefi
+          objcopy -O binary kernel/target/x86_64-unknown-none/release/systemes-kernel build/uefi/KERNEL.BIN
+          test -s build/uefi/KERNEL.BIN
+          kernel_end=$(nm -n kernel/target/x86_64-unknown-none/release/systemes-kernel | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
+          test -n "$kernel_end"
+          kernel_image_bytes=$((kernel_end - 0x00200000))
+          test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
+          echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
+      - name: Build GNU-EFI loader and bootable ISO
+        run: |
+          gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
+          ld -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds -shared -Bsymbolic /usr/lib/crt0-efi-x86_64.o build/uefi/loader.o -L/usr/lib -lefi -lgnuefi -o build/uefi/loader.so
+          objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc -O efi-app-x86_64 build/uefi/loader.so build/uefi/BOOTX64.EFI
+          test -s build/uefi/BOOTX64.EFI
+          truncate -s 16M build/uefi/esp.img
+          mkfs.vfat build/uefi/esp.img
+          mmd -i build/uefi/esp.img ::/EFI ::/EFI/BOOT
+          mcopy -i build/uefi/esp.img build/uefi/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+          mcopy -i build/uefi/esp.img build/uefi/KERNEL.BIN ::/EFI/BOOT/KERNEL.BIN
+          mkdir -p build/uefi/iso-root/EFI/BOOT
+          cp build/uefi/BOOTX64.EFI build/uefi/iso-root/EFI/BOOT/BOOTX64.EFI
+          cp build/uefi/KERNEL.BIN build/uefi/iso-root/EFI/BOOT/KERNEL.BIN
+          cp build/uefi/esp.img build/uefi/iso-root/esp.img
+          xorriso -as mkisofs -R -J -V SYSTEMES -o build/uefi/systemes-k1.iso -e esp.img -no-emul-boot build/uefi/iso-root
+          test -s build/uefi/systemes-k1.iso
+      - name: Create SYSFS virtio-blk test disk
+        run: |
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          image = bytearray(3 * 512)
+          image[0:6] = b"SYSFS1"
+          struct.pack_into("<IIIII", image, 6, 1, 512, 2, 1, 0)
+          struct.pack_into("<HIII", image, 512, 1, 0, 0, 0)
+          struct.pack_into("<HIII", image, 576, 0, 6, 0, 1)
+          image[590:599] = b"hello.txt"
+          image[1024:1030] = b"hello\n"
+          Path("build/uefi/sysfs.img").write_bytes(image)
+          PY
+          test "$(stat -c %s build/uefi/sysfs.img)" -eq 1536
+      - name: Boot production kernel and drive the shell over serial
+        shell: bash
+        run: |
+          firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
+          variables="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_VARS*.fd' | sort | head -n 1)"
+          test -n "$firmware"
+          test -n "$variables"
+          cp "$variables" build/uefi/OVMF_VARS.fd
+          disk_args=()
+          if [ "${{ matrix.disk }}" = "yes" ]; then
+            disk_args=(-drive if=none,id=virtio-disk,file=build/uefi/sysfs.img,format=raw -device virtio-blk-pci,drive=virtio-disk,disable-modern=on)
+          fi
+          set +e
+          {
+            sleep 5
+            send_chars() {
+              local text="$1"
+              for ((i=0; i<${#text}; i++)); do
+                printf '%s' "${text:i:1}"
+                sleep 0.04
+              done
+            }
+            send_line() {
+              send_chars "$1"
+              printf '\r'
+              sleep 0.25
+            }
+            send_line Z
+            send_line help
+            send_chars 'echo hellx'
+            printf '\177o\r'
+            sleep 0.25
+            send_line uptime
+            sleep 2.2
+            send_line uptime
+            send_line 'uptime extra'
+            send_line 'cat /hello.txt'
+            send_line 'cat /absent'
+            send_line cat
+            send_line unknown
+            send_line exit
+          } | timeout 30s qemu-system-x86_64 -cpu max -machine q35 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-k1.iso,media=cdrom,if=ide,readonly=on "${disk_args[@]}" -boot order=d -serial stdio -monitor none -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -display none -no-reboot -no-shutdown > build/uefi/serial.log
+          qemu_status=$?
+          set -e
+          if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
+            echo "QEMU exited unexpectedly with status $qemu_status"
+            cat build/uefi/serial.log || true
+            exit 1
+          fi
+          cat build/uefi/debug.log
+          echo "=== serial log"
+          cat build/uefi/serial.log
+          grep -q 'SYSTEMES_KERNEL_OK' build/uefi/debug.log
+          grep -q 'SYSTEMES: serial UART initialized' build/uefi/debug.log
+          grep -q 'SYSTEMES: userland shell ready' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: user SYS_UPTIME succeeded' build/uefi/debug.log
+          grep -qF '${{ matrix.expect }}' build/uefi/debug.log
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          serial = Path("build/uefi/serial.log").read_text(errors="replace").replace("\r", "")
+          lines = serial.splitlines()
+          expected = [
+              "> Z",
+              "Unknown command. Type help.",
+              "> help",
+              "Commands: help, echo <text>, uptime, cat <path>, exit",
+              "> echo hellx\x08 \x08o",
+              "hello",
+              "> uptime",
+              "> uptime",
+              "> uptime extra",
+          ]
+          if "${{ matrix.disk }}" == "yes":
+              expected.extend(["> cat /hello.txt", "hello", "> cat /absent", "cat: not found"])
+          else:
+              expected.extend(["> cat /hello.txt", "cat: no filesystem", "> cat /absent", "cat: no filesystem"])
+          expected.extend(["> cat", "cat: usage", "> unknown", "Unknown command. Type help.", "> exit"])
+          cursor = 0
+          for item in expected:
+              try:
+                  cursor = lines.index(item, cursor) + 1
+              except ValueError:
+                  raise SystemExit(f"QEMU shell transcript missing or out of order: {item!r}")
+          uptime_prompts = [i for i, line in enumerate(lines) if line == "> uptime"]
+          if len(uptime_prompts) != 2:
+              raise SystemExit(f"expected exactly two uptime commands, got {len(uptime_prompts)}")
+          values = []
+          for index in uptime_prompts:
+              if index + 1 >= len(lines):
+                  raise SystemExit("uptime command has no output line")
+              match = re.fullmatch(r"(\d+)s", lines[index + 1])
+              if not match:
+                  raise SystemExit(f"uptime output is not an integer followed by s: {lines[index + 1]!r}")
+              values.append(int(match.group(1)))
+          if values[1] <= values[0]:
+              raise SystemExit(f"uptime did not advance: first={values[0]}, second={values[1]}")
+          print(f"QEMU uptime monotonicity verified: {values[0]}s -> {values[1]}s")
+          if lines.count("> Z") != 1 or "> ZZ" in lines:
+              raise SystemExit("single-character input was not echoed exactly once")
+          expected_hello_lines = 2 if "${{ matrix.disk }}" == "yes" else 1
+          if lines.count("hello") != expected_hello_lines:
+              raise SystemExit(f"expected {expected_hello_lines} hello output lines, got {lines.count('hello')}")
+          print("QEMU shell transcript verified: echo, cat, file-not-found, no-filesystem, usage, help and exit")
+          PY
+          grep -qF '> help' build/uefi/serial.log
+          grep -qF 'Commands: help, echo <text>, uptime, cat <path>, exit' build/uefi/serial.log
+          grep -qF 'cat: usage' build/uefi/serial.log
+          if [ "${{ matrix.disk }}" = "yes" ]; then
+            grep -qF 'cat: not found' build/uefi/serial.log
+          else
+            grep -qF 'cat: no filesystem' build/uefi/serial.log
+          fi
+          grep -qF '> uptime extra' build/uefi/serial.log
+          grep -qF 'hello' build/uefi/serial.log
+          grep -qF 'Unknown command. Type help.' build/uefi/serial.log
+          grep -qF '> exit' build/uefi/serial.log
+          grep -qF 'SYSTEMES: user process exited with status 0' build/uefi/debug.log
+          if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
+            echo "Kernel reported a failure marker"
+            exit 1
+          fi
+          if grep -qF '\r\n' build/uefi/debug.log; then
+            echo "debug log contains literal backslash-r-backslash-n escapes"
+            exit 1
+          fi
+      - name: Upload production boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-boot-${{ matrix.disk }}-${{ strategy.job-index }}
+          path: |
+            build/uefi/systemes-k1.iso
+            build/uefi/serial.log
+            build/uefi/debug.log
           if-no-files-found: warn

@@ -17,6 +17,9 @@ const USER_DATA_SELECTOR: u16 = 0x28;
 const USER_CODE_SELECTOR: u16 = 0x30;
 const USER_DATA_RPL3: u16 = USER_DATA_SELECTOR | 3;
 const USER_CODE_RPL3: u16 = USER_CODE_SELECTOR | 3;
+const USER_MODE_RFLAGS: u64 = 0x202;
+#[allow(dead_code)]
+const USER_TEST_RFLAGS: u64 = 0x02;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const USER_INTERRUPT_GATE_ATTRIBUTES: u8 = 0xEE;
 const USER_DATA_DESCRIPTOR: u64 = 0x00CF_F200_0000_FFFF;
@@ -64,6 +67,8 @@ static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
     InterruptStack([0; INTERRUPT_STACK_SIZE]);
 #[unsafe(no_mangle)]
 static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
+#[unsafe(no_mangle)]
+static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
@@ -171,7 +176,7 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
 unsafe extern "C" {
     fn systemes_load_gdt(pointer: *const DescriptorTablePointer);
     fn systemes_load_tr();
-    fn systemes_enter_ring3(user_rip: u64, user_rsp: u64);
+    fn systemes_enter_ring3(user_rip: u64, user_rsp: u64, user_rflags: u64);
     fn systemes_ring3_exit_trampoline();
     fn systemes_isr0();
     fn systemes_isr1();
@@ -212,30 +217,6 @@ unsafe extern "C" {
     fn systemes_syscall_entry();
 }
 
-/// Return from a SYSCALL-based user exit to the kernel continuation saved by
-/// `enter_user_mode`. Never returns.
-///
-/// # Safety
-///
-/// Only valid when `enter_user_mode` saved `SYSTEMES_RING3_SAVED_KERNEL_RSP`
-/// for the current CPU and the syscall is executing on the shared kernel stack.
-pub unsafe fn return_from_user_mode() -> ! {
-    // SAFETY: Assembly restores the kernel RSP/segments and returns to the
-    // instruction after `systemes_enter_ring3`.
-    unsafe {
-        asm!(
-            "mov ax, {kdata}",
-            "mov ds, ax",
-            "mov es, ax",
-            "mov ss, ax",
-            "mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]",
-            "ret",
-            kdata = const KERNEL_DATA_SELECTOR,
-            options(noreturn)
-        )
-    }
-}
-
 global_asm!(r#"
 .global systemes_load_gdt
 .type systemes_load_gdt, @function
@@ -255,10 +236,16 @@ systemes_load_gdt:
 .global systemes_enter_ring3
 .type systemes_enter_ring3, @function
 systemes_enter_ring3:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
     mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
     push {user_data_selector}
     push rsi
-    push 0x02
+    push rdx
     push {user_code_selector}
     push rdi
     iretq
@@ -271,6 +258,12 @@ systemes_ring3_exit_trampoline:
     mov es, ax
     mov ss, ax
     mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
     ret
 
 .global systemes_load_tr
@@ -525,6 +518,8 @@ systemes_syscall_entry:
     push r15
     mov rdi, rsp
     call systemes_syscall_dispatch
+    cmp rax, -1
+    je .Lsystemes_syscall_exit
     mov qword ptr [rsp + 112], rax
     pop r15
     pop r14
@@ -544,6 +539,9 @@ systemes_syscall_entry:
     add rsp, 8
     mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
     sysretq
+.Lsystemes_syscall_exit:
+    mov rax, qword ptr [rip + SYSTEMES_SYSCALL_EXIT_STATUS]
+    jmp systemes_ring3_exit_trampoline
 
 .global systemes_lapic_timer
 .type systemes_lapic_timer, @function
@@ -841,30 +839,40 @@ fn write_msr(msr: u32, value: u64) {
 ///
 /// The caller must have installed the kernel GDT/IDT/TSS, mapped `user_rip`
 /// executable and `user_rsp` writable in the active address space, and disabled
-/// interrupts. The user code must issue the expected `int 0x80` exit.
+/// interrupts. The user code must use a supported exit path: `int 0x80` or `SYS_EXIT`.
 #[cfg(feature = "qemu-ring3-test")]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
     RING3_EXIT_VALIDATED.store(false, Ordering::Release);
     RING3_EXPECTED_USER_RSP.store(user_rsp, Ordering::Release);
     RING3_ACTIVE.store(true, Ordering::Release);
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
-    unsafe { systemes_enter_ring3(user_rip, user_rsp) };
+    unsafe { systemes_enter_ring3(user_rip, user_rsp, USER_TEST_RFLAGS) };
     RING3_ACTIVE.store(false, Ordering::Release);
     RING3_EXIT_VALIDATED.load(Ordering::Acquire)
 }
 
-/// Enter ring 3 at `rip` with `rsp` as the user stack. Returns only when user
-/// code exits via SYS_EXIT (which restores the saved kernel continuation).
+/// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
+/// to `SYS_EXIT`; a user process that does not exit or faults remains non-returning.
 ///
 /// # Safety
 ///
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
-pub unsafe fn enter_user_mode(rip: u64, rsp: u64) {
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
-    unsafe { systemes_enter_ring3(rip, rsp) };
+    unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
+    user_exit_status()
 }
 
+pub(crate) fn set_user_exit_status(status: u64) {
+    SYSTEMES_SYSCALL_EXIT_STATUS.store(status, Ordering::Release);
+}
+
+pub(crate) fn user_exit_status() -> u64 {
+    SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
+}
 
 /// Install a private ring-0 GDT and gates for all architecturally defined
 /// exception vectors 0..31. Hardware interrupts remain disabled.
@@ -1126,6 +1134,14 @@ mod tests {
         let nmi = IdtEntry::interrupt_gate(0x2000, 2);
         let mc = IdtEntry::interrupt_gate(0x3000, 3);
         assert_eq!((df.ist, nmi.ist, mc.ist), (1, 2, 3));
+    }
+
+    #[test]
+    fn ring3_entry_enables_interrupts_for_the_monotonic_clock() {
+        assert_ne!(USER_MODE_RFLAGS & (1 << 9), 0);
+        assert_ne!(USER_MODE_RFLAGS & 0x02, 0);
+        assert_eq!(USER_TEST_RFLAGS & (1 << 9), 0);
+        assert_ne!(USER_TEST_RFLAGS & 0x02, 0);
     }
 
     #[test]
