@@ -32,6 +32,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-syscall-test",
         feature = "qemu-virtio-vfs-test",
         feature = "qemu-user-fs-test",
+        feature = "qemu-user-fault-test",
         feature = "qemu-smap-violation-test",
         feature = "qemu-smep-violation-test",
     ));
@@ -504,6 +505,14 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
     }
+    #[cfg(feature = "qemu-user-fault-test")]
+    if let Err(message) = unsafe {
+        systemes_kernel::user_fault_test::run(&mut frame_allocator, page_table_root)
+    } {
+        // SAFETY: The debug console is initialized and the kernel remains in ring 0.
+        unsafe { debug_write(message); }
+        halt();
+    }
     #[cfg(feature = "qemu-address-space-test")]
     {
         let interrupt_flag: u64;
@@ -815,11 +824,17 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe {
-        debug_write(b"SYSTEMES: user process exited with status ");
-        let mut digits = [0; 20];
-        let length = encode_decimal(shell_exit_status, &mut digits);
-        debug_write(&digits[..length]);
-        debug_write(b"\r\n");
+        if systemes_kernel::interrupts::user_fault_vector()
+            != systemes_kernel::interrupts::NO_USER_FAULT
+        {
+            debug_write(b"SYSTEMES: kernel resumed after killing the faulted user process\r\n");
+        } else {
+            debug_write(b"SYSTEMES: user process exited with status ");
+            let mut digits = [0; 20];
+            let length = encode_decimal(shell_exit_status, &mut digits);
+            debug_write(&digits[..length]);
+            debug_write(b"\r\n");
+        }
     }
     loop {
         // SAFETY: The user process has exited and the kernel can idle with interrupts enabled.

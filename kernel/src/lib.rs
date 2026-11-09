@@ -30,6 +30,8 @@ pub mod virtio_blk;
 pub mod simple_fs;
 pub mod vfs;
 pub mod file_descriptors;
+#[cfg(feature = "qemu-user-fault-test")]
+pub mod user_fault_test;
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_5354_454D_4553;
 pub const BOOT_INFO_VERSION: u32 = 2;

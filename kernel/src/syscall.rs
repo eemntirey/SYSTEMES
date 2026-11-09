@@ -344,6 +344,11 @@ pub fn reset_process_file_table() {
     PROCESS_FILES.lock().reset();
 }
 
+/// Release every file owned by a process the kernel terminates on a fault.
+pub(crate) fn abort_process_files() {
+    close_process_files();
+}
+
 #[repr(C)]
 pub(crate) struct SyscallFrame {
     pub r15: u64,
