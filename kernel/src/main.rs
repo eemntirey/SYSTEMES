@@ -829,118 +829,151 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES: no virtio-blk disk; embedded shell\r\n"); }
     }
 
-    unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
-    let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
-        Ok(space) => space,
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space failed\r\n"); }
-            halt();
-        }
-    };
-    let shell_entry = match unsafe {
-        load_elf(&shell_data, &mut frame_allocator, &mut shell_space)
-    } {
-        Ok(entry) => entry,
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell ELF load failed\r\n"); }
-            halt();
-        }
-    };
-    let shell_buffer = USER_BASE + 0x7000;
-    let buffer_frame = match frame_allocator.allocate_frame() {
-        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
-        _ => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer frame unavailable\r\n"); }
-            halt();
-        }
-    };
-    unsafe {
-        core::ptr::write_bytes(buffer_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
-        core::ptr::copy_nonoverlapping(b"> ".as_ptr(), buffer_frame as *mut u8, 2);
-    }
-    if unsafe {
-        shell_space.map_user_page(
-            &mut frame_allocator,
-            shell_buffer,
-            buffer_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        )
-    }
-    .is_err()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer mapping failed\r\n"); }
-        halt();
-    }
+    // Shell relaunch loop with anti-loop protection (P1-6c').
+    // Limits: max 5 restarts within a 2-second window to prevent infinite crash loops.
+    const MAX_RESTARTS: u64 = 5;
+    const RESTART_WINDOW_TICKS: u64 = 200; // 2 seconds at 100 Hz
+    let mut restart_timestamps: [u64; MAX_RESTARTS as usize] = [0; MAX_RESTARTS as usize];
+    let mut restart_count: u64 = 0;
+    let mut restart_head: usize = 0;
 
-    let stack_page = USER_BASE + 0x9000;
-    let stack_frame = match frame_allocator.allocate_frame() {
-        Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
-        _ => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack frame unavailable\r\n"); }
-            halt();
+    loop {
+        unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
+        let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
+            Ok(space) => space,
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space failed\r\n"); }
+                halt();
+            }
+        };
+        let shell_entry = match unsafe {
+            load_elf(&shell_data, &mut frame_allocator, &mut shell_space)
+        } {
+            Ok(entry) => entry,
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell ELF load failed\r\n"); }
+                halt();
+            }
+        };
+        let shell_buffer = USER_BASE + 0x7000;
+        let buffer_frame = match frame_allocator.allocate_frame() {
+            Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+            _ => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer frame unavailable\r\n"); }
+                halt();
+            }
+        };
+        unsafe {
+            core::ptr::write_bytes(buffer_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(b"> ".as_ptr(), buffer_frame as *mut u8, 2);
         }
-    };
-    unsafe {
-        core::ptr::write_bytes(stack_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
-    }
-    if unsafe {
-        shell_space.map_user_page(
-            &mut frame_allocator,
-            stack_page,
-            stack_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        )
-    }
-    .is_err()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack mapping failed\r\n"); }
-        halt();
-    }
-
-    let shell_stack = stack_page + systemes_kernel::memory::PAGE_SIZE - 16;
-    // SAFETY: The ELF code, writable user buffer, and user stack are mapped in `shell_space`.
-    unsafe {
-        asm!("cli", options(nomem, nostack));
-        write_cr3(shell_space.root());
-    }
-    if unsafe { systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3()) }
-        != shell_space.root()
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space activation failed\r\n"); }
-        halt();
-    }
-    unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
-    unsafe { debug_write(b"SYSTEMES: userland shell ready\r\n"); }
-    systemes_kernel::syscall::reset_process_file_table();
-    // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
-    let shell_exit_status = unsafe { enter_user_mode(shell_entry, shell_stack) };
-    // SAFETY: The kernel page-table root is the original valid address space.
-    unsafe { write_cr3(page_table_root) };
-    if unsafe {
-        systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3())
-    } != page_table_root
-    {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: kernel address space restore failed\r\n"); }
-        halt();
-    }
-    // SAFETY: The kernel root is active, so none of the shell's owned frames are in use.
-    if unsafe { shell_space.destroy(&mut frame_allocator) }.is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell process frames could not be reclaimed\r\n"); }
-        halt();
-    }
-    unsafe {
-        if systemes_kernel::interrupts::user_fault_vector()
-            != systemes_kernel::interrupts::NO_USER_FAULT
+        if unsafe {
+            shell_space.map_user_page(
+                &mut frame_allocator,
+                shell_buffer,
+                buffer_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )
+        }
+        .is_err()
         {
-            debug_write(b"SYSTEMES: kernel resumed after killing the faulted user process\r\n");
-        } else {
-            debug_write(b"SYSTEMES: user process exited with status ");
-            let mut digits = [0; 20];
-            let length = encode_decimal(shell_exit_status, &mut digits);
-            debug_write(&digits[..length]);
-            debug_write(b"\r\n");
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell buffer mapping failed\r\n"); }
+            halt();
         }
+
+        let stack_page = USER_BASE + 0x9000;
+        let stack_frame = match frame_allocator.allocate_frame() {
+            Some(frame) if frame % systemes_kernel::memory::PAGE_SIZE == 0 && frame < IDENTITY_MAP_BYTES => frame,
+            _ => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack frame unavailable\r\n"); }
+                halt();
+            }
+        };
+        unsafe {
+            core::ptr::write_bytes(stack_frame as *mut u8, 0, systemes_kernel::memory::PAGE_SIZE as usize);
+        }
+        if unsafe {
+            shell_space.map_user_page(
+                &mut frame_allocator,
+                stack_page,
+                stack_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )
+        }
+        .is_err()
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell stack mapping failed\r\n"); }
+            halt();
+        }
+
+        let shell_stack = stack_page + systemes_kernel::memory::PAGE_SIZE - 16;
+        // SAFETY: The ELF code, writable user buffer, and user stack are mapped in `shell_space`.
+        unsafe {
+            asm!("cli", options(nomem, nostack));
+            write_cr3(shell_space.root());
+        }
+        if unsafe { systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3()) }
+            != shell_space.root()
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell address space activation failed\r\n"); }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES_TEST: user shell address space activated\r\n"); }
+        unsafe { debug_write(b"SYSTEMES: userland shell ready\r\n"); }
+        systemes_kernel::syscall::reset_process_file_table();
+        // SAFETY: The shell is executable in Ring 3 and its stack is writable in the active address space.
+        let shell_exit_status = unsafe { enter_user_mode(shell_entry, shell_stack) };
+        // SAFETY: The kernel page-table root is the original valid address space.
+        unsafe { write_cr3(page_table_root) };
+        if unsafe {
+            systemes_kernel::address_space::cr3_root(systemes_kernel::address_space::read_cr3())
+        } != page_table_root
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: kernel address space restore failed\r\n"); }
+            halt();
+        }
+        // SAFETY: The kernel root is active, so none of the shell's owned frames are in use.
+        if unsafe { shell_space.destroy(&mut frame_allocator) }.is_err() {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: shell process frames could not be reclaimed\r\n"); }
+            halt();
+        }
+        let was_fault = systemes_kernel::interrupts::user_fault_vector()
+            != systemes_kernel::interrupts::NO_USER_FAULT;
+        if was_fault {
+            unsafe { debug_write(b"SYSTEMES: kernel resumed after killing the faulted user process\r\n"); }
+        } else {
+            unsafe {
+                debug_write(b"SYSTEMES: user process exited with status ");
+                let mut digits = [0; 20];
+                let length = encode_decimal(shell_exit_status, &mut digits);
+                debug_write(&digits[..length]);
+                debug_write(b"\r\n");
+            }
+        }
+
+        // Anti-loop protection: track restart timestamps.
+        let now = systemes_kernel::clock::ticks();
+        if restart_count < MAX_RESTARTS {
+            restart_timestamps[restart_head] = now;
+            restart_head = (restart_head + 1) as usize % MAX_RESTARTS as usize;
+            restart_count += 1;
+        } else {
+            // Check if the oldest restart is within the 2-second window.
+            let oldest = restart_timestamps[restart_head];
+            if now.saturating_sub(oldest) < RESTART_WINDOW_TICKS {
+                unsafe {
+                    debug_write(b"SYSTEMES: too many shell restarts (5 in < 2 s); stopping\r\n");
+                }
+                break;
+            }
+            restart_timestamps[restart_head] = now;
+            restart_head = (restart_head + 1) as usize % MAX_RESTARTS as usize;
+        }
+
+        unsafe { debug_write(b"SYSTEMES: userland shell restarted\r\n"); }
+        // Continue loop to relaunch shell.
     }
+
     loop {
         // SAFETY: The user process has exited and the kernel can idle with interrupts enabled.
         unsafe { asm!("sti; hlt", options(nomem, nostack)); }
