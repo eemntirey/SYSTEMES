@@ -21,7 +21,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT="$ROOT/build/uefi"
 GNUEFI_WORK="$ROOT/build/gnuefi"
 
-CI_FEATURES="qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test"
+CI_FEATURES="qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-clock-test,qemu-cooperative-scheduler-test,qemu-preemptive-scheduler-test,qemu-fpu-context-test,qemu-task-sleep-test,qemu-address-space-test,qemu-ring3-test,qemu-syscall-test,qemu-user-shell-test,qemu-virtio-vfs-test,qemu-user-fault-test"
 
 FEATURES=""
 WANT_DISK=0
@@ -233,6 +233,11 @@ SYSTEMES_TEST: SYS_YIELD returned to user process
 SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors
 SYSTEMES_TEST: user process exited and kernel resumed
 SYSTEMES_TEST: exited process frames reclaimed
+SYSTEMES: killing user process: vector=0x000000000000000E
+SYSTEMES_TEST: Ring 3 page fault killed only the user process
+SYSTEMES_TEST: fault exit status=142 vector=0x000000000000000E
+SYSTEMES_TEST: kernel launched a new user process after the fault
+SYSTEMES_TEST: faulted process frames reclaimed
 SYSTEMES_TEST: user shell address space activated
 SYSTEMES_TEST: user SYS_WRITE succeeded
 SYSTEMES_TEST: user SYS_READ received UART input
