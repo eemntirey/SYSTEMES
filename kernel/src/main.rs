@@ -35,6 +35,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-user-fs-test",
         feature = "qemu-smap-violation-test",
         feature = "qemu-smep-violation-test",
+        feature = "qemu-smp-test",
     ));
 
 unsafe extern "C" {
@@ -52,6 +53,29 @@ fn halt() -> ! {
     loop {
         // SAFETY: A fatal boot error must stop execution without returning to the loader.
         unsafe { asm!("cli; hlt", options(nomem, nostack)) };
+    }
+}
+
+/// Stable spelling of a bring-up failure so CI can match one marker prefix.
+#[cfg(feature = "qemu-smp-test")]
+fn smp_failure_name(error: systemes_kernel::smp::SmpBringUpError) -> &'static [u8] {
+    use systemes_kernel::smp::SmpBringUpError as BringUp;
+    match error {
+        BringUp::ApicUnavailable => b"apic-unavailable",
+        BringUp::NoApplicationProcessors => b"no-application-processors",
+        BringUp::NoLowMemoryPage => b"no-low-memory-page",
+        BringUp::TrampolineTooLarge => b"trampoline-too-large",
+        BringUp::Crash3Beyond4GiB => b"cr3-beyond-4gib",
+        BringUp::KernelEntryBeyond4GiB => b"kernel-entry-beyond-4gib",
+        BringUp::LapicBaseBeyond4GiB => b"lapic-base-beyond-4gib",
+        BringUp::ApicIdOutOfRange => b"apic-id-out-of-range",
+        BringUp::MissingPatchSite => b"missing-patch-site",
+        BringUp::AmbiguousPatchSite => b"ambiguous-patch-site",
+        BringUp::TrampolineRxVerificationFailed => b"trampoline-rx-verification",
+        BringUp::ApStackAllocationFailed => b"ap-stack-allocation",
+        BringUp::ApDidNotStart { .. } => b"ap-did-not-start",
+        BringUp::ApDidNotPark { .. } => b"ap-did-not-park",
+        BringUp::CrossCoreCounterMismatch => b"cross-core-counter-mismatch",
     }
 }
 
@@ -475,6 +499,60 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-smp-test")]
+    {
+        let madt = match discovered_madt.as_ref() {
+            Some(madt) if systemes_kernel::apic::is_active() => madt,
+            _ => {
+                unsafe {
+                    debug_write(b"SYSTEMES_KERNEL_FAIL: SMP test requires the ACPI MADT and an active Local APIC\r\n");
+                }
+                halt();
+            }
+        };
+        // SAFETY: page tables, Local APIC and the kernel heap are active; the
+        // bring-up saves and masks the caller's interrupt flag itself.
+        match unsafe {
+            systemes_kernel::smp::bring_up_application_processors(
+                madt,
+                &mut frame_allocator,
+                page_table_root,
+            )
+        } {
+            Ok(summary) => {
+                unsafe {
+                    let mut digits = [0u8; 20];
+                    debug_write(b"SYSTEMES: AP trampoline published under 1 MiB\r\n");
+                    for index in 0..summary.started_count {
+                        debug_write(b"SYSTEMES_TEST: AP ");
+                        let length = encode_decimal(summary.started_apic_ids[index] as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" started in kernel long mode\r\n");
+                    }
+                    debug_write(b"SYSTEMES_TEST: application processors parked after validation: count=");
+                    let length = encode_decimal(summary.started_count as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b"\r\n");
+                    let cpu_count = 1 + summary.started_count;
+                    debug_write(b"SYSTEMES_TEST: cross-core SpinLock counter verified across ");
+                    let length = encode_decimal(cpu_count as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b" CPUs\r\n");
+                    debug_write(b"SYSTEMES_TEST: cross-core relaxed counter verified\r\n");
+                    debug_write(b"SYSTEMES_TEST: per-AP private counters verified\r\n");
+                    debug_write(b"SYSTEMES_TEST: SMP bring-up validation complete\r\n");
+                }
+            }
+            Err(error) => {
+                unsafe {
+                    debug_write(b"SYSTEMES_KERNEL_FAIL: SMP bring-up failed, error=");
+                    debug_write(smp_failure_name(error));
+                    debug_write(b"\r\n");
+                }
+                halt();
+            }
+        }
+    }
     #[cfg(feature = "qemu-ring3-test")]
     match unsafe {
         systemes_kernel::address_space::run_qemu_ring3_test(&mut frame_allocator, page_table_root)

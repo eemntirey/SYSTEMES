@@ -140,6 +140,51 @@ impl PhysicalFrameAllocator {
         None
     }
 
+    /// Allocate one free 4 KiB frame strictly below `limit`, if any exists.
+    ///
+    /// Preference ordering matches `allocate_frame`: the lowest free page
+    /// wins. When the only candidate span crosses `limit`, the highest whole
+    /// page below the limit is cut from its top so the span can never hand
+    /// out frames at or above the limit. Page 0 is never returned; the null
+    /// page stays permanently reserved.
+    pub fn allocate_frame_below(&mut self, limit: u64) -> Option<u64> {
+        if limit <= PAGE_SIZE {
+            return None;
+        }
+        // Highest page-aligned address that still fits a whole page below
+        // the limit; used when a span must be cut at the limit.
+        let split_limit = (limit - PAGE_SIZE) & !(PAGE_SIZE - 1);
+        for index in 0..self.free_count {
+            let range = self.free[index];
+            if range.start >= limit {
+                break; // sorted ascending: later spans start at or beyond it
+            }
+            // Page 0 is reserved, so candidates of a page-0 span begin above it.
+            let first = if range.start == 0 { PAGE_SIZE } else { range.start };
+            if first + PAGE_SIZE > limit {
+                continue; // no whole page fits below the limit in this span
+            }
+            let address = if range.end <= limit {
+                first
+            } else {
+                split_limit.max(first)
+            };
+            if address == range.start || (range.start == 0 && address == PAGE_SIZE) {
+                // Head-advance: the taken page sits at the span bottom. This
+                // also permanently retires page 0 from a page-0 span.
+                self.free[index].start = address + PAGE_SIZE;
+                if self.free[index].start == self.free[index].end {
+                    remove_range(&mut self.free, &mut self.free_count, index);
+                }
+            } else {
+                // Top-cut: only [range.start, address) remains free below.
+                self.free[index].end = address;
+            }
+            return Some(address);
+        }
+        None
+    }
+
     /// Return a previously allocated frame to the free list.
     pub fn free_frame(&mut self, address: u64) -> Result<(), FrameFreeError> {
         if address % PAGE_SIZE != 0 {
@@ -325,5 +370,62 @@ mod tests {
         let allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
         assert_eq!(allocator.free_range_count(), 1);
         assert_eq!(allocator.free_pages(), 4);
+    }
+
+    #[test]
+    fn allocate_frame_below_picks_the_lowest_free_frame() {
+        let map = descriptor(7, 0x400000, 4);
+        let mut allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x400000));
+        assert_eq!(allocator.free_pages(), 3);
+        // The head advances one page at a time while frames remain.
+        assert_eq!(allocator.allocate_frame(), Some(0x401000));
+    }
+
+    #[test]
+    fn allocate_frame_below_cuts_a_span_that_crosses_the_limit() {
+        // [0x400000, 0x480000) straddles the 4.25 MiB limit.
+        let map = descriptor(7, 0x400000, 128);
+        let mut allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
+        assert_eq!(allocator.allocate_frame_below(0x440000), Some(0x43F000));
+        assert_eq!(allocator.free_pages(), 63);
+        // The untouched bottom stays available and can never re-hand 0x43F000.
+        assert_eq!(allocator.allocate_frame(), Some(0x400000));
+        assert_eq!(allocator.allocate_frame_below(0x440000), Some(0x401000));
+        assert_eq!(allocator.allocate_frame_below(0x440000), Some(0x402000));
+    }
+
+    #[test]
+    fn allocate_frame_below_never_returns_the_null_page() {
+        let map = descriptor(7, 0x0, 3);
+        let mut allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x1000));
+        assert_eq!(allocator.free_pages(), 1);
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x2000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), None);
+    }
+
+    #[test]
+    fn allocate_frame_below_rejects_unplaceable_requests() {
+        let mut map = [0u8; 120];
+        map[..40].copy_from_slice(&descriptor(7, 0x300000, 2));
+        map[40..80].copy_from_slice(&descriptor(7, 0x900000, 4));
+        map[80..].copy_from_slice(&descriptor(7, 0xFFF000, 1));
+        let mut allocator = PhysicalFrameAllocator::from_uefi_memory_map(&map, 40).unwrap();
+        // No whole page fits below the trivial limits.
+        assert_eq!(allocator.allocate_frame_below(0), None);
+        assert_eq!(allocator.allocate_frame_below(0x1000), None);
+        assert_eq!(allocator.allocate_frame_below(0x3000), None);
+        // Both lower spans start beyond the 2 MiB limit.
+        assert_eq!(allocator.allocate_frame_below(0x200000), None);
+        // The spans are still handed out lowest-first up to the limit.
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x300000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x301000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x900000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x901000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x902000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0x903000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), Some(0xFFF000));
+        assert_eq!(allocator.allocate_frame_below(0x0100_0000), None);
     }
 }
