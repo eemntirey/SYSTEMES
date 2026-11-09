@@ -356,12 +356,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: W^X 4 KiB page permissions verified\r\n") };
-    // P1-6b: Initialize BSP per-CPU GDT, IDT, TSS, stacks, and Local APIC timer.
-    if unsafe { systemes_kernel::per_cpu::initialize_bsp() }.is_err() {
-        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: per-CPU initialization failed\r\n"); }
-        halt();
-    }
-    unsafe { debug_write(b"SYSTEMES: BSP per-CPU GDT/IDT/TSS and Local APIC timer initialized\r\n") };
+    // interrupts::initialize already installed this BSP's private GDT/IDT/TSS.
+    // Do not initialize the legacy per_cpu module here: it owns a second set of
+    // descriptor tables and would replace the stacks used by exception dispatch.
     let supervisor_protection = match systemes_kernel::uaccess::enable() {
         Ok(features) => features,
         Err(_) => {
