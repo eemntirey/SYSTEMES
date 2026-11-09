@@ -63,9 +63,10 @@ static VOID debug_text(const CHAR8 *text) {
 
 static VOID debug_hex64(const CHAR8 *label, UINT64 value) {
     static const CHAR8 digits[] = "0123456789ABCDEF";
-    INTN shift;
+    UINTN nibble;
     debug_text(label);
-    for (shift = 60; shift >= 0; shift -= 4) {
+    for (nibble = 0; nibble < 16; ++nibble) {
+        UINTN shift = (15U - nibble) * 4U;
         debug_out((UINT8)digits[(value >> shift) & 0x0F]);
     }
     debug_text("\r\n");
