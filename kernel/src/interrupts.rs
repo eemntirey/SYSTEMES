@@ -69,7 +69,11 @@ static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
 static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
 #[unsafe(no_mangle)]
 static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
+static USER_FAULT_VECTOR: AtomicU64 = AtomicU64::new(NO_USER_FAULT);
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Sentinel stored when the last Ring 3 process exited on its own.
+pub const NO_USER_FAULT: u64 = u64::MAX;
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
 
@@ -169,6 +173,30 @@ pub struct ExceptionFrame {
 /// without modifying RIP.
 pub const fn is_resumable_exception(vector: u64) -> bool {
     vector == BREAKPOINT_VECTOR
+}
+
+/// Page-fault vector; CR2 holds the faulting linear address.
+pub const PAGE_FAULT_VECTOR: u64 = 14;
+
+/// Exit status reported when the kernel kills a process instead of the process
+/// calling `SYS_EXIT` itself: `128 + exception vector`, in the range 128..=159.
+pub const fn user_fault_exit_status(vector: u64) -> u64 {
+    128 + vector
+}
+
+/// Return true when the interrupted context was Ring 3.
+pub const fn is_user_mode_frame(cs: u64) -> bool {
+    cs & 3 == 3
+}
+
+/// CPU exceptions raised by user code that terminate only the offending process.
+///
+/// `#BP` is excluded because it stays resumable, and the IST-routed NMI, Double
+/// Fault and Machine Check vectors stay fatal because the kernel cannot trust
+/// the interrupted context. A fault taken at Ring 0 is always a kernel bug and
+/// remains fatal.
+pub const fn is_user_fault(vector: u64) -> bool {
+    matches!(vector, 0 | 5 | 6 | 11 | 12 | 13 | 14 | 16 | 17 | 19)
 }
 
 static mut IDT: [IdtEntry; 256] = [IdtEntry::MISSING; 256];
@@ -861,6 +889,7 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 /// and `rsp` writable in the active address space, and disabled interrupts.
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
+    USER_FAULT_VECTOR.store(NO_USER_FAULT, Ordering::Release);
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
     user_exit_status()
@@ -872,6 +901,51 @@ pub(crate) fn set_user_exit_status(status: u64) {
 
 pub(crate) fn user_exit_status() -> u64 {
     SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
+}
+
+/// Vector of the exception that killed the last user process, or
+/// `NO_USER_FAULT` when the process exited through `SYS_EXIT`.
+pub fn user_fault_vector() -> u64 {
+    USER_FAULT_VECTOR.load(Ordering::Acquire)
+}
+
+fn record_user_fault(vector: u64) {
+    USER_FAULT_VECTOR.store(vector, Ordering::Release);
+    set_user_exit_status(user_fault_exit_status(vector));
+}
+
+fn read_cr2() -> u64 {
+    let address: u64;
+    // SAFETY: CR2 is readable at CPL0 and holds the page-fault linear address.
+    unsafe { asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags)) };
+    address
+}
+
+/// Rewrite a Ring 3 exception frame so `iretq` returns to the kernel trampoline
+/// with the kernel stack, never back to the faulting process.
+///
+/// Returns false when the saved kernel stack is not a usable kernel address, in
+/// which case the caller must keep the fault fatal.
+///
+/// # Safety
+///
+/// `frame` must point at a CPU exception frame taken from Ring 3, so that the
+/// privilege frame contains the interrupted RSP and SS after RFLAGS.
+unsafe fn abort_user_frame(frame: &mut ExceptionFrame) -> bool {
+    let kernel_rsp = unsafe { addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile() };
+    if kernel_rsp == 0 || crate::address_space::is_user_address(kernel_rsp) {
+        return false;
+    }
+    let privilege_frame = frame as *mut ExceptionFrame as *mut u64;
+    frame.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+    frame.cs = KERNEL_CODE_SELECTOR as u64;
+    frame.rflags = 0x02;
+    // SAFETY: A Ring 3 exception frame appends the interrupted RSP and SS after RFLAGS.
+    unsafe {
+        privilege_frame.add(20).write(kernel_rsp);
+        privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
+    }
+    true
 }
 
 /// Install a private ring-0 GDT and gates for all architecturally defined
@@ -1066,6 +1140,34 @@ pub extern "C" fn systemes_exception_dispatch(
         return;
     }
 
+    // A Ring 3 fault terminates only the offending process: close its files,
+    // record the vector and return to the kernel continuation that launched it.
+    if let Some(frame_ref) = unsafe { frame.as_mut() }
+        && is_user_mode_frame(frame_ref.cs)
+        && is_user_fault(vector)
+    {
+        let fault_address = if vector == PAGE_FAULT_VECTOR { read_cr2() } else { 0 };
+        unsafe {
+            debug_write(b"SYSTEMES: killing user process: vector=0x");
+            debug_hex(vector);
+            debug_write(b" rip=0x");
+            debug_hex(frame_ref.rip);
+            if vector == PAGE_FAULT_VECTOR {
+                debug_write(b" cr2=0x");
+                debug_hex(fault_address);
+            }
+            debug_write(b"\r\n");
+        }
+        if unsafe { abort_user_frame(frame_ref) } {
+            crate::syscall::abort_process_files();
+            record_user_fault(vector);
+            RING3_ACTIVE.store(false, Ordering::Release);
+            unsafe { debug_write(b"SYSTEMES: user process terminated; kernel resumed\r\n") };
+            return;
+        }
+        unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: user fault has no kernel return stack\r\n") };
+    }
+
     unsafe {
         asm!("cli", options(nomem, nostack));
         loop {
@@ -1208,6 +1310,23 @@ mod tests {
         for vector in [0, 1, 2, 6, 8, 13, 14, 18, 31] {
             assert!(!is_resumable_exception(vector));
         }
+    }
+
+    #[test]
+    fn classifies_ring3_faults_and_their_exit_statuses() {
+        assert!(is_user_mode_frame(USER_CODE_RPL3 as u64));
+        assert!(is_user_mode_frame((USER_CODE_RPL3 | 3) as u64));
+        assert!(!is_user_mode_frame(KERNEL_CODE_SELECTOR as u64));
+        assert!(is_user_fault(PAGE_FAULT_VECTOR));
+        assert!(is_user_fault(0));
+        assert!(is_user_fault(6));
+        assert!(is_user_fault(13));
+        assert!(!is_user_fault(BREAKPOINT_VECTOR));
+        assert!(!is_user_fault(2));
+        assert!(!is_user_fault(8));
+        assert!(!is_user_fault(18));
+        assert_eq!(user_fault_exit_status(0), 128);
+        assert_eq!(user_fault_exit_status(PAGE_FAULT_VECTOR), 142);
     }
 
     #[test]
