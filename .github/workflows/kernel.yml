@@ -79,6 +79,29 @@ jobs:
           test "$kernel_image_bytes" -ge "$(stat -c %s build/uefi/KERNEL.BIN)"
           echo "KERNEL_IMAGE_BYTES=${kernel_image_bytes}" >> "$GITHUB_ENV"
           echo "Kernel image reservation: ${kernel_image_bytes} bytes (including .bss)"
+      - name: Verify ELF .data, .bss and KERNEL.BIN extents
+        run: |
+          elf=kernel/target/x86_64-unknown-none/release/systemes-kernel
+          readelf -SW "$elf" | tee build/uefi/elf-sections.txt
+          grep -Eq '\] \.data[[:space:]]+PROGBITS' build/uefi/elf-sections.txt
+          grep -Eq '\] \.bss[[:space:]]+NOBITS' build/uefi/elf-sections.txt
+          symbol() { nm -n "$elf" | awk -v name="$1" '$3 == name { print "0x" $1 }'; }
+          data_start=$(symbol __data_start)
+          data_end=$(symbol __data_end)
+          bss_start=$(symbol __bss_start)
+          bss_end=$(symbol __bss_end)
+          kernel_end=$(symbol __kernel_image_end)
+          test -n "$data_start" && test -n "$data_end"
+          test -n "$bss_start" && test -n "$bss_end" && test -n "$kernel_end"
+          data_bytes=$((data_end - data_start))
+          bss_bytes=$((bss_end - bss_start))
+          kernel_extent=$((kernel_end - 0x02000000))
+          binary_bytes=$(stat -c %s build/uefi/KERNEL.BIN)
+          test "$data_bytes" -gt 0
+          test "$bss_bytes" -gt 0
+          test "$binary_bytes" -gt 0
+          test "$binary_bytes" -le "$kernel_extent"
+          printf 'ELF .data=%s bytes .bss=%s bytes KERNEL.BIN=%s bytes linked_extent=%s bytes\\n' "$data_bytes" "$bss_bytes" "$binary_bytes" "$kernel_extent"
       - name: Build GNU-EFI loader
         run: |
           gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES -I/usr/include/efi -I/usr/include/efi/x86_64 -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -c boot/uefi-loader/main.c -o build/uefi/loader.o
