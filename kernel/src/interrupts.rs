@@ -218,7 +218,6 @@ unsafe extern "C" {
 
 global_asm!(r#"
 .global systemes_load_gdt
-.type systemes_load_gdt, @function
 systemes_load_gdt:
     lgdt [rdi]
     push {kernel_code_selector}
@@ -233,7 +232,6 @@ systemes_load_gdt:
     ret
 
 .global systemes_enter_ring3
-.type systemes_enter_ring3, @function
 systemes_enter_ring3:
     push rbx
     push rbp
@@ -250,7 +248,6 @@ systemes_enter_ring3:
     iretq
 
 .global systemes_ring3_exit_trampoline
-.type systemes_ring3_exit_trampoline, @function
 systemes_ring3_exit_trampoline:
     mov ax, {kernel_data_selector}
     mov ds, ax
@@ -266,235 +263,234 @@ systemes_ring3_exit_trampoline:
     ret
 
 .global systemes_load_tr
-.type systemes_load_tr, @function
 systemes_load_tr:
     mov ax, {tss_selector}
     ltr ax
     ret
 
 .global systemes_isr0
-.type systemes_isr0, @function
+
 systemes_isr0:
     push 0
     push 0
     jmp systemes_exception_common
 
 .global systemes_isr1
-.type systemes_isr1, @function
+
 systemes_isr1:
     push 0
     push 1
     jmp systemes_exception_common
 
 .global systemes_isr2
-.type systemes_isr2, @function
+
 systemes_isr2:
     push 0
     push 2
     jmp systemes_exception_common
 
 .global systemes_isr3
-.type systemes_isr3, @function
+
 systemes_isr3:
     push 0
     push 3
     jmp systemes_exception_common
 
 .global systemes_isr4
-.type systemes_isr4, @function
+
 systemes_isr4:
     push 0
     push 4
     jmp systemes_exception_common
 
 .global systemes_isr5
-.type systemes_isr5, @function
+
 systemes_isr5:
     push 0
     push 5
     jmp systemes_exception_common
 
 .global systemes_isr6
-.type systemes_isr6, @function
+
 systemes_isr6:
     push 0
     push 6
     jmp systemes_exception_common
 
 .global systemes_isr7
-.type systemes_isr7, @function
+
 systemes_isr7:
     push 0
     push 7
     jmp systemes_exception_common
 
 .global systemes_isr8
-.type systemes_isr8, @function
+
 systemes_isr8:
     push 8
     jmp systemes_exception_common
 
 .global systemes_isr9
-.type systemes_isr9, @function
+
 systemes_isr9:
     push 0
     push 9
     jmp systemes_exception_common
 
 .global systemes_isr10
-.type systemes_isr10, @function
+
 systemes_isr10:
     push 10
     jmp systemes_exception_common
 
 .global systemes_isr11
-.type systemes_isr11, @function
+
 systemes_isr11:
     push 11
     jmp systemes_exception_common
 
 .global systemes_isr12
-.type systemes_isr12, @function
+
 systemes_isr12:
     push 12
     jmp systemes_exception_common
 
 .global systemes_isr13
-.type systemes_isr13, @function
+
 systemes_isr13:
     push 13
     jmp systemes_exception_common
 
 .global systemes_isr14
-.type systemes_isr14, @function
+
 systemes_isr14:
     push 14
     jmp systemes_exception_common
 
 .global systemes_isr15
-.type systemes_isr15, @function
+
 systemes_isr15:
     push 0
     push 15
     jmp systemes_exception_common
 
 .global systemes_isr16
-.type systemes_isr16, @function
+
 systemes_isr16:
     push 0
     push 16
     jmp systemes_exception_common
 
 .global systemes_isr17
-.type systemes_isr17, @function
+
 systemes_isr17:
     push 17
     jmp systemes_exception_common
 
 .global systemes_isr18
-.type systemes_isr18, @function
+
 systemes_isr18:
     push 0
     push 18
     jmp systemes_exception_common
 
 .global systemes_isr19
-.type systemes_isr19, @function
+
 systemes_isr19:
     push 0
     push 19
     jmp systemes_exception_common
 
 .global systemes_isr20
-.type systemes_isr20, @function
+
 systemes_isr20:
     push 0
     push 20
     jmp systemes_exception_common
 
 .global systemes_isr21
-.type systemes_isr21, @function
+
 systemes_isr21:
     push 21
     jmp systemes_exception_common
 
 .global systemes_isr22
-.type systemes_isr22, @function
+
 systemes_isr22:
     push 0
     push 22
     jmp systemes_exception_common
 
 .global systemes_isr23
-.type systemes_isr23, @function
+
 systemes_isr23:
     push 0
     push 23
     jmp systemes_exception_common
 
 .global systemes_isr24
-.type systemes_isr24, @function
+
 systemes_isr24:
     push 0
     push 24
     jmp systemes_exception_common
 
 .global systemes_isr25
-.type systemes_isr25, @function
+
 systemes_isr25:
     push 0
     push 25
     jmp systemes_exception_common
 
 .global systemes_isr26
-.type systemes_isr26, @function
+
 systemes_isr26:
     push 0
     push 26
     jmp systemes_exception_common
 
 .global systemes_isr27
-.type systemes_isr27, @function
+
 systemes_isr27:
     push 0
     push 27
     jmp systemes_exception_common
 
 .global systemes_isr28
-.type systemes_isr28, @function
+
 systemes_isr28:
     push 0
     push 28
     jmp systemes_exception_common
 
 .global systemes_isr29
-.type systemes_isr29, @function
+
 systemes_isr29:
     push 29
     jmp systemes_exception_common
 
 .global systemes_isr30
-.type systemes_isr30, @function
+
 systemes_isr30:
     push 30
     jmp systemes_exception_common
 
 .global systemes_isr31
-.type systemes_isr31, @function
+
 systemes_isr31:
     push 0
     push 31
     jmp systemes_exception_common
 
 .global systemes_user_exit
-.type systemes_user_exit, @function
+
 systemes_user_exit:
     push 0
     push 128
     jmp systemes_exception_common
 
 .global systemes_syscall_entry
-.type systemes_syscall_entry, @function
+
 systemes_syscall_entry:
     mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
     lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
@@ -543,26 +539,26 @@ systemes_syscall_entry:
     jmp systemes_ring3_exit_trampoline
 
 .global systemes_lapic_timer
-.type systemes_lapic_timer, @function
+
 systemes_lapic_timer:
     push 0
     push 64
     jmp systemes_irq_common
 
 .global systemes_scheduler_yield
-.type systemes_scheduler_yield, @function
+
 systemes_scheduler_yield:
     push 0
     push 65
     jmp systemes_irq_common
 
 .global systemes_apic_spurious
-.type systemes_apic_spurious, @function
+
 systemes_apic_spurious:
     iretq
 
 .global systemes_irq_common
-.type systemes_irq_common, @function
+
 systemes_irq_common:
     cld
     push rax
@@ -611,7 +607,7 @@ systemes_irq_common:
     iretq
 
 .global systemes_exception_common
-.type systemes_exception_common, @function
+
 systemes_exception_common:
     cld
     push rax
