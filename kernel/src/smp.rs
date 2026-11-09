@@ -4,17 +4,20 @@
 //!
 //! 1. Enumerate enabled processors from the ACPI MADT, skipping the
 //!    bootstrap CPU identified through its resident Local APIC.
-//! 2. Publish a self-contained 16-bit/32-bit/64-bit bring-up trampoline in
-//!    the low 1 MiB — the only region a STARTUP IPI vector can address.
+//! 2. Publish a self-contained real-mode/32-bit/long-mode bring-up trampoline
+//!    in a reserved page below 1 MiB — the only region a STARTUP IPI vector
+//!    can address.
 //! 3. Wake every enabled application processor one at a time through the
 //!    Local APIC ICR INIT/SIPI sequence.
-//! 4. Each AP executes the page-resident 16-bit and 32-bit bring-up stages on
-//!    the bootstrap CR3, reads its own Local APIC ID from MMIO, and enters
+//! 4. Each AP runs the real-mode stage, enters 32-bit protected mode with a
+//!    page-based code descriptor, enables PAE/LME/NXE on the bootstrap CR3,
+//!    reads its own Local APIC ID from MMIO through flat selectors, and enters
 //!    kernel long mode through a far jump to the patched `systemes_ap_entry`
-//!    address. This keeps every low-memory control transfer either
-//!    page-relative (CS16 base) or explicitly patched (the far-jump slot),
-//!    never dependent on a flat 64-bit code segment's ignored base field.
-//! 5. Bootstrap CPU and APs execute the same validation: private counters,
+//!    address. Every low-memory control transfer is either page-relative or
+//!    explicitly patched, never dependent on a segment base long mode ignores.
+//! 5. The SIPI page is reserved before the identity map allocates its tables,
+//!    because those tables are taken from the lowest physical frames.
+//! 6. Bootstrap CPU and APs execute the same validation: private counters,
 //!    a relaxed shared counter and increments guarded by the kernel's own
 //!    `SpinLock` — which only stabilizes when cross-core memory coherence
 //!    and the lock itself behave correctly on real symmetric harts.
@@ -43,10 +46,9 @@ pub const TRAMPOLINE_MAX_BYTES: usize = 0x0F00;
 const AP_STACK_BYTES: usize = 8 * 1024;
 /// Rounds every CPU runs while exercising the shared counters and lock.
 const VALIDATION_ROUNDS: u64 = 250;
-/// Legacy conventional RAM page used when UEFI reports no usable frame below
-/// 1 MiB. It sits above the real-mode IVT/BDA and below any EBDA, and the
-/// firmware never hands it out, so it stays exclusively ours.
-const TRAMPOLINE_FALLBACK_PAGE: u64 = 0x8000;
+/// Low-memory page claimed by `reserve_trampoline_page` before the identity
+/// map allocates its tables from the same region.
+static RESERVED_TRAMPOLINE_PAGE: AtomicU64 = AtomicU64::new(0);
 /// Upper bound of spin iterations to wait for one AP to reach long mode.
 const AP_START_TIMEOUT_ITERATIONS: usize = 400_000_000;
 /// Upper bound of spin iterations to wait for one AP to park.
@@ -114,12 +116,17 @@ const MAGIC_DS16_DESCRIPTOR_BASE: u32 = 0x4C44_4703;
 const MAGIC_TRAMPOLINE_CR3: u32 = 0x4C44_4704;
 const MAGIC_TRAMPOLINE_LAPIC_BASE: u32 = 0x4C44_4740;
 const MAGIC_TRAMPOLINE_AP_ENTRY: u32 = 0x4C44_4751;
+/// Absolute address of the far pointer read by the 32-bit stage.
+const MAGIC_TRAMPOLINE_ENTRY_ADDR: u32 = 0x4C44_4752;
 
 unsafe extern "C" {
     static systemes_ap_trampoline: u8;
     static systemes_ap_trampoline_end: u8;
     /// Start of the trampoline's private GDT inside the payload.
     static ap_tramp_gdt: u8;
+    /// Far pointer (offset then long-mode selector) consumed by the
+    /// 32-bit stage once it switched to flat data selectors.
+    static ap_tramp_kernel_entry: u8;
 }
 
 global_asm!(
@@ -158,10 +165,11 @@ systemes_ap_trampoline:
     movl %cr4, %eax
     orl $0x20, %eax
     movl %eax, %cr4
-    /* Assert EFER.LME ahead of paging. */
+    /* Assert EFER.LME and EFER.NXE ahead of paging: the kernel identity map
+       marks data leaves NX, and without NXE those bits are reserved. */
     movl $0xC0000080, %ecx
     rdmsr
-    orl $0x100, %eax
+    orl $0x900, %eax
     wrmsr
     /* Replace CR3 with the bootstrap CPU's kernel identity map. */
     movl (ap_tramp_cr3 - systemes_ap_trampoline), %eax
@@ -171,18 +179,25 @@ systemes_ap_trampoline:
     movl %cr0, %eax
     orl $0x80000000, %eax
     movl %eax, %cr0
-    /* Read this CPU's Local APIC ID from the xAPIC register page. The page
-       address is patched with the MADT LOCAL APIC base, and the kernel
-       identity map keeps it reachable after paging is on. */
-    movl (ap_tramp_lapic_base - systemes_ap_trampoline), %eax
-    movl 0x20(%eax), %eax
+    /* Fetch the LAPIC base while DS still carries the page base, then switch
+       every data selector to the flat descriptor: 32-bit paging adds the
+       segment base, and MMIO or kernel addresses must not be offset by it. */
+    movl (ap_tramp_lapic_base - systemes_ap_trampoline), %ebx
+    movw $0x18, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    movw %ax, %gs
+    movw %ax, %ss
+    /* Read this CPU's Local APIC ID from the xAPIC register page. */
+    movl 0x20(%ebx), %eax
     shrl $24, %eax
     andl $0xFF, %eax
     movl %eax, %edi
     /* Far jump straight into the kernel's 64-bit entry point. The BSP
-       patches the offset slot with the absolute linear address of
-       systemes_ap_entry; the pointer carries the long-mode selector 0x18. */
-    ljmp *(ap_tramp_kernel_entry - systemes_ap_trampoline)
+       patches the operand with the absolute linear address of the far
+       pointer, which itself carries systemes_ap_entry and selector 0x20. */
+    ljmp *({MAGIC_TRAMPOLINE_ENTRY_ADDR})
 
     ud2
 
@@ -202,7 +217,9 @@ ap_tramp_gdt:
     .byte 0xFF, 0xFF
     .long {MAGIC_DS16_DESCRIPTOR_BASE}
     .byte 0x4F, 0
-    /* 0x18: 64-bit code, flat base, G=1, L=1. */
+    /* 0x18: flat 32-bit data, base 0, limit 4 GiB, read/write. */
+    .quad 0x00CF92000000FFFF
+    /* 0x20: 64-bit code, flat base, G=1, L=1. */
     .quad 0x00AF9A000000FFFF
 ap_tramp_gdt_end:
 
@@ -215,7 +232,7 @@ ap_tramp_lapic_base:
 
 ap_tramp_kernel_entry:
     .long {MAGIC_TRAMPOLINE_AP_ENTRY}
-    .word 0x18
+    .word 0x20
 
 .global systemes_ap_trampoline_end
 systemes_ap_trampoline_end:
@@ -227,6 +244,7 @@ systemes_ap_trampoline_end:
     MAGIC_TRAMPOLINE_CR3 = const MAGIC_TRAMPOLINE_CR3,
     MAGIC_TRAMPOLINE_LAPIC_BASE = const MAGIC_TRAMPOLINE_LAPIC_BASE,
     MAGIC_TRAMPOLINE_AP_ENTRY = const MAGIC_TRAMPOLINE_AP_ENTRY,
+    MAGIC_TRAMPOLINE_ENTRY_ADDR = const MAGIC_TRAMPOLINE_ENTRY_ADDR,
     options(att_syntax),
 );
 
@@ -266,6 +284,7 @@ fn verify_unique_magics(payload: &[u8]) -> Result<(), SmpBringUpError> {
         MAGIC_TRAMPOLINE_CR3.to_le_bytes(),
         MAGIC_TRAMPOLINE_LAPIC_BASE.to_le_bytes(),
         MAGIC_TRAMPOLINE_AP_ENTRY.to_le_bytes(),
+        MAGIC_TRAMPOLINE_ENTRY_ADDR.to_le_bytes(),
     ] {
         let _ = find_patch_site(payload, &magic)?;
     }
@@ -320,6 +339,18 @@ fn run_core_validation(slot: usize) {
     }
 }
 
+/// Bootstrap-side wait helper for monotone slot states; an AP can advance
+/// past `expected` before the bootstrap CPU looks, so compare by rank.
+fn wait_for_slot_state_at_least(slot: usize, expected: u64, iterations: usize) -> bool {
+    for _ in 0..iterations {
+        if AP_STATES[slot].load(Ordering::Acquire) >= expected {
+            return true;
+        }
+        core::hint::spin_loop();
+    }
+    false
+}
+
 /// Bootstrap-side wait helper; returns false only past the iteration bound.
 fn wait_for_slot_state(slot: usize, expected: u64, iterations: usize) -> bool {
     for _ in 0..iterations {
@@ -335,6 +366,22 @@ fn wait_for_slot_state(slot: usize, expected: u64, iterations: usize) -> bool {
 /// validate cross-core synchronization. Interrupts on the calling CPU are
 /// held off for the duration and restored on exit.
 ///
+/// Claim the physical page STARTUP interrupts will execute from.
+///
+/// Must run once on the bootstrap CPU, after the frame allocator exists and
+/// before the identity map allocates its tables out of the first MiB. The
+/// page stays allocated for the whole boot and is never handed out again.
+pub fn reserve_trampoline_page(allocator: &mut PhysicalFrameAllocator) -> Option<u64> {
+    // The SIPI vector is a page number in 0..=255, so the page must sit
+    // strictly inside the first MiB and must not be the null page.
+    let page = allocator.allocate_frame_below(0x0010_0000)?;
+    if page < PAGE_SIZE || (page >> 12) & 0xFF == 0 {
+        return None;
+    }
+    RESERVED_TRAMPOLINE_PAGE.store(page, Ordering::Release);
+    Some(page)
+}
+
 /// # Safety
 ///
 /// The kernel page-table root must already be active, the Local APIC must
@@ -397,12 +444,12 @@ unsafe fn bring_up_application_processors_inner(
         return Err(SmpBringUpError::NoApplicationProcessors);
     }
 
-    // The SIPI vector addresses physical pages only below 1 MiB.
-    let trampoline_page = match allocator.allocate_frame_below(0x0010_0000) {
-        Some(page) if page >= PAGE_SIZE && (page >> 12) & 0xFF != 0 => page,
-        // OVMF marks the whole first MiB reserved, so fall back to the legacy
-        // conventional page rather than failing a boot that hardware supports.
-        _ => TRAMPOLINE_FALLBACK_PAGE,
+    // The SIPI vector addresses physical pages only below 1 MiB, and the
+    // identity map consumes that region for its own tables at boot, so the
+    // boot path must have reserved the page before paging was built.
+    let trampoline_page = match RESERVED_TRAMPOLINE_PAGE.load(Ordering::Acquire) {
+        page if page >= PAGE_SIZE && (page >> 12) & 0xFF != 0 => page,
+        _ => return Err(SmpBringUpError::NoLowMemoryPage),
     };
 
     let source = trampoline_bytes();
@@ -419,20 +466,6 @@ unsafe fn bring_up_application_processors_inner(
         core::slice::from_raw_parts_mut(trampoline_page as *mut u8, TRAMPOLINE_MAX_BYTES)
     };
     payload[..source.len()].copy_from_slice(source);
-    #[cfg(feature = "qemu-smp-test")]
-    unsafe {
-        let mut digits = [0u8; 20];
-        crate::console::debug_write(b"SMPDBG cr3=");
-        let len = crate::console::encode_decimal(page_table_root, &mut digits);
-        crate::console::debug_write(&digits[..len]);
-        crate::console::debug_write(b" page=");
-        let len = crate::console::encode_decimal(trampoline_page, &mut digits);
-        crate::console::debug_write(&digits[..len]);
-        crate::console::debug_write(b" len=");
-        let len = crate::console::encode_decimal(source.len() as u64, &mut digits);
-        crate::console::debug_write(&digits[..len]);
-        crate::console::debug_write(b"\r\n");
-    }
 
     if page_table_root > u32::MAX as u64 {
         return Err(SmpBringUpError::Crash3Beyond4GiB);
@@ -460,17 +493,18 @@ unsafe fn bring_up_application_processors_inner(
         MAGIC_TRAMPOLINE_AP_ENTRY,
         kernel_entry as u32,
     )?;
-
-    #[cfg(feature = "qemu-smp-test")]
-    unsafe {
-        crate::console::debug_write(b"SMPDBG payload:");
-        for byte in payload[0x8C..0xA8].iter() {
-            let hi = b"0123456789abcdef"[(byte >> 4) as usize];
-            let lo = b"0123456789abcdef"[(byte & 0xF) as usize];
-            crate::console::debug_write(&[hi, lo, b' ']);
-        }
-        crate::console::debug_write(b"\r\n");
-    }
+    // The 32-bit stage reaches the far pointer through flat selectors, so
+    // its operand is an absolute linear address inside the trampoline page.
+    let entry_offset = core::ptr::addr_of!(ap_tramp_kernel_entry) as usize
+        - core::ptr::addr_of!(systemes_ap_trampoline) as usize;
+    let entry_address = trampoline_page
+        .checked_add(entry_offset as u64)
+        .ok_or(SmpBringUpError::MissingPatchSite)?;
+    patch_u32(
+        &mut payload,
+        MAGIC_TRAMPOLINE_ENTRY_ADDR,
+        entry_address as u32,
+    )?;
 
     // Publish the trampoline page as RX in the shared kernel page map.
     let rx_region = [MemoryRegion {
@@ -526,7 +560,9 @@ unsafe fn bring_up_application_processors_inner(
             crate::apic::send_init_and_startup_ipi(apic_id, trampoline_page)
                 .map_err(|_| SmpBringUpError::ApicUnavailable)?;
         }
-        if !wait_for_slot_state(slot, SLOT_STATE_STARTED, AP_START_TIMEOUT_ITERATIONS) {
+        // The AP can already be parked by the time the bootstrap CPU polls,
+        // so the start wait accepts any later state rather than exactly one.
+        if !wait_for_slot_state_at_least(slot, SLOT_STATE_STARTED, AP_START_TIMEOUT_ITERATIONS) {
             return Err(SmpBringUpError::ApDidNotStart { apic_id });
         }
     }

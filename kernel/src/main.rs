@@ -260,6 +260,18 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\r\n") };
+    #[cfg(feature = "qemu-smp-test")]
+    {
+        // The identity map allocates its tables from the lowest frames, so the
+        // SIPI page must be claimed before paging is built.
+        if systemes_kernel::smp::reserve_trampoline_page(&mut frame_allocator).is_none() {
+            unsafe {
+                debug_write(b"SYSTEMES_KERNEL_FAIL: no low-memory frame for the SMP trampoline\r\n");
+            }
+            halt();
+        }
+        unsafe { debug_write(b"SYSTEMES: SMP trampoline frame reserved below 1 MiB\r\n") };
+    }
     if systemes_kernel::paging::enable_nx().is_err() {
         unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU does not support NX\r\n"); }
         halt();
