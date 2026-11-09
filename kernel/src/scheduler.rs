@@ -291,9 +291,9 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
     Ok(())
 }
 
-/// Legacy single-CPU initialization (calls initialize_cpu(0, entries)).
+/// Initialize the current CPU's scheduler (legacy convenience entry point).
 pub fn initialize(entries: &[TaskEntry]) -> Result<(), &'static str> {
-    initialize_cpu(0, entries)
+    initialize_cpu(current_cpu_index(), entries)
 }
 
 /// Select the next runnable task in round-robin order on the current CPU.
