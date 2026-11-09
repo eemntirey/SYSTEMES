@@ -63,12 +63,25 @@ static VOID debug_text(const CHAR8 *text) {
 
 static VOID debug_hex64(const CHAR8 *label, UINT64 value) {
     static const CHAR8 digits[] = "0123456789ABCDEF";
-    UINTN nibble;
     debug_text(label);
-    for (nibble = 0; nibble < 16; ++nibble) {
-        UINTN shift = (15U - nibble) * 4U;
-        debug_out((UINT8)digits[(value >> shift) & 0x0F]);
-    }
+    /* Unroll all nibbles: this diagnostic must not depend on a loop counter
+       or compiler register allocation in the pre-ExitBootServices path. */
+    debug_out((UINT8)digits[(value >> 60) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 56) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 52) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 48) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 44) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 40) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 36) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 32) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 28) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 24) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 20) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 16) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 12) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 8) & 0x0F]);
+    debug_out((UINT8)digits[(value >> 4) & 0x0F]);
+    debug_out((UINT8)digits[value & 0x0F]);
     debug_text("\r\n");
 }
 
