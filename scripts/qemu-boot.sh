@@ -10,6 +10,7 @@
 #   scripts/qemu-boot.sh --ci-features       # same feature set as the CI job
 #   scripts/qemu-boot.sh --features qemu-virtio-vfs-test
 #   scripts/qemu-boot.sh --disk --input 'help\n'
+#   scripts/qemu-boot.sh --smp 4 --features qemu-smp-test
 #   scripts/qemu-boot.sh --ci-features --ci-markers
 #
 # Artifacts: build/uefi/{KERNEL.BIN,BOOTX64.EFI,systemes-k1.iso,debug.log,
@@ -25,6 +26,7 @@ CI_FEATURES="qemu-exception-test,qemu-heap-test,qemu-acpi-madt-test,qemu-apic-cl
 FEATURES=""
 WANT_DISK=0
 INPUT=""
+SMP_CPUS=1
 TIMEOUT=45
 CHECK_CI_MARKERS=0
 EXPECT=()
@@ -34,6 +36,7 @@ while [ $# -gt 0 ]; do
     --features) FEATURES="$2"; shift 2 ;;
     --ci-features) FEATURES="$CI_FEATURES"; shift ;;
     --disk) WANT_DISK=1; shift ;;
+    --smp) SMP_CPUS="$2"; shift 2 ;;
     --input) INPUT="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --expect) EXPECT+=("$2"); shift 2 ;;
@@ -135,7 +138,7 @@ test -n "$firmware" && test -n "$variables" || { echo "ERROR: OVMF firmware not 
 cp "$variables" "$OUT/OVMF_VARS.fd"
 rm -f "$OUT/serial.log" "$OUT/debug.log" "$OUT/qemu.log"
 
-QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -m 512M
+QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -smp "$SMP_CPUS" -m 512M
   -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware"
   -drive if=pflash,format=raw,unit=1,file="$OUT/OVMF_VARS.fd"
   -drive file="$OUT/systemes-k1.iso",media=cdrom,if=ide,readonly=on

@@ -26,6 +26,7 @@ qemu-virtio-vfs-test = []
 qemu-user-fs-test = []
 qemu-smap-violation-test = []
 qemu-smep-violation-test = []
+qemu-smp-test = []
 
 [lib]
 path = "src/lib.rs"

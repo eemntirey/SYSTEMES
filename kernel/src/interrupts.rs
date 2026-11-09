@@ -18,6 +18,7 @@ const USER_CODE_SELECTOR: u16 = 0x30;
 const USER_DATA_RPL3: u16 = USER_DATA_SELECTOR | 3;
 const USER_CODE_RPL3: u16 = USER_CODE_SELECTOR | 3;
 const USER_MODE_RFLAGS: u64 = 0x202;
+#[allow(dead_code)]
 const USER_TEST_RFLAGS: u64 = 0x02;
 const EXCEPTION_GATE_ATTRIBUTES: u8 = 0x8E;
 const USER_INTERRUPT_GATE_ATTRIBUTES: u8 = 0xEE;
@@ -269,228 +270,194 @@ systemes_load_tr:
     ret
 
 .global systemes_isr0
-
 systemes_isr0:
     push 0
     push 0
     jmp systemes_exception_common
 
 .global systemes_isr1
-
 systemes_isr1:
     push 0
     push 1
     jmp systemes_exception_common
 
 .global systemes_isr2
-
 systemes_isr2:
     push 0
     push 2
     jmp systemes_exception_common
 
 .global systemes_isr3
-
 systemes_isr3:
     push 0
     push 3
     jmp systemes_exception_common
 
 .global systemes_isr4
-
 systemes_isr4:
     push 0
     push 4
     jmp systemes_exception_common
 
 .global systemes_isr5
-
 systemes_isr5:
     push 0
     push 5
     jmp systemes_exception_common
 
 .global systemes_isr6
-
 systemes_isr6:
     push 0
     push 6
     jmp systemes_exception_common
 
 .global systemes_isr7
-
 systemes_isr7:
     push 0
     push 7
     jmp systemes_exception_common
 
 .global systemes_isr8
-
 systemes_isr8:
     push 8
     jmp systemes_exception_common
 
 .global systemes_isr9
-
 systemes_isr9:
     push 0
     push 9
     jmp systemes_exception_common
 
 .global systemes_isr10
-
 systemes_isr10:
     push 10
     jmp systemes_exception_common
 
 .global systemes_isr11
-
 systemes_isr11:
     push 11
     jmp systemes_exception_common
 
 .global systemes_isr12
-
 systemes_isr12:
     push 12
     jmp systemes_exception_common
 
 .global systemes_isr13
-
 systemes_isr13:
     push 13
     jmp systemes_exception_common
 
 .global systemes_isr14
-
 systemes_isr14:
     push 14
     jmp systemes_exception_common
 
 .global systemes_isr15
-
 systemes_isr15:
     push 0
     push 15
     jmp systemes_exception_common
 
 .global systemes_isr16
-
 systemes_isr16:
     push 0
     push 16
     jmp systemes_exception_common
 
 .global systemes_isr17
-
 systemes_isr17:
     push 17
     jmp systemes_exception_common
 
 .global systemes_isr18
-
 systemes_isr18:
     push 0
     push 18
     jmp systemes_exception_common
 
 .global systemes_isr19
-
 systemes_isr19:
     push 0
     push 19
     jmp systemes_exception_common
 
 .global systemes_isr20
-
 systemes_isr20:
     push 0
     push 20
     jmp systemes_exception_common
 
 .global systemes_isr21
-
 systemes_isr21:
     push 21
     jmp systemes_exception_common
 
 .global systemes_isr22
-
 systemes_isr22:
     push 0
     push 22
     jmp systemes_exception_common
 
 .global systemes_isr23
-
 systemes_isr23:
     push 0
     push 23
     jmp systemes_exception_common
 
 .global systemes_isr24
-
 systemes_isr24:
     push 0
     push 24
     jmp systemes_exception_common
 
 .global systemes_isr25
-
 systemes_isr25:
     push 0
     push 25
     jmp systemes_exception_common
 
 .global systemes_isr26
-
 systemes_isr26:
     push 0
     push 26
     jmp systemes_exception_common
 
 .global systemes_isr27
-
 systemes_isr27:
     push 0
     push 27
     jmp systemes_exception_common
 
 .global systemes_isr28
-
 systemes_isr28:
     push 0
     push 28
     jmp systemes_exception_common
 
 .global systemes_isr29
-
 systemes_isr29:
     push 29
     jmp systemes_exception_common
 
 .global systemes_isr30
-
 systemes_isr30:
     push 30
     jmp systemes_exception_common
 
 .global systemes_isr31
-
 systemes_isr31:
     push 0
     push 31
     jmp systemes_exception_common
 
 .global systemes_user_exit
-
 systemes_user_exit:
     push 0
     push 128
     jmp systemes_exception_common
 
 .global systemes_syscall_entry
-
 systemes_syscall_entry:
     mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
     lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
@@ -539,26 +506,22 @@ systemes_syscall_entry:
     jmp systemes_ring3_exit_trampoline
 
 .global systemes_lapic_timer
-
 systemes_lapic_timer:
     push 0
     push 64
     jmp systemes_irq_common
 
 .global systemes_scheduler_yield
-
 systemes_scheduler_yield:
     push 0
     push 65
     jmp systemes_irq_common
 
 .global systemes_apic_spurious
-
 systemes_apic_spurious:
     iretq
 
 .global systemes_irq_common
-
 systemes_irq_common:
     cld
     push rax
@@ -607,7 +570,6 @@ systemes_irq_common:
     iretq
 
 .global systemes_exception_common
-
 systemes_exception_common:
     cld
     push rax

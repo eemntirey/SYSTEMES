@@ -1,4 +1,5 @@
-//! xAPIC Local APIC timer initialization and PIT-referenced calibration.
+//! xAPIC Local APIC timer initialization, PIT-referenced calibration and
+//! INIT/SIPI validation for application processor bring-up.
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -14,6 +15,15 @@ const TIMER_VECTOR: u8 = 0x40;
 const LAPIC_TPR: usize = 0x80;
 const LAPIC_EOI: usize = 0xB0;
 const LAPIC_SVR: usize = 0xF0;
+const LAPIC_ID: usize = 0x20;
+const LAPIC_ICR_LOW: usize = 0x300;
+const LAPIC_ICR_HIGH: usize = 0x310;
+const LAPIC_ICR_DELIVERY_STATUS: u32 = 1 << 12;
+const LAPIC_ICR_INIT_ASSERT: u32 = 0x0000_4500;
+const LAPIC_ICR_STARTUP_MODE: u32 = 0x0000_0600;
+const IPI_DELIVERY_TIMEOUT_ITERATIONS: usize = 10_000_000;
+const PIT_INIT_SETTLE_TICKS: u16 = 11_932;
+const PIT_STARTUP_SETTLE_TICKS: u16 = 239;
 const LAPIC_LVT_TIMER: usize = 0x320;
 const LAPIC_LVT_THERMAL: usize = 0x330;
 const LAPIC_LVT_PERF: usize = 0x340;
@@ -41,6 +51,11 @@ pub enum ApicInitError {
     TimerCalibrationInvalid,
     TimerCalibrationTimeout,
     TimerUnavailable,
+    IpiUnavailable,
+    IpiVectorInvalid,
+    IpiTimingFailed,
+    IpiTargetInvalid,
+    IpiDeliveryPending,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -196,6 +211,105 @@ pub unsafe fn calibrate_and_initialize_local_timer(target_hz: u32) -> Result<Tim
 }
 
 pub fn is_active() -> bool { APIC_ACTIVE.load(Ordering::Acquire) }
+
+/// Read the executing CPU's Local APIC ID, or `None` while the LAPIC
+/// is inactive.
+pub fn current_apic_id() -> Option<u8> {
+    if !APIC_ACTIVE.load(Ordering::Acquire) {
+        return None;
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return None;
+    }
+    // SAFETY: The UC-mapped Local APIC page was published after a successful
+    // initialization; the ID register is read-only MMIO.
+    let id_register = unsafe { lapic_read(base, LAPIC_ID) };
+    Some(((id_register >> 24) & 0xFF) as u8)
+}
+
+/// Wait for the ICR delivery-status bit to clear. QEMU clears it as soon as
+/// the interrupt is queued; real chipsets raise it while the command trips
+/// through the bus, so the bounded spin covers both without any timer.
+unsafe fn wait_for_icr_delivery(base: *mut u8) -> Result<(), ApicInitError> {
+    for _ in 0..IPI_DELIVERY_TIMEOUT_ITERATIONS {
+        // SAFETY: The UC-mapped Local APIC page is active and ICR_LOW is a
+        // 32-bit register.
+        if unsafe { lapic_read(base, LAPIC_ICR_LOW) } & LAPIC_ICR_DELIVERY_STATUS == 0 {
+            return Ok(());
+        }
+        core::hint::spin_loop();
+    }
+    Err(ApicInitError::IpiDeliveryPending)
+}
+
+/// Hold the caller for `ticks` PIT input clocks by letting channel 2 drain
+/// one-shot, mirroring the calibration path's programming sequence. Returns
+/// false when the OUT bit never rises inside the calibration budget.
+unsafe fn pit_channel2_delay_ticks(ticks: u16) -> bool {
+    let original_speaker = unsafe { read_io_port(PIT_SPEAKER) };
+    unsafe { write_io_port(PIT_SPEAKER, original_speaker & !0x03); }
+    unsafe { write_io_port(PIT_COMMAND, 0xB0); }
+    unsafe { write_io_port(PIT_CHANNEL2, ticks as u8); }
+    unsafe { write_io_port(PIT_CHANNEL2, (ticks >> 8) as u8); }
+    unsafe { write_io_port(PIT_SPEAKER, (original_speaker & !0x02) | 0x01); }
+    let mut settled = false;
+    for _ in 0..PIT_CALIBRATION_TIMEOUT_ITERATIONS {
+        if unsafe { read_io_port(PIT_SPEAKER) } & (1 << 5) != 0 {
+            settled = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    unsafe { write_io_port(PIT_SPEAKER, original_speaker); }
+    settled
+}
+
+/// Deliver the INIT / SIPI / SIPI handshake to the application processor with
+/// `apic_id` so it fetches its first trampoline instruction from the 4 KiB
+/// page at `vector_page` (a page-aligned address below 1 MiB whose vector
+/// byte is nonzero). The caller must hold interrupts disabled; delivery
+/// waits are bounded spins plus PIT one-shots, never timer interrupts.
+pub unsafe fn send_init_and_startup_ipi(apic_id: u8, vector_page: u64) -> Result<(), ApicInitError> {
+    let vector = vector_page >> 12;
+    if vector_page & (crate::memory::PAGE_SIZE - 1) != 0 || vector == 0 || vector > 0xFF {
+        return Err(ApicInitError::IpiVectorInvalid);
+    }
+    if !APIC_ACTIVE.load(Ordering::Acquire) {
+        return Err(ApicInitError::IpiUnavailable);
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return Err(ApicInitError::IpiUnavailable);
+    }
+    let destination = (apic_id as u32) << 24;
+    // INIT assertion, then the ~10 ms reset window the MP protocol requires
+    // before the first STARTUP interrupt.
+    // SAFETY: The UC-mapped Local APIC page is active; both ICR halves are
+    // separate 32-bit registers and the destination is written first.
+    unsafe {
+        lapic_write(base, LAPIC_ICR_HIGH, destination);
+        lapic_write(base, LAPIC_ICR_LOW, LAPIC_ICR_INIT_ASSERT);
+    }
+    unsafe { wait_for_icr_delivery(base)?; }
+    if !unsafe { pit_channel2_delay_ticks(PIT_INIT_SETTLE_TICKS) } {
+        return Err(ApicInitError::IpiTimingFailed);
+    }
+    for _ in 0..2 {
+        // SAFETY: Same published Local APIC mapping as the INIT write above.
+        unsafe {
+            lapic_write(base, LAPIC_ICR_HIGH, destination);
+            lapic_write(base, LAPIC_ICR_LOW, LAPIC_ICR_STARTUP_MODE | vector as u32);
+        }
+        unsafe { wait_for_icr_delivery(base)?; }
+        // A second start-up interrupt follows ~200 µs later for chipsets
+        // that drop the first delivery; CPUs already running ignore it.
+        if !unsafe { pit_channel2_delay_ticks(PIT_STARTUP_SETTLE_TICKS) } {
+            return Err(ApicInitError::IpiTimingFailed);
+        }
+    }
+    Ok(())
+}
 
 pub unsafe fn stop_local_timer() {
     let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;

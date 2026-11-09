@@ -94,6 +94,37 @@ pub fn with_root<R>(f: impl FnOnce(&mut Vfs<'static>) -> R) -> Option<R> {
     root.as_mut().map(f)
 }
 
+/// Read an entire file from the root filesystem if mounted.
+pub fn read_file(path: &str) -> Option<Vec<u8>> {
+    with_root(|vfs| {
+        let handle = vfs.open(path).ok()?;
+        let mut contents = Vec::new();
+        let mut chunk = [0u8; SECTOR_BYTES];
+        loop {
+            match vfs.read(handle, &mut chunk) {
+                Ok(0) => break,
+                Ok(n) => contents.extend_from_slice(&chunk[..n]),
+                Err(_) => {
+                    contents.clear();
+                    break;
+                }
+            }
+        }
+        let _ = vfs.close(handle);
+        if contents.is_empty() {
+            None
+        } else {
+            Some(contents)
+        }
+    })
+    .flatten()
+}
+
+/// Returns true if a root filesystem is currently mounted.
+pub fn is_mounted() -> bool {
+    with_root(|_| ()).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +144,7 @@ mod tests {
         // The static starts empty and only `mount` can fill it; the host test
         // binary never calls `mount`, so the accessor must not invent a VFS.
         assert!(with_root(|_| ()).is_none());
+        assert!(!is_mounted());
+        assert!(read_file("/shell").is_none());
     }
 }

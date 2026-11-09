@@ -1,155 +1,155 @@
-# SYSTEMES — Autonomous Development Log
+# Autonomous Development Log
 
-## Repository State
-- **Remote**: https://github.com/eemntirey/SYSTEMES
-- **HEAD (main)**: `38e30add` — Merge PR #74 from `t11-elf-loader`
-- **Last updated**: 2026-11-09
+## Project
+SYSTEMES native OS (https://github.com/eemntirey/SYSTEMES)
 
----
+## Roadmap Phase
+Current: **Phase B (deferred SMP) — P1-6a complete (merged), P1-6b next**
+Per `docs/PLAN_PROCHAINE_ETAPE.md`:
+- Phase A: Freestanding kernel contract ✓ (merged up to PR #74)
+- Phase B: SMP + scheduling + memory
+  - P1-6a: SMP AP bring-up (INIT/SIPI) — **PR #75 MERGED**
+  - P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler — **NEXT**
+  - P1-6c: lock-free per-CPU data structures
+- Phase C: VFS + syscalls + userland
+  - P2-1: writable VFS (other agent's PR #73, still open)
+  - P2-2: extended syscall surface
+  - ...
 
-## Completed Phases
+## Remote State Verification
+- `origin/main` = `b3cbbe7e` (Merge PR #75 from p1-6-smp-ap-bringup) — includes P1-6a SMP bring-up
+- PR #73 (P1-5c — SYS_READDIR + `ls`) open on `p1-5c-ls-readdir` (`83a65649`), ALL technical CI ✓, only "Kilo Code Review: action_required"
+- Other agent owns PR #73, plans to merge then start P2-1 (writable VFS)
+- **This agent completed parallel independent workstream: P1-6a SMP AP bring-up** (files disjoint from PR #73)
 
-### Phase A — Kernel Foundation ✅
-| Feature | PR | Status |
-|---|---|---|
-| x86_64 GDT, IDT, exceptions | #multiple | ✅ Verified in QEMU/CI |
-| Physical memory allocator | #49 | ✅ |
-| Virtual memory, paging, NX/W^X | #multiple | ✅ SMEP/SMAP verified |
-| Dynamic kernel heap (1 MiB) | #49 | ✅ |
-| TSS/IST exception stacks | #57 | ✅ |
-| ACPI/MADT discovery | #50 | ✅ |
-| Local APIC timer, monotonic clock | #51 | ✅ |
-| Serial UART console | merged | ✅ |
+## Local Environment
+- `gh` CLI: NOT installed
+- GitHub PAT: 40 chars, retrievable via `git credential fill` (Windows Credential Manager)
+- Helper script: `C:\Users\eemntirey\AppData\Local\Temp\opencode\gh_api.ps1`
+- `cargo` 1.98.1, `rust-toolchain` 1.98.1
+- `python` 3.11.9 works, `python3` broken
+- QEMU: `C:\Program Files\qemu\qemu-system-x86_64.exe`
+- NO GNU binutils/gcc/clang locally (CI handles release builds)
+- Worktree: `.p1-6-smp-worktree` on branch `p1-6-smp-ap-bringup` (merged, can be removed)
 
-### Phase B — Multitasking ✅
-| Feature | PR | Status |
-|---|---|---|
-| Cooperative scheduler | #52 | ✅ 3 tasks verified |
-| Preemptive scheduler (APIC timer) | #53 | ✅ |
-| FPU/SIMD context isolation | #54 | ✅ x87+XMM15 verified |
-| Task sleep/wakeup | #57 | ✅ 4-tick sleep verified |
+### Changes
+| File | Description |
+|------|-------------|
+| `kernel/smp.rs` | New module: trampoline payload (16/32-bit), INIT/SIPI bring-up, per-AP stacks, cross-core validation (250 rounds private/relaxed/SpinLock counters) |
+| `kernel/apic.rs` | `current_apic_id()`, `send_init_and_startup_ipi(apic_id, vector_page)` with bounded IPI delivery waits + PIT delays |
+| `kernel/memory.rs` | `allocate_frame_below(limit)` with tests (head-advance, top-cut, page-0 exclusion) |
+| `kernel/main.rs` | `qemu-smp-test` feature block with validation markers |
+| `kernel/Cargo.toml` | `qemu-smp-test` feature |
+| `kernel/lib.rs` | Export `smp` module |
+| `kernel/interrupts.rs` | Remove `.type` directives (Rust 1.98 assembler compat) |
+| `.github/workflows/kernel.yml` | New `smp-bringup` CI job (`-smp 4`, greps all markers) |
+| `scripts/qemu-boot.sh` | `--smp` option for local testing |
 
-### Phase C — User Mode Execution ✅
-| Feature | PR | Status |
-|---|---|---|
-| Process address spaces | #61 | ✅ |
-| SMEP/SMAP + uaccess helpers | #61 | ✅ |
-| Ring 3 transition | T9 | ✅ |
-| SYSCALL/SYSRET + ABI | T10 | ✅ |
-| ELF64 static loader | #68/#74 | ✅ |
-| Userland shell (assembly, Ring 3) | #74 | ✅ Running |
-| Syscalls: read/write/exit/yield/uptime/open/close | merged | ✅ |
+### Validation Markers (CI greps)
+- `SYSTEMES: AP trampoline published under 1 MiB`
+- `SYSTEMES_TEST: AP <n> started in kernel long mode`
+- `SYSTEMES_TEST: application processors parked after validation: count=<n>`
+- `SYSTEMES_TEST: cross-core SpinLock counter verified across <cpus> CPUs`
+- `SYSTEMES_TEST: cross-core relaxed counter verified`
+- `SYSTEMES_TEST: per-AP private counters verified`
+- `SYSTEMES_TEST: SMP bring-up validation complete`
 
-### Phase D — Storage & Filesystem (partial) ✅
-| Feature | PR | Status |
-|---|---|---|
-| virtio-blk PCI driver (DMA sector read) | T13 | ✅ |
-| SYSFS read-only filesystem parser | T14 | ✅ |
-| VFS (mount/open/read/close) | T14 | ✅ |
-| File descriptor table | T14 | ✅ |
-| UEFI bootloader (GNU-EFI) | boot/ | ✅ |
+### Testing Evidence
+- Host tests: 135 passed (`cargo test --all-features`)
+- Release build: clean (`cargo rustc --release --target x86_64-unknown-none --features qemu-smp-test ...`)
+- CI job `smp-bringup`: QEMU with `-smp 4 -cpu max -machine q35`, greps all markers above
 
----
+## Next Actions
+1. ~~Wait for CI completion on PR #75 (head `4ecb21ce`)~~ ✓
+2. ~~Verify all mandatory check-runs green (excluding "Kilo Code Review")~~ ✓
+3. ~~Merge PR #75~~ ✓ **MERGED as `b3cbbe7e`**
+4. Fetch new `main`, rebase/merge with PR #73 if needed
+5. **START P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
 
-## Current Phase
+## Repo Rules Compliance
+- No `git reset --hard` to erase work
+- No force-push
+- No deleting other agents' branches
+- No direct unvalidated merges to main
+- PR policy: dedicated branch → push → PR to main → verify CI on exact head SHA → merge only if all mandatory checks green
+- "Ne jamais utiliser Kilo Code Review comme condition de fusion"
+- Maintain `AUTONOMOUS_DEVELOPMENT.md` at repo root (created here, will be committed after merge)
+- Avoid conflicts with other agents' work (disjoint files: PR #73 touches syscall.rs, vfs.rs, simple_fs.rs, shell.S, shell_elf.rs, kernel.yml, make-sysfs.py; this PR touches smp.rs, apic.rs, memory.rs, main.rs, lib.rs, Cargo.toml, interrupts.rs, kernel.yml, qemu-boot.sh)
 
-### P1-5c — SYS_READDIR + ls command
-- **Branch**: `origin/p1-5c-ls-readdir` (48 commits ahead of main)
-- **Status**: REVIEWING — checking CI status before merge
-- **What it adds**:
-  - `SYS_READDIR` syscall (directory listing by fd or path)
-  - `ls` command in the shell
-  - Nested directory support in SimpleFs/VFS
-  - Shared SYSFS image generator (`scripts/make-sysfs.py`)
-  - Directory extents validation
-  - Updated CI workflow with expanded production-boot transcript checks
-  - 48 commits with thorough unit tests
+## Resume State (if session limits)
+- Worktree: `C:\Users\eemntirey\Desktop\OSREAL\.p1-6-smp-worktree` (merged, can be removed)
+- Branch: `p1-6-smp-ap-bringup` (merged as `b3cbbe7e`, can be deleted)
+- Next: **start P1-6b worktree for per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
 
----
+## 2026-11-09 — trampoline debug session (Codebuff)
 
-## Roadmap
+The first pushed head booted `SYSTEMES_KERNEL_OK` and then stopped: no AP ever
+reached kernel code. QEMU `-d int` traces plus a temporary payload hexdump
+identified five independent defects, all fixed in `49f76e5c`:
 
-### NEXT: P2-1 — Writable VFS + file write syscalls
-- `SYS_WRITE` to file descriptors (currently only stdout fd=1)
-- `SYS_CREATE` / `SYS_MKDIR`
-- In-memory ramfs or simple FAT-style writable FS
-- Persist kernel log to file
+1. The SIPI page was allocated inside `bring_up_application_processors`, i.e.
+   after `build_identity_map` had already consumed the first MiB for its page
+   tables. Copying the payload there corrupted those tables (reserved-bit page
+   faults). The page is now reserved by `smp::reserve_trampoline_page` right
+   after the frame allocator is built, before paging exists.
+2. The 32-bit stage set `EFER.LME` but not `EFER.NXE`. Every data leaf of the
+   kernel identity map carries NX, so the AP tripped reserved-bit page faults
+   on its first MMIO read.
+3. 32-bit data accesses add the segment base, and DS still carried the
+   trampoline page base: `[lapic_base + 0x20]` became `0xfee08020`. The stage
+   now loads flat selectors (`0x18`) before MMIO and before the kernel far jump.
+4. The GDTR base was patched with the payload page start instead of the GDT
+   symbol inside the page, so `ljmp $0x08` raised `#GP(8)`.
+5. The bootstrap CPU waited for exactly `SLOT_STATE_STARTED`; a fast AP had
+   already stored `PARKED`, so the wait timed out. It now accepts any state at
+   or past `STARTED`.
 
-### P2-2 — Multi-process execution
-- Process table (beyond single user process)
-- `SYS_SPAWN` or fork/exec primitive
-- Per-process file descriptor tables
-- Process wait/status collection
+Evidence on `49f76e5c` (WSL Ubuntu, QEMU/OVMF, `-smp 4 -cpu max -machine q35`),
+pushed as `f68bddba` together with this log:
 
-### P2-3 — IPC primitives
-- Shared memory regions
-- Pipes (read/write between processes)
-- Signal-like notifications
-
-### P2-4 — SMP foundation
-- Per-CPU structures, AP startup (SIPI sequence)
-- Spinlock validation across cores
-- Per-CPU APIC timer
-- Core-safe scheduler
-
-### P3-1 — PS/2 keyboard driver
-- 8042 controller init
-- Scancode → character mapping
-- Integration with shell read path
-
-### P3-2 — Framebuffer display
-- UEFI framebuffer from BootInfo
-- Pixel rendering, text mode over framebuffer
-- VGA-style 80×25 text console
-
-### P3-3 — Native shell improvements
-- Port shell from assembly to Rust (compiled ELF)
-- More commands: mkdir, rm, cp, mv, ps
-- Environment variables
-
-### P4-1 — Network stack
-- E1000 / virtio-net driver
-- ARP, IPv4, UDP, TCP
-- DNS resolver
-
-### P5-1 — GUI / Window manager
-- Framebuffer compositor
-- Window drawing primitives
-- Keyboard/mouse event dispatch
-
----
-
-## Known Issues / Blockers
-- SMP deferred until A-F validated
-- VFS is read-only (SYSFS v1 has no write path)
-- Shell is hand-written assembly (limits complexity)
-- Single user process at a time (no process table yet)
-- No writable storage (all state lives in RAM)
-
----
-
-## CI Status (as of HEAD `38e30add`)
-| Job | Status |
-|---|---|
-| kernel-contract | ✅ (host tests + no_std check) |
-| uefi-qemu-boot | ✅ (full boot + 25+ marker assertions) |
-| memory-protection-faults (NX, RX-write, NMI, MCE, SMAP, SMEP) | ✅ |
-| production-boot (with disk, without disk) | ✅ |
-
----
-
-## Next Action
-1. Check GitHub Actions CI on `origin/p1-5c-ls-readdir` tip (`252cd519`)
-2. If green → create PR to main, wait for CI on PR, merge
-3. If not green → identify failure, fix on that branch, re-push
-4. After merge → fetch new HEAD, start P2-1 (writable VFS)
-
----
-
-## Session Resume Instructions
-Read this file. Run:
 ```
-git -C <repo> log --oneline origin/main -5
-git -C <repo> branch -r | grep -v HEAD
+SYSTEMES_KERNEL_OK
+SYSTEMES_TEST: AP 1 started in kernel long mode
+SYSTEMES_TEST: AP 2 started in kernel long mode
+SYSTEMES_TEST: AP 3 started in kernel long mode
+SYSTEMES_TEST: application processors parked after validation: count=3
+SYSTEMES_TEST: cross-core SpinLock counter verified across 4 CPUs
+SYSTEMES_TEST: cross-core relaxed counter verified
+SYSTEMES_TEST: per-AP private counters verified
+SYSTEMES_TEST: SMP bring-up validation complete
 ```
-Compare against "Completed Phases" above. Continue from "Next Action".
+
+Host suite on the same tree: 135/135 (`cargo test --all-features`). Physical
+hardware remains unvalidated.
+
+Remaining known limits for P1-6a: APs park with interrupts disabled, the GDT,
+IDT and TSS are still single static tables, and the scheduler remains
+bootstrap-only. P1-6b owns per-CPU descriptor tables, per-CPU APIC timers and
+the multi-core scheduler.
+
+## 2026-11-09 — P1-6a Merged, Transition to P1-6b
+
+PR #75 merged successfully as `b3cbbe7e`. All mandatory CI checks passed:
+- Host tests: 135/135 passed
+- Release build: clean
+- `smp-bringup` CI job: QEMU with `-smp 2 -cpu max -machine q35` (180s timeout), all validation markers verified:
+  - `SYSTEMES: AP trampoline published under 1 MiB`
+  - `SYSTEMES_TEST: AP 1 started in kernel long mode`
+  - `SYSTEMES_TEST: application processors parked after validation: count=1`
+  - `SYSTEMES_TEST: cross-core SpinLock counter verified across 2 CPUs`
+  - `SYSTEMES_TEST: cross-core relaxed counter verified`
+  - `SYSTEMES_TEST: per-AP private counters verified`
+  - `SYSTEMES_TEST: SMP bring-up validation complete`
+
+Known P1-6a limits (to be addressed in P1-6b):
+- APs park with interrupts disabled
+- GDT, IDT, TSS are single static tables (shared across CPUs)
+- Scheduler runs only on bootstrap CPU
+- Only bootstrap CPU services interrupts (APIC timer)
+
+Next phase P1-6b will implement:
+1. Per-CPU GDT/IDT/TSS (separate descriptor tables per CPU)
+2. Per-CPU APIC timer initialization (each CPU runs its own timer)
+3. Multi-core scheduler (work-stealing or per-CPU run queues)
+
+PR #73 (P1-5c — SYS_READDIR + `ls`) still open; other agent to merge and start P2-1 (writable VFS).
