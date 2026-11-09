@@ -13,6 +13,7 @@ use systemes_kernel::{address_space::{write_cr3, AddressSpace, UserPagePermissio
 #[cfg(feature = "qemu-user-fs-test")]
 mod user_fs_test;
 
+#[allow(dead_code)]
 const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
     || !cfg!(any(
         feature = "qemu-exception-test",
@@ -715,6 +716,20 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     // T11/T12: load and launch the userland shell (ELF64), which uses
     // SYS_WRITE (prompt/echo) and SYS_READ (console input) via the serial UART.
+    // The ELF is loaded from the VFS (`/shell`) when a virtio-blk disk is
+    // present, falling back to the embedded image otherwise.
+    let (shell_data, loaded_from_vfs) = match rootfs::read_file("/shell") {
+        Some(data) => (data, true),
+        None => (SHELL_ELF.to_vec(), false),
+    };
+    if loaded_from_vfs {
+        unsafe { debug_write(b"SYSTEMES: shell loaded from VFS (/shell)\r\n"); }
+    } else if rootfs::is_mounted() {
+        unsafe { debug_write(b"SYSTEMES: /shell not found on VFS; embedded shell\r\n"); }
+    } else {
+        unsafe { debug_write(b"SYSTEMES: no virtio-blk disk; embedded shell\r\n"); }
+    }
+
     unsafe { debug_write(b"SYSTEMES: launching userland shell\r\n"); }
     let mut shell_space = match unsafe { AddressSpace::create(&mut frame_allocator, page_table_root) } {
         Ok(space) => space,
@@ -724,7 +739,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
     };
     let shell_entry = match unsafe {
-        load_elf(SHELL_ELF, &mut frame_allocator, &mut shell_space)
+        load_elf(&shell_data, &mut frame_allocator, &mut shell_space)
     } {
         Ok(entry) => entry,
         Err(_) => {
