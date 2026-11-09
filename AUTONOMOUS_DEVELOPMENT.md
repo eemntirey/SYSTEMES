@@ -153,3 +153,43 @@ Next phase P1-6b will implement:
 3. Multi-core scheduler (work-stealing or per-CPU run queues)
 
 PR #73 (P1-5c — SYS_READDIR + `ls`) still open; other agent to merge and start P2-1 (writable VFS).
+
+## 2026-11-09 — P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler (IN PROGRESS)
+
+**Branch**: `p1-6b-per-cpu-gdt-tss` (worktree `.p1-6b-worktree`)
+**Base**: `origin/main` at `61889afa` (post P1-6a merge)
+
+### Implementation Complete (local verification)
+
+| File | Changes |
+|------|---------|
+| `kernel/interrupts.rs` | `CpuContext[64]` array with per-CPU GDT/IDT/TSS + 5 interrupt stacks; `initialize_cpu(cpu_index)`; verification fns take `cpu_index` |
+| `kernel/scheduler.rs` | `CpuScheduler[64]` array with per-CPU run queues; `initialize_cpu(cpu_index, entries)`; APs enter `idle_loop()` calling `yield_now()`; work-stealing stub |
+| `kernel/apic.rs` | `initialize_local_timer_on_cpu(initial_count)`, `set_timer_initial_count()`, `get_timer_initial_count()` for BSP→AP calibration sharing |
+| `kernel/smp.rs` | APs call `initialize_cpu(slot)` and `initialize_local_timer_on_cpu()` in `systemes_ap_main_rust`; `sti` + idle loop |
+| `kernel/main.rs` | P1-6b integration block under `qemu-smp-scheduler-test`: BSP initializes multi-core scheduler after APs join |
+| `kernel/Cargo.toml` | `qemu-smp-scheduler-test = ["qemu-smp-test"]` feature |
+| `.github/workflows/kernel.yml` | `smp-scheduler` CI job (`-smp 2`, 180s timeout) with new verification markers |
+
+### Verification Markers (CI will grep)
+- `SYSTEMES: AP trampoline published under 1 MiB`
+- `SYSTEMES_TEST: AP <n> started in kernel long mode`
+- `SYSTEMES_TEST: application processors joined scheduler: count=<n>`
+- `SYSTEMES_TEST: cross-core SpinLock counter verified across <cpus> CPUs`
+- `SYSTEMES_TEST: cross-core relaxed counter verified`
+- `SYSTEMES_TEST: per-AP private counters verified`
+- `SYSTEMES_TEST: SMP bring-up validation complete`
+- `SYSTEMES: multi-core scheduler initialized on BSP`
+
+### Local Validation
+- `cargo check --all-features --target x86_64-unknown-none` ✓ clean
+- `cargo test --all-features` ✓ 135/135 passed
+- `cargo rustc --release --target x86_64-unknown-none --features qemu-smp-scheduler-test --bin systemes-kernel -- -C relocation-model=static -C link-arg=-Tlinker.ld` ✓ clean
+
+### Next Steps
+1. Push branch → create PR to main (at https://github.com/eemntirey/SYSTEMES/pull/new/p1-6b-per-cpu-gdt-tss)
+2. Wait for CI `smp-scheduler` job to complete (QEMU `-smp 2`)
+3. Verify all mandatory check-runs green on exact head SHA
+4. Merge PR #76 (P1-6b)
+5. Update `AUTONOMOUS_DEVELOPMENT.md` with merge commit and CI evidence
+6. Begin P1-6c: lock-free per-CPU data structures
