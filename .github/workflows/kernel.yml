@@ -726,7 +726,7 @@ jobs:
           grep -q 'SYSTEMES: Local APIC timer calibrated from PIT channel 2 at 100 Hz' build/uefi/debug.log
           grep -q 'SYSTEMES: AP trampoline published under 1 MiB' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: AP [0-9]\+ started in kernel long mode' build/uefi/debug.log
-          grep -q 'SYSTEMES_TEST: application processors joined scheduler: count=' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: application processors parked after validation: count=' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: cross-core SpinLock counter verified across [0-9]\+ CPUs' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: cross-core relaxed counter verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: per-AP private counters verified' build/uefi/debug.log
