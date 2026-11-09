@@ -10,7 +10,7 @@
 
 use core::arch::{asm, global_asm};
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use crate::console::{debug_hex, debug_write};
 
@@ -75,7 +75,6 @@ struct CpuContext {
     syscall_kernel_stack: InterruptStack,
     syscall_user_rsp: u64,
     ring3_saved_kernel_rsp: u64,
-    initialized: bool,
 }
 
 impl CpuContext {
@@ -96,7 +95,6 @@ impl CpuContext {
             syscall_kernel_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             syscall_user_rsp: 0,
             ring3_saved_kernel_rsp: 0,
-            initialized: false,
         }
     }
 }
@@ -105,7 +103,7 @@ impl CpuContext {
 static mut CPU_CONTEXTS: [CpuContext; MAX_CPUS] = [const { CpuContext::new() }; MAX_CPUS];
 
 /// Track which CPU contexts have been initialized.
-static CPU_INITIALIZED: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
+static CPU_INIT_STATE: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -648,7 +646,7 @@ pub fn verify_task_register() -> bool {
 
 /// Validate the live TSS stack pointers and the IST selectors installed in the IDT.
 pub fn verify_ist_configuration(cpu_index: usize) -> bool {
-    if cpu_index >= MAX_CPUS {
+    if cpu_index >= MAX_CPUS || CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) != 2 {
         return false;
     }
     // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
@@ -871,6 +869,17 @@ pub(crate) fn user_exit_status() -> u64 {
     SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
 }
 
+/// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
+pub fn bootstrap_cpu_index() -> usize {
+    (core::arch::x86_64::__cpuid(1).ebx >> 24) as usize
+}
+
+fn current_cpu_index() -> usize {
+    crate::apic::current_apic_id()
+        .map(|id| id as usize)
+        .unwrap_or_else(bootstrap_cpu_index)
+}
+
 /// Initialize this CPU's private GDT, IDT, and TSS.
 ///
 /// # Safety
@@ -881,7 +890,17 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
     if cpu_index >= MAX_CPUS {
         return;
     }
-    // SAFETY: This runs during single-core boot before the kernel enables IRQs.
+    if CPU_INIT_STATE[cpu_index]
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        while CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) == 1 {
+            core::hint::spin_loop();
+        }
+        return;
+    }
+    // SAFETY: This CPU owns the unique APIC-ID slot; keep local interrupts off
+    // until its private GDT, TSS, and IDT are fully published.
     unsafe { asm!("cli", options(nomem, nostack)) };
 
     // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
@@ -984,13 +1003,13 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
         )
     };
 
-    CPU_INITIALIZED[cpu_index].store(true, Ordering::Release);
+    CPU_INIT_STATE[cpu_index].store(2, Ordering::Release);
 }
 
 /// Initialize the bootstrap CPU's descriptor tables (legacy entry point for compatibility).
 pub unsafe fn initialize() {
     // SAFETY: Called during early boot on BSP only.
-    unsafe { initialize_cpu(0) };
+    unsafe { initialize_cpu(bootstrap_cpu_index()) };
 }
 
 /// Dispatch CPU exceptions. INT3 resumes unchanged; the dedicated Ring 3 test
@@ -1006,7 +1025,8 @@ pub extern "C" fn systemes_exception_dispatch(
     if vector == 2 {
         let rsp: u64;
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = unsafe { addr_of!(CPU_CONTEXTS[0].nmi_stack.0) as *const u8 as u64 };
+        let cpu_index = current_cpu_index();
+        let start = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].nmi_stack.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
@@ -1020,7 +1040,8 @@ pub extern "C" fn systemes_exception_dispatch(
     if vector == 18 {
         let rsp: u64;
         unsafe { asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags)); }
-        let start = unsafe { addr_of!(CPU_CONTEXTS[0].machine_check_stack.0) as *const u8 as u64 };
+        let cpu_index = current_cpu_index();
+        let start = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].machine_check_stack.0) as *const u8 as u64 };
         let end = start + INTERRUPT_STACK_SIZE as u64;
         unsafe {
             if rsp >= start && rsp < end {
