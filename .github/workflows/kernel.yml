@@ -698,7 +698,7 @@ jobs:
           cp build/uefi/esp.img build/uefi/iso-root/esp.img
           xorriso -as mkisofs -R -J -V SYSTEMES-SMP-SCHED -o build/uefi/systemes-smp-sched.iso -e esp.img -no-emul-boot build/uefi/iso-root
           test -s build/uefi/systemes-smp-sched.iso
-      - name: Boot QEMU with 2 CPUs and verify AP bring-up and BSP-only scheduler markers
+      - name: Boot QEMU with 2 CPUs and verify per-CPU scheduler and work-stealing
         shell: bash
         run: |
           firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
@@ -707,10 +707,14 @@ jobs:
           test -n "$variables"
           cp "$variables" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -smp 2 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 2 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
           qemu_status=$?
           set -e
-          if [ "$qemu_status" -ne 124 ] && [ "$qemu_status" -ne 0 ]; then
+          if [ "$qemu_status" -eq 35 ]; then
+            echo "Kernel reported SMP scheduler failure through isa-debug-exit"
+            exit 1
+          fi
+          if [ "$qemu_status" -ne 33 ]; then
             echo "QEMU exited unexpectedly with status $qemu_status"
             cat build/uefi/serial.log || true
             exit 1
@@ -730,9 +734,41 @@ jobs:
           grep -q 'SYSTEMES_TEST: cross-core relaxed counter verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: per-AP private counters verified' build/uefi/debug.log
           grep -q 'SYSTEMES_TEST: SMP bring-up validation complete' build/uefi/debug.log
-          grep -q 'SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled' build/uefi/debug.log
+          grep -q 'SYSTEMES: per-CPU schedulers initialized; work-stealing enabled' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: cross-CPU work-stealing migration confirmed count=' build/uefi/debug.log
+          grep -q 'SYSTEMES_TEST: migrated task resumed after repeated migrations count=' build/uefi/debug.log
           if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug.log; then
             echo "Kernel reported a failure marker"
+            exit 1
+          fi
+      - name: Boot QEMU with 4 CPUs and verify SMP task migration
+        shell: bash
+        run: |
+          firmware="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | sort | head -n 1)"
+          variables="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_VARS*.fd' | sort | head -n 1)"
+          test -n "$firmware"
+          test -n "$variables"
+          cp "$variables" build/uefi/OVMF_VARS_4.fd
+          set +e
+          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 4 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS_4.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial-4.log -debugcon file:build/uefi/debug-4.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu-4.log -display none -no-reboot -no-shutdown
+          qemu_status=$?
+          set -e
+          if [ "$qemu_status" -eq 35 ]; then
+            echo "Kernel reported SMP scheduler failure through isa-debug-exit"
+            exit 1
+          fi
+          if [ "$qemu_status" -ne 33 ]; then
+            echo "QEMU 4-CPU exited unexpectedly with status $qemu_status"
+            cat build/uefi/serial-4.log || true
+            exit 1
+          fi
+          cat build/uefi/debug-4.log
+          test "$(grep -c 'SYSTEMES_TEST: AP [0-9]\+ started in kernel long mode' build/uefi/debug-4.log)" -eq 3
+          grep -q 'SYSTEMES: per-CPU schedulers initialized; work-stealing enabled' build/uefi/debug-4.log
+          grep -q 'SYSTEMES_TEST: cross-CPU work-stealing migration confirmed count=' build/uefi/debug-4.log
+          grep -q 'SYSTEMES_TEST: migrated task resumed after repeated migrations count=' build/uefi/debug-4.log
+          if grep -q 'SYSTEMES_KERNEL_FAIL:' build/uefi/debug-4.log; then
+            echo "Kernel reported a failure marker in QEMU 4-CPU run"
             exit 1
           fi
       - name: Upload SMP scheduler evidence
@@ -745,4 +781,7 @@ jobs:
             build/uefi/serial.log
             build/uefi/debug.log
             build/uefi/qemu.log
+            build/uefi/serial-4.log
+            build/uefi/debug-4.log
+            build/uefi/qemu-4.log
           if-no-files-found: warn
