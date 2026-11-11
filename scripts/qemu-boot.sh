@@ -191,9 +191,9 @@ if grep -q 'SYSTEMES_KERNEL_FAIL:' "$OUT/debug.log"; then
   echo "FAIL kernel reported SYSTEMES_KERNEL_FAIL:" >&2
   status=1
 fi
-if grep -qF '\r
+if grep -qF '\\r\\n' "$OUT/debug.log"; then
 ' "$OUT/debug.log"; then
-  echo "FAIL debug log contains literal \\r\
+  echo "FAIL debug log contains literal \\r\\n escapes" >&2
  escapes" >&2
   status=1
 fi
