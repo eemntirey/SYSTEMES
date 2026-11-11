@@ -57,8 +57,18 @@ fn halt() -> ! {
     }
 }
 
+#[cfg(feature = "qemu-smp-scheduler-test")]
+fn qemu_debug_exit(code: u32) -> ! {
+    // Do not let a local APIC tick preempt the final test/exit sequence.
+    unsafe { asm!("cli", options(nomem, nostack)); }
+    // QEMU isa-debug-exit maps the value to (code << 1) | 1 and terminates the VM.
+    unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
+    // Reaching this marker means the configured debug-exit device did not terminate QEMU.
+    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\\r\\n"); }
+    halt()
+}
+
 /// Stable spelling of a bring-up failure so CI can match one marker prefix.
-#[cfg(feature = "qemu-smp-test")]
 fn smp_failure_name(error: systemes_kernel::smp::SmpBringUpError) -> &'static [u8] {
     use systemes_kernel::smp::SmpBringUpError as BringUp;
     match error {
@@ -521,17 +531,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
-    #[cfg(feature = "qemu-smp-test")]
-    {
-        let madt = match discovered_madt.as_ref() {
-            Some(madt) if systemes_kernel::apic::is_active() => madt,
-            _ => {
-                unsafe {
-                    debug_write(b"SYSTEMES_KERNEL_FAIL: SMP test requires the ACPI MADT and an active Local APIC\r\n");
-                }
-                halt();
-            }
-        };
+    if let Some(madt) = discovered_madt.as_ref().filter(|_| apic_timer_ready && systemes_kernel::apic::is_active()) {
         // SAFETY: page tables, Local APIC and the kernel heap are active; the
         // bring-up saves and masks the caller's interrupt flag itself.
         match unsafe {
@@ -542,6 +542,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             )
         } {
             Ok(summary) => {
+                #[cfg(feature = "qemu-smp-test")]
                 unsafe {
                     let mut digits = [0u8; 20];
                     debug_write(b"SYSTEMES: AP trampoline published under 1 MiB\r\n");
@@ -564,20 +565,39 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     debug_write(b"SYSTEMES_TEST: per-AP private counters verified\r\n");
                     debug_write(b"SYSTEMES_TEST: SMP bring-up validation complete\r\n");
                 }
+                #[cfg(not(feature = "qemu-smp-test"))]
+                unsafe {
+                    let mut digits = [0u8; 20];
+                    debug_write(b"SYSTEMES: AP schedulers online count=");
+                    let length = encode_decimal(summary.started_count as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b"\r\n");
+                }
             }
             Err(error) => {
+                #[cfg(feature = "qemu-smp-test")]
+                {
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: SMP bring-up failed, error=");
+                        debug_write(smp_failure_name(error));
+                        debug_write(b"\r\n");
+                    }
+                    #[cfg(feature = "qemu-smp-scheduler-test")]
+                    qemu_debug_exit(0x11);
+                    #[cfg(not(feature = "qemu-smp-scheduler-test"))]
+                    halt();
+                }
+                #[cfg(not(feature = "qemu-smp-test"))]
                 unsafe {
-                    debug_write(b"SYSTEMES_KERNEL_FAIL: SMP bring-up failed, error=");
+                    debug_write(b"SYSTEMES: AP startup failed; continuing with BSP scheduler, error=");
                     debug_write(smp_failure_name(error));
                     debug_write(b"\r\n");
                 }
-                halt();
             }
         }
 
-        // Initialize the BSP scheduler only. AP run queues are not initialized
-        // in P1-6b; APs remain interruptible in their idle loop and no task
-        // migration between CPUs is implemented.
+        // AP schedulers were initialized before the APs reported themselves online.
+        // This BSP scheduler seeds work that idle APs can steal through the timer path.
         #[cfg(feature = "qemu-smp-scheduler-test")]
         {
             // The BSP scheduler regression test uses the BSP's actual APIC slot.
@@ -585,15 +605,33 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             static SMP_TASK_B_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
             extern "C" fn smp_worker_a() {
-                for _ in 0..10 {
+                let mut observed_migrations = 0usize;
+                for iteration in 0..100_000_000usize {
+                    let migrations = systemes_kernel::scheduler::current_task_migration_count();
+                    if migrations > observed_migrations
+                        && systemes_kernel::scheduler::record_migrated_task_execution()
+                    {
+                        // Count this actual post-migration task-body resumption once.
+                        observed_migrations = migrations;
+                    }
+                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 2 { break; }
                     SMP_TASK_A_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    systemes_kernel::scheduler::yield_now();
+                    if iteration & 0x3ff == 0 { systemes_kernel::scheduler::yield_now(); }
                 }
             }
             extern "C" fn smp_worker_b() {
-                for _ in 0..10 {
+                let mut observed_migrations = 0usize;
+                for iteration in 0..100_000_000usize {
+                    let migrations = systemes_kernel::scheduler::current_task_migration_count();
+                    if migrations > observed_migrations
+                        && systemes_kernel::scheduler::record_migrated_task_execution()
+                    {
+                        // Count this actual post-migration task-body resumption once.
+                        observed_migrations = migrations;
+                    }
+                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 2 { break; }
                     SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    systemes_kernel::scheduler::yield_now();
+                    if iteration & 0x3ff == 0 { systemes_kernel::scheduler::yield_now(); }
                 }
             }
 
@@ -601,13 +639,71 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 && systemes_kernel::scheduler::validate_initial_contexts()
             {
                 systemes_kernel::scheduler::enable_preemption();
-                unsafe { debug_write(b"SYSTEMES: BSP-only scheduler initialized; AP task scheduling disabled\r\n"); }
+                unsafe { debug_write(b"SYSTEMES: per-CPU schedulers initialized; work-stealing enabled\r\n"); }
+                let migration_deadline = systemes_kernel::clock::ticks().saturating_add(200);
+                while (systemes_kernel::scheduler::migration_count() < 2
+                    || systemes_kernel::scheduler::migrated_task_execution_count() < 2)
+                    && systemes_kernel::clock::ticks() < migration_deadline
+                {
+                    // SAFETY: Local APIC timer is active and wakes this boot task.
+                    unsafe { asm!("hlt", options(nomem, nostack)); }
+                }
+                let migrations = systemes_kernel::scheduler::migration_count();
+                let resumed = systemes_kernel::scheduler::migrated_task_execution_count();
+                if migrations < 2 || resumed < 2 {
+                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: repeated task migrations did not resume on receiver CPUs\r\n"); }
+                    qemu_debug_exit(0x11);
+                }
+                unsafe {
+                    debug_write(b"SYSTEMES_TEST: cross-CPU work-stealing migration confirmed count=");
+                    let mut digits = [0u8; 20];
+                    let length = encode_decimal(migrations as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b"\r\n");
+                    debug_write(b"SYSTEMES_TEST: migrated task resumed after repeated migrations count=");
+                    let length = encode_decimal(resumed as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b"\r\n");
+                }
+                qemu_debug_exit(0x10);
             } else {
                 unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: multi-core scheduler init failed\r\n"); }
-                halt();
+                qemu_debug_exit(0x11);
             }
         }
+    } else {
+        #[cfg(feature = "qemu-smp-test")]
+        {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: SMP test requires the ACPI MADT and an active Local APIC\r\n"); }
+            #[cfg(feature = "qemu-smp-scheduler-test")]
+            qemu_debug_exit(0x11);
+            #[cfg(not(feature = "qemu-smp-scheduler-test"))]
+            halt();
+        }
+        #[cfg(not(feature = "qemu-smp-test"))]
+        unsafe { debug_write(b"SYSTEMES: SMP unavailable; continuing in BSP mode\r\n"); }
     }
+
+    // The BSP always owns a scheduler when the Local APIC timer is available.
+    // The dedicated SMP scheduler test supplies workers; production starts with
+    // the boot/idle task and can accept kernel tasks in a later process phase.
+    #[cfg(all(
+        not(feature = "qemu-smp-scheduler-test"),
+        not(feature = "qemu-cooperative-scheduler-test"),
+        not(feature = "qemu-preemptive-scheduler-test"),
+        not(feature = "qemu-fpu-context-test"),
+        not(feature = "qemu-task-sleep-test"),
+    ))]
+    if apic_timer_ready {
+        if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[]).is_ok() {
+            systemes_kernel::scheduler::enable_preemption();
+            unsafe { debug_write(b"SYSTEMES: BSP scheduler initialized\r\n"); }
+        } else {
+            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: BSP scheduler initialization failed\r\n"); }
+            halt();
+        }
+    }
+
     #[cfg(feature = "qemu-ring3-test")]
     match unsafe {
         systemes_kernel::address_space::run_qemu_ring3_test(&mut frame_allocator, page_table_root)

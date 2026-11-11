@@ -5,7 +5,7 @@
 //! timer after setting up its GDT/IDT/TSS.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use crate::{acpi::MadtInfo, memory::PhysicalFrameAllocator, paging::IDENTITY_MAP_BYTES};
 
 const IA32_APIC_BASE_MSR: u32 = 0x1B;
@@ -44,6 +44,8 @@ const PIT_CALIBRATION_COUNT: u16 = 59_659;
 const PIT_CALIBRATION_TIMEOUT_ITERATIONS: usize = 100_000_000;
 static APIC_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LOCAL_APIC_BASE: AtomicUsize = AtomicUsize::new(0);
+static LOCAL_APIC_PHYSICAL: AtomicU64 = AtomicU64::new(0);
+static BSP_APIC_ID: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApicInitError {
@@ -156,7 +158,9 @@ pub unsafe fn initialize_local_apic(
     }
     mask_legacy_pic();
     LOCAL_APIC_BASE.store(lapic as usize, Ordering::Release);
+    LOCAL_APIC_PHYSICAL.store(physical, Ordering::Release);
     APIC_ACTIVE.store(true, Ordering::Release);
+    BSP_APIC_ID.store(current_apic_id().unwrap_or(0) as usize, Ordering::Release);
     Ok(())
 }
 
@@ -223,14 +227,29 @@ pub unsafe fn calibrate_and_initialize_local_timer(target_hz: u32) -> Result<Tim
 /// Must be called after the Local APIC is initialized on this CPU (via
 /// `initialize_local_apic`). The caller must ensure the timer is not already running.
 pub unsafe fn initialize_local_timer_on_cpu(initial_count: u32) -> Result<(), ApicInitError> {
-    if !APIC_ACTIVE.load(Ordering::Acquire) {
+    if !APIC_ACTIVE.load(Ordering::Acquire) || initial_count == 0 {
         return Err(ApicInitError::TimerUnavailable);
     }
+    // IA32_APIC_BASE is per logical processor. Explicitly enable this AP's
+    // local controller at the ACPI-discovered physical address after INIT/SIPI.
+    let physical = LOCAL_APIC_PHYSICAL.load(Ordering::Acquire);
+    if physical == 0 { return Err(ApicInitError::TimerUnavailable); }
+    let current = unsafe { read_msr(IA32_APIC_BASE_MSR) };
+    if current & APIC_X2_ENABLE != 0 { return Err(ApicInitError::X2ApicUnsupported); }
+    let updated = (current & !(APIC_BASE_MASK | APIC_X2_ENABLE))
+        | (physical & APIC_BASE_MASK) | APIC_ENABLE;
+    unsafe { write_msr(IA32_APIC_BASE_MSR, updated); }
     let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
     if base.is_null() {
         return Err(ApicInitError::TimerUnavailable);
     }
     unsafe {
+        // APs receive INIT/SIPI with their own Local APIC software-enable state.
+        // Enable the local controller and clear its task priority before unmasking
+        // the periodic timer; BSP initialization does not set the AP's SVR.
+        lapic_write(base, LAPIC_TPR, 0);
+        lapic_write(base, LAPIC_SVR, (1 << 8) | APIC_SPURIOUS_VECTOR);
+        lapic_write(base, LAPIC_EOI, 0);
         lapic_write(base, LAPIC_TIMER_DIVIDE, 0x3);
         lapic_write(base, LAPIC_LVT_TIMER, TIMER_VECTOR as u32 | (1 << 17)); // periodic mode
         lapic_write(base, LAPIC_TIMER_INITIAL, initial_count);
@@ -255,6 +274,11 @@ pub fn is_active() -> bool { APIC_ACTIVE.load(Ordering::Acquire) }
 
 /// Read the executing CPU's Local APIC ID, or `None` while the LAPIC
 /// is inactive.
+/// True only on the bootstrap processor whose Local APIC ID was captured at init.
+pub fn is_bootstrap_cpu() -> bool {
+    current_apic_id().map(|id| id as usize == BSP_APIC_ID.load(Ordering::Acquire)).unwrap_or(false)
+}
+
 pub fn current_apic_id() -> Option<u8> {
     if !APIC_ACTIVE.load(Ordering::Acquire) {
         return None;
@@ -364,7 +388,9 @@ pub unsafe fn stop_local_timer() {
 pub extern "C" fn systemes_apic_timer_dispatch(vector: u64, saved_rsp: usize) -> usize {
     match vector {
         0x40 => {
-            crate::clock::on_timer_interrupt();
+            if is_bootstrap_cpu() {
+                crate::clock::on_timer_interrupt();
+            }
             let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
             if !base.is_null() {
                 // SAFETY: Timer IRQ executes only after the UC-mapped LAPIC is enabled.

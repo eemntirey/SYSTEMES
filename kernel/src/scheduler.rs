@@ -1,9 +1,10 @@
 //! Per-CPU kernel task schedulers for x86_64.
 //!
-//! Each initialized CPU can schedule its own fixed task array using cooperative
-//! yield or Local APIC timer preemption. Legacy x87/MMX/SSE state is isolated
-//! per task. Cross-CPU task migration is NOT implemented: AP scheduler queues
-//! are not initialized and the earlier work-stealing placeholder was removed.
+//! Each initialized CPU owns a bounded task queue and schedules it through
+//! cooperative yield or Local APIC timer preemption. Runnable contexts can be
+//! stolen from another CPU under two queue locks acquired in ascending CPU order.
+//! Migration transfers ownership of a pinned stack/FXSAVE resource pair and the
+//! saved context, then retires the donor slot; RUNNING tasks are never stealable.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
@@ -25,6 +26,8 @@ pub enum TaskState {
     Runnable = 1,
     Blocked = 2,
     Exited = 3,
+    Running = 4,
+    Migrating = 5,
 }
 
 impl TaskState {
@@ -33,6 +36,8 @@ impl TaskState {
             1 => Self::Runnable,
             2 => Self::Blocked,
             3 => Self::Exited,
+            4 => Self::Running,
+            5 => Self::Migrating,
             _ => Self::Empty,
         }
     }
@@ -50,26 +55,39 @@ struct FpuState([u8; FPU_STATE_SIZE]);
 struct TaskStack([u8; STACK_SIZE]);
 
 struct Task {
-    stack: TaskStack,
+    /// Stable resource-pool slot; unlike the queue slot, this never changes during a task's life.
+    resource_id: AtomicUsize,
     saved_rsp: AtomicUsize,
     state: AtomicU8,
     switches: AtomicUsize,
     entry: AtomicUsize,
-    fpu: FpuState,
     wake_at: AtomicU64,
+    migrations: AtomicUsize,
 }
 
 impl Task {
     const fn new() -> Self {
         Self {
-            stack: TaskStack([0; STACK_SIZE]),
+            resource_id: AtomicUsize::new(usize::MAX),
             saved_rsp: AtomicUsize::new(0),
             state: AtomicU8::new(TaskState::Empty as u8),
             switches: AtomicUsize::new(0),
             entry: AtomicUsize::new(0),
-            fpu: FpuState([0; FPU_STATE_SIZE]),
             wake_at: AtomicU64::new(0),
+            migrations: AtomicUsize::new(0),
         }
+    }
+}
+
+/// Stack and FPU resources stay at fixed addresses while their task descriptors migrate.
+struct TaskResources {
+    stack: TaskStack,
+    fpu: FpuState,
+}
+
+impl TaskResources {
+    const fn new() -> Self {
+        Self { stack: TaskStack([0; STACK_SIZE]), fpu: FpuState([0; FPU_STATE_SIZE]) }
     }
 }
 
@@ -82,6 +100,8 @@ struct CpuScheduler {
     preemptive_enabled: AtomicBool,
     preemption_count: AtomicUsize,
     fpu_contexts_ready: AtomicBool,
+    /// Serializes local scheduling with cross-CPU queue transfers.
+    run_queue_lock: AtomicBool,
 }
 
 /// Array of per-CPU schedulers, indexed by CPU slot (APIC ID).
@@ -94,13 +114,158 @@ static mut CPU_SCHEDULERS: [CpuScheduler; MAX_CPUS] = [const {
         preemptive_enabled: AtomicBool::new(false),
         preemption_count: AtomicUsize::new(0),
         fpu_contexts_ready: AtomicBool::new(false),
+        run_queue_lock: AtomicBool::new(false),
     }
 }; MAX_CPUS];
+
+/// Global fixed-address backing store: task descriptors may move between CPU queues,
+/// but their kernel stacks and FXSAVE buffers never move or get copied.
+static mut TASK_RESOURCES: [TaskResources; MAX_CPUS * MAX_TASKS] =
+    [const { TaskResources::new() }; MAX_CPUS * MAX_TASKS];
+
+fn task_resource_ptr(resource_id: usize) -> *mut TaskResources {
+    debug_assert!(resource_id < MAX_CPUS * MAX_TASKS);
+    // SAFETY: resource_id is assigned once at task initialization and transferred atomically.
+    unsafe { core::ptr::addr_of_mut!(TASK_RESOURCES).cast::<TaskResources>().add(resource_id) }
+}
 
 fn cpu_scheduler(cpu_index: usize) -> *mut CpuScheduler {
     debug_assert!(cpu_index < MAX_CPUS);
     // SAFETY: CPU_SCHEDULERS is a static array; caller validates cpu_index.
     unsafe { core::ptr::addr_of_mut!(CPU_SCHEDULERS).cast::<CpuScheduler>().add(cpu_index) }
+}
+
+static MIGRATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+static MIGRATED_TASK_EXECUTIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn lock_run_queue(cpu_index: usize) {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    while unsafe { (*sched).run_queue_lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed) }.is_err() {
+        core::hint::spin_loop();
+    }
+}
+
+fn unlock_run_queue(cpu_index: usize) {
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe { (*sched).run_queue_lock.store(false, Ordering::Release); }
+}
+
+/// Total successful cross-CPU task transfers since boot.
+pub fn migration_count() -> usize {
+    MIGRATION_COUNT.load(Ordering::Acquire)
+}
+
+/// Return how many times the currently running task has crossed a CPU boundary.
+pub fn current_task_migration_count() -> usize {
+    let cpu = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu) };
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    if current >= unsafe { (*sched).task_count.load(Ordering::Acquire) } { return 0; }
+    unsafe { (*task_ptr(cpu, current)).migrations.load(Ordering::Acquire) }
+}
+
+/// Record execution from the receiving CPU after a migrated task resumes.
+pub fn record_migrated_task_execution() -> bool {
+    if current_task_migration_count() == 0 { return false; }
+    MIGRATED_TASK_EXECUTIONS.fetch_add(1, Ordering::AcqRel);
+    true
+}
+
+pub fn migrated_task_execution_count() -> usize {
+    MIGRATED_TASK_EXECUTIONS.load(Ordering::Acquire)
+}
+
+/// Move one READY task from a donor CPU into an idle receiver's private task slot.
+/// Both run-queue locks are always acquired in ascending CPU-index order.
+fn steal_task(receiver: usize) -> bool {
+    if receiver >= MAX_CPUS { return false; }
+    let receiver_sched = unsafe { cpu_scheduler(receiver) };
+    if !unsafe { (*receiver_sched).initialized.load(Ordering::Acquire) } { return false; }
+
+    for donor in 0..MAX_CPUS {
+        if donor == receiver { continue; }
+        let donor_sched = unsafe { cpu_scheduler(donor) };
+        if !unsafe { (*donor_sched).initialized.load(Ordering::Acquire) } { continue; }
+
+        let first = core::cmp::min(receiver, donor);
+        let second = core::cmp::max(receiver, donor);
+        lock_run_queue(first);
+        lock_run_queue(second);
+        // A CPU may have gone offline/reset while this thief waited for the locks.
+        if !unsafe { (*receiver_sched).initialized.load(Ordering::Acquire) }
+            || !unsafe { (*donor_sched).initialized.load(Ordering::Acquire) }
+        {
+            unlock_run_queue(second);
+            unlock_run_queue(first);
+            continue;
+        }
+
+        let donor_count = unsafe { (*donor_sched).task_count.load(Ordering::Acquire) };
+        let donor_current = unsafe { (*donor_sched).current_task.load(Ordering::Acquire) };
+        let receiver_count = unsafe { (*receiver_sched).task_count.load(Ordering::Acquire) };
+        let mut destination = None;
+        for index in 1..receiver_count {
+            if unsafe { (*task_ptr(receiver, index)).state.load(Ordering::Acquire) } == TaskState::Empty as u8 {
+                destination = Some(index);
+                break;
+            }
+        }
+        if destination.is_none() && receiver_count < MAX_TASKS {
+            destination = Some(receiver_count);
+        }
+
+        let mut transferred = false;
+        if let Some(dst_index) = destination {
+            for src_index in 1..donor_count {
+                if src_index == donor_current { continue; }
+                let src = task_ptr(donor, src_index);
+                if unsafe { (*src).state.load(Ordering::Acquire) } != TaskState::Runnable as u8 { continue; }
+                let resource_id = unsafe { (*src).resource_id.load(Ordering::Acquire) };
+                let src_rsp = unsafe { (*src).saved_rsp.load(Ordering::Acquire) };
+                if resource_id >= MAX_CPUS * MAX_TASKS || src_rsp == 0 { continue; }
+                let src_resource = unsafe { task_resource_ptr(resource_id) };
+                let src_stack_base = unsafe { core::ptr::addr_of!((*src_resource).stack.0) as usize };
+                if src_rsp < src_stack_base || src_rsp >= src_stack_base + STACK_SIZE { continue; }
+                if unsafe { (*src).state.compare_exchange(TaskState::Runnable as u8, TaskState::Migrating as u8, Ordering::AcqRel, Ordering::Acquire) }.is_err() { continue; }
+
+                let dst = task_ptr(receiver, dst_index);
+                let dst_resource_id = unsafe { (*dst).resource_id.load(Ordering::Acquire) };
+                if dst_resource_id >= MAX_CPUS * MAX_TASKS || dst_resource_id == resource_id {
+                    unsafe { (*src).state.store(TaskState::Runnable as u8, Ordering::Release); }
+                    continue;
+                }
+                // The resource pool is pinned in static storage. Transfer ownership
+                // of the existing stack/FPU pair; never copy a live stack or relocate
+                // saved frame pointers. The empty source slot receives the destination's
+                // unused resource, preserving one resource per queue slot.
+                unsafe {
+                    (*dst).resource_id.store(resource_id, Ordering::Relaxed);
+                    (*src).resource_id.store(dst_resource_id, Ordering::Relaxed);
+                    (*dst).saved_rsp.store(src_rsp, Ordering::Relaxed);
+                    (*dst).switches.store((*src).switches.load(Ordering::Relaxed), Ordering::Relaxed);
+                    (*dst).entry.store((*src).entry.load(Ordering::Relaxed), Ordering::Relaxed);
+                    (*dst).wake_at.store((*src).wake_at.load(Ordering::Relaxed), Ordering::Relaxed);
+                    (*dst).migrations.store((*src).migrations.load(Ordering::Relaxed).saturating_add(1), Ordering::Relaxed);
+                    (*dst).state.store(TaskState::Runnable as u8, Ordering::Release);
+                    (*src).saved_rsp.store(0, Ordering::Relaxed);
+                    (*src).entry.store(0, Ordering::Relaxed);
+                    (*src).wake_at.store(0, Ordering::Relaxed);
+                    (*src).state.store(TaskState::Empty as u8, Ordering::Release);
+                    if dst_index >= receiver_count {
+                        (*receiver_sched).task_count.store(dst_index + 1, Ordering::Release);
+                    }
+                }
+                MIGRATION_COUNT.fetch_add(1, Ordering::AcqRel);
+                transferred = true;
+                break;
+            }
+        }
+
+        unlock_run_queue(second);
+        unlock_run_queue(first);
+        if transferred { return true; }
+    }
+    false
 }
 
 fn task_ptr(cpu_index: usize, index: usize) -> *mut Task {
@@ -136,14 +301,18 @@ fn initialize_fpu_contexts(cpu_index: usize) -> Result<(), &'static str> {
     }
 
     // Preserve the boot task's incoming x87/SSE state before creating clean task images.
-    let boot_ptr = unsafe { core::ptr::addr_of_mut!((*task_ptr(cpu_index, 0)).fpu.0).cast::<u8>() };
+    let boot_task = task_ptr(cpu_index, 0);
+    let boot_resource = unsafe { (*boot_task).resource_id.load(Ordering::Acquire) };
+    let boot_ptr = unsafe { core::ptr::addr_of_mut!((*task_resource_ptr(boot_resource)).fpu.0).cast::<u8>() };
     let mxcsr: u32 = 0x1F80;
     // SAFETY: FPU state buffers are 16-byte aligned and at least 512 bytes long.
     unsafe {
         core::arch::asm!("fxsave64 [{}]", in(reg) boot_ptr, options(nostack));
         core::arch::asm!("fninit", "ldmxcsr [{}]", in(reg) &mxcsr, options(nostack));
         for index in 1..MAX_TASKS {
-            let state = core::ptr::addr_of_mut!((*task_ptr(cpu_index, index)).fpu.0).cast::<u8>();
+            let task = task_ptr(cpu_index, index);
+            let resource_id = (*task).resource_id.load(Ordering::Acquire);
+            let state = core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).fpu.0).cast::<u8>();
             core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
         }
         core::arch::asm!("fxrstor64 [{}]", in(reg) boot_ptr, options(nostack));
@@ -168,7 +337,10 @@ pub extern "C" fn systemes_fpu_save_current() {
     }
     // SAFETY: The selected task owns a 16-byte-aligned 512-byte FXSAVE image.
     unsafe {
-        let state = core::ptr::addr_of_mut!((*task_ptr(cpu_index, current)).fpu.0).cast::<u8>();
+        let task = task_ptr(cpu_index, current);
+        let resource_id = (*task).resource_id.load(Ordering::Acquire);
+        if resource_id >= MAX_CPUS * MAX_TASKS { return; }
+        let state = core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).fpu.0).cast::<u8>();
         core::arch::asm!("fxsave64 [{}]", in(reg) state, options(nostack));
     }
 }
@@ -188,15 +360,19 @@ pub extern "C" fn systemes_fpu_restore_current() {
     }
     // SAFETY: The selected task owns a previously initialized 16-byte-aligned FXSAVE image.
     unsafe {
-        let state = core::ptr::addr_of!((*task_ptr(cpu_index, current)).fpu.0).cast::<u8>();
+        let task = task_ptr(cpu_index, current);
+        let resource_id = (*task).resource_id.load(Ordering::Acquire);
+        if resource_id >= MAX_CPUS * MAX_TASKS { return; }
+        let state = core::ptr::addr_of!((*task_resource_ptr(resource_id)).fpu.0).cast::<u8>();
         core::arch::asm!("fxrstor64 [{}]", in(reg) state, options(nostack));
     }
 }
 
-fn build_initial_context(cpu_index: usize, task: *mut Task) -> usize {
+fn build_initial_context(_cpu_index: usize, task: *mut Task) -> usize {
     // SAFETY: The task is exclusively initialized before it becomes runnable.
     unsafe {
-        let stack = core::ptr::addr_of_mut!((*task).stack.0).cast::<u8>();
+        let resource_id = (*task).resource_id.load(Ordering::Acquire);
+        let stack = core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).stack.0).cast::<u8>();
         let top = stack.add(STACK_SIZE) as usize;
         let fake_return = (top - 8) as *mut usize;
         fake_return.write(task_returned as *const () as usize);
@@ -247,31 +423,50 @@ extern "C" fn task_bootstrap() -> ! {
 }
 
 /// Initialize the boot task and up to seven cooperative kernel tasks on the given CPU.
-/// Call once during boot before task entries are allowed to run.
+/// APs pass an empty entry list and later receive runnable tasks through work-stealing.
 pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'static str> {
     if cpu_index >= MAX_CPUS {
         return Err("invalid CPU index");
     }
+    // Initialization touches FPU state and queue metadata; prevent the local timer
+    // from observing a partially initialized scheduler on the BSP or an AP.
+    let interrupt_flags = irq_save_disable();
     let sched = unsafe { cpu_scheduler(cpu_index) };
     if unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(interrupt_flags);
         return Err("scheduler already initialized on this CPU");
     }
     if entries.len() >= MAX_TASKS {
+        irq_restore(interrupt_flags);
         return Err("too many kernel tasks");
     }
-    initialize_fpu_contexts(cpu_index)?;
-    // SAFETY: Called during single-core boot before any task can access the table.
+    // SAFETY: This CPU owns its scheduler slots until initialized; resource IDs
+    // are fixed by the CPU/task slot and remain valid even after the descriptor migrates.
     unsafe {
         for index in 0..MAX_TASKS {
             let task = task_ptr(cpu_index, index);
+            let resource_id = (*task).resource_id.load(Ordering::Acquire);
+            if resource_id == usize::MAX {
+                (*task).resource_id.store(cpu_index * MAX_TASKS + index, Ordering::Relaxed);
+            } else if resource_id >= MAX_CPUS * MAX_TASKS {
+                irq_restore(interrupt_flags);
+                return Err("invalid task resource ownership");
+            }
             (*task).saved_rsp.store(0, Ordering::Relaxed);
             (*task).switches.store(0, Ordering::Relaxed);
             (*task).entry.store(0, Ordering::Relaxed);
             (*task).wake_at.store(0, Ordering::Relaxed);
+            (*task).migrations.store(0, Ordering::Relaxed);
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
         }
+    }
+    if let Err(error) = initialize_fpu_contexts(cpu_index) {
+        irq_restore(interrupt_flags);
+        return Err(error);
+    }
+    unsafe {
         let boot = task_ptr(cpu_index, 0);
-        (*boot).state.store(TaskState::Runnable as u8, Ordering::Release);
+        (*boot).state.store(TaskState::Running as u8, Ordering::Release);
         for (offset, entry) in entries.iter().copied().enumerate() {
             let task = task_ptr(cpu_index, offset + 1);
             (*task).entry.store(entry as usize, Ordering::Relaxed);
@@ -283,6 +478,7 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
     unsafe { (*sched).current_task.store(0, Ordering::Release); }
     unsafe { (*sched).task_count.store(entries.len() + 1, Ordering::Release); }
     unsafe { (*sched).initialized.store(true, Ordering::Release); }
+    irq_restore(interrupt_flags);
     Ok(())
 }
 
@@ -307,39 +503,73 @@ fn select_next(current: usize, states: &[TaskState]) -> Option<usize> {
 
 fn schedule(cpu_index: usize, saved_rsp: usize, count_preemption: bool) -> usize {
     let sched = unsafe { cpu_scheduler(cpu_index) };
-    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
-        return saved_rsp;
-    }
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return saved_rsp; }
+
+    lock_run_queue(cpu_index);
     let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     let current = unsafe { (*sched).current_task.load(Ordering::Relaxed) };
     if current >= count {
+        unlock_run_queue(cpu_index);
         return saved_rsp;
     }
 
-    // SAFETY: Both software-yield and timer gates clear IF; scheduler state is per-CPU.
+    // Interrupt gates enter with IF cleared. The queue lock also excludes remote stealers.
     unsafe {
         let current_task = task_ptr(cpu_index, current);
-        if (*current_task).state.load(Ordering::Acquire) != TaskState::Exited as u8 {
+        let current_state = (*current_task).state.load(Ordering::Acquire);
+        if current_state != TaskState::Exited as u8
+            && current_state != TaskState::Empty as u8
+            && current_state != TaskState::Migrating as u8
+        {
+            // Blocked tasks must retain the interrupt frame that will resume them
+            // after a later wake-up; only a genuinely running task becomes READY.
             (*current_task).saved_rsp.store(saved_rsp, Ordering::Release);
             (*current_task).switches.fetch_add(1, Ordering::Relaxed);
-        }
-
-        let mut states = [TaskState::Empty; MAX_TASKS];
-        for index in 0..count {
-            states[index] = TaskState::from_raw((*task_ptr(cpu_index, index)).state.load(Ordering::Acquire));
-        }
-        if let Some(next) = select_next(current, &states[..count]) {
-            let next_task = task_ptr(cpu_index, next);
-            let next_rsp = (*next_task).saved_rsp.load(Ordering::Acquire);
-            if next_rsp != 0 {
-                if count_preemption && next != current {
-                    (*sched).preemption_count.fetch_add(1, Ordering::Relaxed);
-                }
-                (*sched).current_task.store(next, Ordering::Release);
-                return next_rsp;
+            if current_state == TaskState::Running as u8 {
+                (*current_task).state.store(TaskState::Runnable as u8, Ordering::Release);
             }
         }
     }
+
+    let mut states = [TaskState::Empty; MAX_TASKS];
+    for index in 0..count {
+        states[index] = TaskState::from_raw(unsafe { (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) });
+    }
+    let mut next = select_next(current, &states[..count]);
+    let only_current_ready = next == Some(current);
+    unlock_run_queue(cpu_index);
+
+    // An idle CPU attempts a real transfer before returning to its boot/idle context.
+    if only_current_ready || next.is_none() || next == Some(0) {
+        // Task slot zero is the CPU's idle/boot context, not useful queued work.
+        let _ = steal_task(cpu_index);
+    }
+
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    let mut states = [TaskState::Empty; MAX_TASKS];
+    for index in 0..count {
+        states[index] = TaskState::from_raw(unsafe { (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) });
+    }
+    next = select_next(current, &states[..count]);
+    if let Some(next_index) = next {
+        let next_task = unsafe { task_ptr(cpu_index, next_index) };
+        let next_rsp = unsafe { (*next_task).saved_rsp.load(Ordering::Acquire) };
+        if next_rsp != 0 && unsafe { (*next_task).state.compare_exchange(TaskState::Runnable as u8, TaskState::Running as u8, Ordering::AcqRel, Ordering::Acquire) }.is_ok() {
+            if count_preemption && next_index != current {
+                unsafe { (*sched).preemption_count.fetch_add(1, Ordering::Relaxed); }
+            }
+            unsafe { (*sched).current_task.store(next_index, Ordering::Release); }
+            unlock_run_queue(cpu_index);
+            return next_rsp;
+        }
+        // If the current task was already RUNNING (e.g. a spurious timer), preserve it.
+        if next_index == current && unsafe { (*next_task).state.load(Ordering::Acquire) } == TaskState::Running as u8 {
+            unlock_run_queue(cpu_index);
+            return saved_rsp;
+        }
+    }
+    unlock_run_queue(cpu_index);
     saved_rsp
 }
 
@@ -515,8 +745,10 @@ fn irq_restore(flags: usize) {
 pub fn reset_after_all_tasks_exit() -> bool {
     let cpu_index = current_cpu_index();
     let flags = irq_save_disable();
+    lock_run_queue(cpu_index);
     let sched = unsafe { cpu_scheduler(cpu_index) };
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } || unsafe { (*sched).current_task.load(Ordering::Acquire) } != 0 {
+        unlock_run_queue(cpu_index);
         irq_restore(flags);
         return false;
     }
@@ -524,7 +756,8 @@ pub fn reset_after_all_tasks_exit() -> bool {
     for index in 1..count {
         // SAFETY: Index is bounded by TASK_COUNT and interrupts are disabled.
         let state = unsafe { (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) };
-        if state != TaskState::Exited as u8 {
+        if state != TaskState::Exited as u8 && state != TaskState::Empty as u8 {
+            unlock_run_queue(cpu_index);
             irq_restore(flags);
             return false;
         }
@@ -534,6 +767,7 @@ pub fn reset_after_all_tasks_exit() -> bool {
     unsafe { (*sched).task_count.store(1, Ordering::Release); }
     unsafe { (*sched).current_task.store(0, Ordering::Release); }
     unsafe { (*sched).initialized.store(false, Ordering::Release); }
+    unlock_run_queue(cpu_index);
     irq_restore(flags);
     true
 }
@@ -868,6 +1102,8 @@ mod tests {
         assert_eq!(TaskState::from_raw(1), TaskState::Runnable);
         assert_eq!(TaskState::from_raw(2), TaskState::Blocked);
         assert_eq!(TaskState::from_raw(3), TaskState::Exited);
+        assert_eq!(TaskState::from_raw(4), TaskState::Running);
+        assert_eq!(TaskState::from_raw(5), TaskState::Migrating);
         assert_eq!(TaskState::from_raw(255), TaskState::Empty);
     }
 

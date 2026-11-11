@@ -22,15 +22,13 @@
 //!    `SpinLock` — which only stabilizes when cross-core memory coherence
 //!    and the lock itself behave correctly on real symmetric harts.
 //!
-//! P1-6b status and explicit limitations (tracked in AUTONOMOUS_DEVELOPMENT.md):
-//! - APs now install private GDT/IDT/TSS structures and start calibrated local
-//!   APIC timers, but their task schedulers are NOT initialized.
-//! - APs therefore remain in an interruptible idle loop; no AP run queue is
-//!   populated, no task is dispatched on an AP, and no task migrates between CPUs.
-//! - The BSP scheduler remains local to its own task array. Work-stealing is
-//!   not implemented and is not claimed as a completed feature.
-//! - SYSCALL/SYSRET and the Ring 3 test path retain the validated BSP-only
-//!   assembly stack ABI; per-CPU syscall entry is not yet implemented.
+//! P1-6c scheduler integration:
+//! - Each AP installs its private GDT/IDT/TSS and calibrated Local APIC timer,
+//!   initializes a CPU-local scheduler, then enters the scheduler idle loop.
+//! - Runnable task descriptors may be transferred between per-CPU task tables;
+//!   stack and FXSAVE resources remain pinned while both run-queue locks are held.
+//! - The BSP-only SYSCALL/SYSRET and Ring 3 assembly stack ABI remains a separate
+//!   limitation; per-CPU syscall entry is not implemented by this scheduler phase.
 //! - The trampoline page (< 1 MiB) stays reserved for AP bring-up.
 //! - The kernel CR3 must sit below 4 GiB because the 32-bit trampoline stage
 //!   loads it with a 32-bit immediate. QEMU/OVMF images satisfy this today.
@@ -669,31 +667,27 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
         unsafe { initialize_cpu(slot) };
     }
 
-    // P1-6b: Initialize per-CPU Local APIC timer using BSP's calibration.
+    // P1-6b/P1-6c: Enable this AP's Local APIC from the BSP-published ACPI
+    // mapping, then program its timer using the BSP's calibrated initial count.
     let initial_count = get_timer_initial_count();
-    if initial_count != 0 {
-        // SAFETY: Local APIC is already initialized on this CPU via the trampoline.
-        let _ = unsafe { initialize_local_timer_on_cpu(initial_count) };
+    if initial_count == 0 {
+        park_forever();
+    }
+    // SAFETY: Local APIC is already initialized on this CPU via the trampoline.
+    if unsafe { initialize_local_timer_on_cpu(initial_count) }.is_err() {
+        park_forever();
     }
 
     run_core_validation(slot);
-    AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
 
-    // AP task queues and cross-CPU migration are not implemented yet.
-    // Keep the AP interruptible for its local timer, but do not claim it is
-    // participating in task scheduling.
-    unsafe { asm!("sti", options(nomem, nostack)) };
-    idle_loop();
-}
-
-/// Idle-only AP loop. No AP run queue is populated or scheduled in P1-6b.
-fn idle_loop() -> ! {
-    loop {
-        // yield_now is a no-op until this AP has an initialized scheduler.
-        crate::scheduler::yield_now();
-        // Local APIC timer interrupts wake the CPU; no task migration occurs.
-        unsafe { asm!("hlt", options(nomem, nostack)) };
+    // P1-6c: every AP owns an initialized scheduler before it is reported online.
+    // The boot task is the AP's idle context; it can receive stolen work on a timer tick.
+    if crate::scheduler::initialize_cpu(slot, &[]).is_err() {
+        park_forever();
     }
+    crate::scheduler::enable_preemption();
+    AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
+    crate::scheduler::run_cpu_loop()
 }
 
 /// Park the CPU with interrupts disabled until the next phase reclaims it.

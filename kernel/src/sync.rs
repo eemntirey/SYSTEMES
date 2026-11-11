@@ -1,8 +1,8 @@
-//! Minimal spin lock for the single-core kernel.
+//! Minimal acquire/release spin lock used by SMP bring-up and shared kernel state.
 //!
-//! The lock is only taken from boot code and from syscall context on the boot
-//! CPU. Interrupt handlers never acquire it, so holding it cannot deadlock
-//! against the timer interrupt.
+//! Callers that may be interrupted while holding a lock must disable local
+//! interrupts first. Scheduler run-queue locks use a dedicated CPU-index order
+//! and are never acquired recursively.
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
