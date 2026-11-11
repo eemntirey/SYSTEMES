@@ -785,3 +785,39 @@ jobs:
             build/uefi/debug-4.log
             build/uefi/qemu-4.log
           if-no-files-found: warn
+
+  smp-concurrency-matrix:
+    name: QEMU SMP concurrency matrix (1, 2 and 4 CPUs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install QEMU, UEFI and image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnu-efi binutils dosfstools mtools xorriso qemu-system-x86 ovmf python3
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-none
+      - name: Validate QEMU matrix shell syntax
+        shell: bash
+        run: |
+          bash -n scripts/qemu-boot.sh
+          bash -n scripts/qemu-concurrency-matrix.sh
+      - name: Run strict 1/2/4 CPU matrix
+        shell: bash
+        run: bash scripts/qemu-concurrency-matrix.sh
+      - name: Upload matrix evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-smp-concurrency-matrix
+          path: |
+            build/matrix-*.out
+            build/matrix-*.debug.log
+            build/uefi/debug.log
+            build/uefi/serial.log
+            build/uefi/qemu.log
+          if-no-files-found: warn

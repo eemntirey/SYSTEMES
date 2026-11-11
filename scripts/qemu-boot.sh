@@ -9,7 +9,7 @@
 #   scripts/qemu-boot.sh                     # production boot, no qemu-* feature
 #   scripts/qemu-boot.sh --ci-features       # same feature set as the CI job
 #   scripts/qemu-boot.sh --features qemu-virtio-vfs-test
-#   scripts/qemu-boot.sh --disk --input 'help\n'
+#   scripts/qemu-boot.sh --disk --input "help"
 #   scripts/qemu-boot.sh --smp 4 --features qemu-smp-test
 #   scripts/qemu-boot.sh --ci-features --ci-markers
 #
@@ -29,6 +29,7 @@ INPUT=""
 SMP_CPUS=1
 TIMEOUT=45
 CHECK_CI_MARKERS=0
+DEBUG_EXIT=0
 EXPECT=()
 
 while [ $# -gt 0 ]; do
@@ -41,6 +42,7 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --expect) EXPECT+=("$2"); shift 2 ;;
     --ci-markers) CHECK_CI_MARKERS=1; shift ;;
+    --debug-exit) DEBUG_EXIT=1; shift ;;
     --keep) shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -65,32 +67,46 @@ objcopy -O binary "$KERNEL_ELF" "$OUT/KERNEL.BIN" || exit 1
 test -s "$OUT/KERNEL.BIN" || { echo "ERROR: empty KERNEL.BIN" >&2; exit 1; }
 kernel_end=$(nm -n "$KERNEL_ELF" | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
 test -n "$kernel_end" || { echo "ERROR: __kernel_image_end missing" >&2; exit 1; }
-KERNEL_IMAGE_BYTES=$((kernel_end - 0x00200000))
+KERNEL_IMAGE_BYTES=$((kernel_end - 0x02000000))
 test "$KERNEL_IMAGE_BYTES" -ge "$(stat -c %s "$OUT/KERNEL.BIN")" \
   || { echo "ERROR: kernel image exceeds reservation" >&2; exit 1; }
 
 echo "== Build GNU-EFI loader"
-if [ ! -f "$GNUEFI_WORK/usr/include/efi/efi.h" ]; then
-  mkdir -p "$GNUEFI_WORK"
-  if [ -f "$GNUEFI_WORK/gnu-efi.deb" ]; then
-    :
-  else
+mkdir -p "$GNUEFI_WORK"
+EFI=""
+# Prefer the distro package already installed by CI or by the local toolchain.
+# This avoids downloading/extracting a second copy into the build directory.
+if [ -f /usr/include/efi/efi.h ]; then
+  EFI=/usr
+elif [ -f "$GNUEFI_WORK/usr/include/efi/efi.h" ]; then
+  EFI="$GNUEFI_WORK/usr"
+else
+  if [ ! -f "$GNUEFI_WORK/gnu-efi.deb" ]; then
     ( cd "$GNUEFI_WORK" && apt-get download gnu-efi >/dev/null 2>&1 ) || {
       echo "ERROR: cannot download gnu-efi (need gnu-efi headers)" >&2; exit 1; }
-    mv "$GNUEFI_WORK"/gnu-efi_*_amd64.deb "$GNUEFI_WORK/gnu-efi.deb"
+    package=$(find "$GNUEFI_WORK" -maxdepth 1 -type f -name 'gnu-efi_*_*.deb' -print -quit)
+    if [ -z "$package" ]; then
+      echo "ERROR: apt-get download succeeded but no gnu-efi .deb was found" >&2
+      find "$GNUEFI_WORK" -maxdepth 1 -type f -printf '%f\n' >&2
+      exit 1
+    fi
+    mv "$package" "$GNUEFI_WORK/gnu-efi.deb"
   fi
   dpkg-deb -x "$GNUEFI_WORK/gnu-efi.deb" "$GNUEFI_WORK" || exit 1
+  EFI="$GNUEFI_WORK/usr"
 fi
-EFI="$GNUEFI_WORK/usr"
 test -f "$EFI/include/efi/efi.h" || { echo "ERROR: gnu-efi headers missing in $EFI" >&2; exit 1; }
+EFI_LIB=$(find "$EFI" -type f -name elf_x86_64_efi.lds -printf '%h\n' -quit)
+test -n "$EFI_LIB" || { echo "ERROR: GNU-EFI linker scripts/libraries not found under $EFI" >&2; exit 1; }
+test -f "$EFI_LIB/crt0-efi-x86_64.o" || { echo "ERROR: GNU-EFI crt0 object missing in $EFI_LIB" >&2; exit 1; }
 
 gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES \
   -I"$EFI/include/efi" -I"$EFI/include/efi/x86_64" \
   -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector \
   -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args \
   -c "$ROOT/boot/uefi-loader/main.c" -o "$OUT/loader.o" || exit 1
-ld -nostdlib -znocombreloc -T "$EFI/lib/elf_x86_64_efi.lds" -shared -Bsymbolic \
-  "$EFI/lib/crt0-efi-x86_64.o" "$OUT/loader.o" -L"$EFI/lib" -lefi -lgnuefi \
+ld -nostdlib -znocombreloc -T "$EFI_LIB/elf_x86_64_efi.lds" -shared -Bsymbolic \
+  "$EFI_LIB/crt0-efi-x86_64.o" "$OUT/loader.o" -L"$EFI_LIB" -lefi -lgnuefi \
   -o "$OUT/loader.so" || exit 1
 objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel \
   -j .rela -j .reloc -O efi-app-x86_64 "$OUT/loader.so" "$OUT/BOOTX64.EFI" || exit 1
@@ -144,7 +160,15 @@ QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -smp "$SMP_CPUS" -m 512M
   -drive file="$OUT/systemes-k1.iso",media=cdrom,if=ide,readonly=on
   "${DISK_ARGS[@]}" -boot order=d -monitor none
   -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9
-  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)
+  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot)
+# isa-debug-exit requests a guest shutdown; -no-shutdown would keep QEMU alive
+# after that request and turn a successful test into a timeout.
+if [ "$DEBUG_EXIT" -ne 1 ]; then
+  QEMU_CMD+=(-no-shutdown)
+fi
+if [ "$DEBUG_EXIT" -eq 1 ]; then
+  QEMU_CMD+=(-device isa-debug-exit,iobase=0xf4,iosize=0x04)
+fi
 
 if [ -n "$INPUT" ]; then
   # printf interprets the escapes in --input; the shell feeds the serial console.
@@ -158,12 +182,22 @@ else
 fi
 QEMU_STATUS=$?
 set -e
-case "$QEMU_STATUS" in
-  0|124) : ;;
-  *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2
-     cat "$OUT/serial.log" 2>/dev/null
-     exit 1 ;;
-esac
+if [ "$DEBUG_EXIT" -eq 1 ]; then
+  case "$QEMU_STATUS" in
+    33) echo "QEMU isa-debug-exit reported success (code 0x10)" ;;
+    35) echo "QEMU isa-debug-exit reported kernel test failure (code 0x11)" >&2; exit 1 ;;
+    *) echo "QEMU debug-exit test expected status 33, got $QEMU_STATUS" >&2
+       cat "$OUT/serial.log" 2>/dev/null
+       exit 1 ;;
+  esac
+else
+  case "$QEMU_STATUS" in
+    0|124) : ;;
+    *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2
+       cat "$OUT/serial.log" 2>/dev/null
+       exit 1 ;;
+  esac
+fi
 
 echo "== debug.log"
 cat "$OUT/debug.log" 2>/dev/null
@@ -176,7 +210,7 @@ if grep -q 'SYSTEMES_KERNEL_FAIL:' "$OUT/debug.log"; then
   status=1
 fi
 if grep -qF '\r\n' "$OUT/debug.log"; then
-  echo "FAIL debug log contains literal \\r\\n escapes" >&2
+  echo "FAIL debug log contains literal \\r\n escapes" >&2
   status=1
 fi
 if ! grep -q 'SYSTEMES_KERNEL_OK' "$OUT/debug.log"; then
