@@ -99,14 +99,18 @@ static mut CPU_CONTEXTS: [CpuContext; MAX_CPUS] = [const { CpuContext::new() }; 
 /// Track which CPU contexts have been initialized.
 static CPU_INIT_STATE: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
-/* Validated BSP-only compatibility ABI. AP-local syscall stacks and GS-based
-   user/kernel GS switching are not yet implemented; do not pass user RSI/RDI
-   as kernel pointers to these entry stubs. */
-#[unsafe(no_mangle)]
-static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
-    InterruptStack([0; INTERRUPT_STACK_SIZE]);
-#[unsafe(no_mangle)]
-static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
+/// CPU-local state addressed through GS after SWAPGS on SYSCALL entry.
+#[repr(C, align(16))]
+struct SyscallCpuLocal {
+    kernel_stack_top: u64,
+    user_rsp: u64,
+}
+
+/// Each CPU owns an independent SYSCALL stack and GS-addressable entry state.
+static mut SYSCALL_CPU_LOCAL: [SyscallCpuLocal; MAX_CPUS] =
+    [const { SyscallCpuLocal { kernel_stack_top: 0, user_rsp: 0 } }; MAX_CPUS];
+static mut SYSCALL_KERNEL_STACKS: [InterruptStack; MAX_CPUS] =
+    [const { InterruptStack([0; INTERRUPT_STACK_SIZE]) }; MAX_CPUS];
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
@@ -485,10 +489,11 @@ systemes_user_exit:
 
 .global systemes_syscall_entry
 systemes_syscall_entry:
-    mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
-    lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
-    add rsp, {interrupt_stack_size}
-    push qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
+    /* User GS is zero; SWAPGS selects this CPU's kernel-local context. */
+    swapgs
+    mov qword ptr gs:[8], rsp
+    mov rsp, qword ptr gs:[0]
+    push qword ptr gs:[8]
     push rax
     push rbx
     push rcx
@@ -525,7 +530,8 @@ systemes_syscall_entry:
     pop rbx
     pop rax
     add rsp, 8
-    mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
+    mov rsp, qword ptr gs:[8]
+    swapgs
     sysretq
 .Lsystemes_syscall_exit:
     mov rax, qword ptr [rip + SYSTEMES_SYSCALL_EXIT_STATUS]
@@ -752,6 +758,8 @@ const MSR_EFER: u32 = 0xC000_0080;
 const MSR_STAR: u32 = 0xC000_0081;
 const MSR_LSTAR: u32 = 0xC000_0082;
 const MSR_SFMASK: u32 = 0xC000_0084;
+const MSR_GS_BASE: u32 = 0xC000_0101;
+const MSR_KERNEL_GS_BASE: u32 = 0xC000_0102;
 const EFER_SCE: u64 = 1;
 const STAR_VALUE: u64 =
     (((USER_DATA_RPL3 - 8) as u64) << 48) | ((KERNEL_CODE_SELECTOR as u64) << 32);
@@ -763,13 +771,11 @@ pub enum SyscallInitError {
     UnsupportedByCpu,
 }
 
-/// Enable long-mode syscall entry and program the SYSCALL/SYSRET selectors.
+/// Enable SYSCALL/SYSRET and install this CPU's private entry stack and GS context.
 ///
 /// # Safety
-///
-/// Must run at CPL0 after the kernel GDT is active and before user code can
-/// execute `SYSCALL`. This kernel currently uses one shared syscall stack and
-/// therefore supports only one CPU at a time for syscalls (the BSP).
+/// Must run at CPL0 after this CPU's GDT is active, with interrupts disabled,
+/// and before this CPU can execute user code.
 pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
     let maximum_extended_leaf = core::arch::x86_64::__cpuid(0x8000_0000).eax;
     if maximum_extended_leaf < 0x8000_0001
@@ -778,11 +784,26 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
         return Err(SyscallInitError::UnsupportedByCpu);
     }
 
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS || CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) != 2 {
+        return Err(SyscallInitError::UnsupportedByCpu);
+    }
+    // SAFETY: This CPU exclusively owns its APIC-ID-indexed local state.
+    let local = unsafe { addr_of_mut!(SYSCALL_CPU_LOCAL).cast::<SyscallCpuLocal>().add(cpu_index) };
+    let stack = unsafe { addr_of_mut!(SYSCALL_KERNEL_STACKS).cast::<InterruptStack>().add(cpu_index) };
+    let stack_top = unsafe { addr_of_mut!((*stack).0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    if stack_top & 0x0F != 0 {
+        return Err(SyscallInitError::UnsupportedByCpu);
+    }
+    unsafe {
+        core::ptr::addr_of_mut!((*local).kernel_stack_top).write(stack_top);
+        core::ptr::addr_of_mut!((*local).user_rsp).write(0);
+    }
+
+    write_msr(MSR_GS_BASE, 0);
+    write_msr(MSR_KERNEL_GS_BASE, local as u64);
     write_msr(MSR_STAR, STAR_VALUE);
-    write_msr(
-        MSR_LSTAR,
-        systemes_syscall_entry as *const () as usize as u64,
-    );
+    write_msr(MSR_LSTAR, systemes_syscall_entry as *const () as usize as u64);
     write_msr(MSR_SFMASK, SFMASK_VALUE);
     let efer = read_msr(MSR_EFER);
     write_msr(MSR_EFER, efer | EFER_SCE);
@@ -791,13 +812,21 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
 
 /// Confirm the enabled syscall bit and programmed selectors/entry mask.
 pub fn verify_syscall_configuration() -> bool {
-    let stack_start = addr_of!(SYSTEMES_SYSCALL_KERNEL_STACK) as *const u8 as usize;
-    let stack_top = stack_start + core::mem::size_of::<InterruptStack>();
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS || CPU_INIT_STATE[cpu_index].load(Ordering::Acquire) != 2 {
+        return false;
+    }
+    let local = unsafe { (addr_of!(SYSCALL_CPU_LOCAL) as *const SyscallCpuLocal).add(cpu_index) };
+    let stack_top = unsafe { core::ptr::addr_of!((*local).kernel_stack_top).read() };
+    let gs_base = read_msr(MSR_GS_BASE);
+    let kernel_gs_base = read_msr(MSR_KERNEL_GS_BASE);
     read_msr(MSR_EFER) & EFER_SCE != 0
         && read_msr(MSR_STAR) == STAR_VALUE
         && read_msr(MSR_LSTAR) == systemes_syscall_entry as *const () as usize as u64
         && read_msr(MSR_SFMASK) == SFMASK_VALUE
-        && stack_start != 0
+        && gs_base == 0
+        && kernel_gs_base == local as u64
+        && stack_top != 0
         && stack_top & 0x0F == 0
 }
 
