@@ -9,7 +9,8 @@
 #   scripts/qemu-boot.sh                     # production boot, no qemu-* feature
 #   scripts/qemu-boot.sh --ci-features       # same feature set as the CI job
 #   scripts/qemu-boot.sh --features qemu-virtio-vfs-test
-#   scripts/qemu-boot.sh --disk --input 'help\n'
+#   scripts/qemu-boot.sh --disk --input 'help
+'
 #   scripts/qemu-boot.sh --smp 4 --features qemu-smp-test
 #   scripts/qemu-boot.sh --ci-features --ci-markers
 #
@@ -41,7 +42,8 @@ while [ $# -gt 0 ]; do
     --input) INPUT="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --expect) EXPECT+=("$2"); shift 2 ;;
-    --ci-markers) CHECK_CI_MARKERS=1; shift ;;\n    --debug-exit) DEBUG_EXIT=1; shift ;;
+    --ci-markers) CHECK_CI_MARKERS=1; shift ;;
+    --debug-exit) DEBUG_EXIT=1; shift ;;
     --keep) shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -145,7 +147,10 @@ QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -smp "$SMP_CPUS" -m 512M
   -drive file="$OUT/systemes-k1.iso",media=cdrom,if=ide,readonly=on
   "${DISK_ARGS[@]}" -boot order=d -monitor none
   -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9
-  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)\nif [ "$DEBUG_EXIT" -eq 1 ]; then\n  QEMU_CMD+=(-device isa-debug-exit,iobase=0xf4,iosize=0x04)\nfi
+  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)
+if [ "$DEBUG_EXIT" -eq 1 ]; then
+  QEMU_CMD+=(-device isa-debug-exit,iobase=0xf4,iosize=0x04)
+fi
 
 if [ -n "$INPUT" ]; then
   # printf interprets the escapes in --input; the shell feeds the serial console.
@@ -159,7 +164,22 @@ else
 fi
 QEMU_STATUS=$?
 set -e
-if [ "$DEBUG_EXIT" -eq 1 ]; then\n  case "$QEMU_STATUS" in\n    33) echo "QEMU isa-debug-exit reported success (code 0x10)" ;;\n    35) echo "QEMU isa-debug-exit reported kernel test failure (code 0x11)" >&2; exit 1 ;;\n    *) echo "QEMU debug-exit test expected status 33, got $QEMU_STATUS" >&2\n       cat "$OUT/serial.log" 2>/dev/null\n       exit 1 ;;\n  esac\nelse\n  case "$QEMU_STATUS" in\n    0|124) : ;;\n    *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2\n       cat "$OUT/serial.log" 2>/dev/null\n       exit 1 ;;\n  esac\nfi
+if [ "$DEBUG_EXIT" -eq 1 ]; then
+  case "$QEMU_STATUS" in
+    33) echo "QEMU isa-debug-exit reported success (code 0x10)" ;;
+    35) echo "QEMU isa-debug-exit reported kernel test failure (code 0x11)" >&2; exit 1 ;;
+    *) echo "QEMU debug-exit test expected status 33, got $QEMU_STATUS" >&2
+       cat "$OUT/serial.log" 2>/dev/null
+       exit 1 ;;
+  esac
+else
+  case "$QEMU_STATUS" in
+    0|124) : ;;
+    *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2
+       cat "$OUT/serial.log" 2>/dev/null
+       exit 1 ;;
+  esac
+fi
 
 echo "== debug.log"
 cat "$OUT/debug.log" 2>/dev/null
@@ -171,8 +191,10 @@ if grep -q 'SYSTEMES_KERNEL_FAIL:' "$OUT/debug.log"; then
   echo "FAIL kernel reported SYSTEMES_KERNEL_FAIL:" >&2
   status=1
 fi
-if grep -qF '\r\n' "$OUT/debug.log"; then
-  echo "FAIL debug log contains literal \\r\\n escapes" >&2
+if grep -qF '\r
+' "$OUT/debug.log"; then
+  echo "FAIL debug log contains literal \\r\
+ escapes" >&2
   status=1
 fi
 if ! grep -q 'SYSTEMES_KERNEL_OK' "$OUT/debug.log"; then
