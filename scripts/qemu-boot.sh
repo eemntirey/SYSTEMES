@@ -29,6 +29,7 @@ INPUT=""
 SMP_CPUS=1
 TIMEOUT=45
 CHECK_CI_MARKERS=0
+DEBUG_EXIT=0
 EXPECT=()
 
 while [ $# -gt 0 ]; do
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
     --input) INPUT="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --expect) EXPECT+=("$2"); shift 2 ;;
-    --ci-markers) CHECK_CI_MARKERS=1; shift ;;
+    --ci-markers) CHECK_CI_MARKERS=1; shift ;;\n    --debug-exit) DEBUG_EXIT=1; shift ;;
     --keep) shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -144,7 +145,7 @@ QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -smp "$SMP_CPUS" -m 512M
   -drive file="$OUT/systemes-k1.iso",media=cdrom,if=ide,readonly=on
   "${DISK_ARGS[@]}" -boot order=d -monitor none
   -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9
-  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)
+  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)\nif [ "$DEBUG_EXIT" -eq 1 ]; then\n  QEMU_CMD+=(-device isa-debug-exit,iobase=0xf4,iosize=0x04)\nfi
 
 if [ -n "$INPUT" ]; then
   # printf interprets the escapes in --input; the shell feeds the serial console.
@@ -158,12 +159,7 @@ else
 fi
 QEMU_STATUS=$?
 set -e
-case "$QEMU_STATUS" in
-  0|124) : ;;
-  *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2
-     cat "$OUT/serial.log" 2>/dev/null
-     exit 1 ;;
-esac
+if [ "$DEBUG_EXIT" -eq 1 ]; then\n  case "$QEMU_STATUS" in\n    33) echo "QEMU isa-debug-exit reported success (code 0x10)" ;;\n    35) echo "QEMU isa-debug-exit reported kernel test failure (code 0x11)" >&2; exit 1 ;;\n    *) echo "QEMU debug-exit test expected status 33, got $QEMU_STATUS" >&2\n       cat "$OUT/serial.log" 2>/dev/null\n       exit 1 ;;\n  esac\nelse\n  case "$QEMU_STATUS" in\n    0|124) : ;;\n    *) echo "QEMU exited unexpectedly with status $QEMU_STATUS" >&2\n       cat "$OUT/serial.log" 2>/dev/null\n       exit 1 ;;\n  esac\nfi
 
 echo "== debug.log"
 cat "$OUT/debug.log" 2>/dev/null
