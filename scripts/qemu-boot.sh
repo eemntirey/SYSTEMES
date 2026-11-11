@@ -87,7 +87,7 @@ else
     package=$(find "$GNUEFI_WORK" -maxdepth 1 -type f -name 'gnu-efi_*_*.deb' -print -quit)
     if [ -z "$package" ]; then
       echo "ERROR: apt-get download succeeded but no gnu-efi .deb was found" >&2
-      find "$GNUEFI_WORK" -maxdepth 1 -type f -printf '%f\\n' >&2
+      find "$GNUEFI_WORK" -maxdepth 1 -type f -printf '%f\n' >&2
       exit 1
     fi
     mv "$package" "$GNUEFI_WORK/gnu-efi.deb"
@@ -96,7 +96,7 @@ else
   EFI="$GNUEFI_WORK/usr"
 fi
 test -f "$EFI/include/efi/efi.h" || { echo "ERROR: gnu-efi headers missing in $EFI" >&2; exit 1; }
-EFI_LIB=$(find "$EFI" -type f -name elf_x86_64_efi.lds -printf '%h\\n' -quit)
+EFI_LIB=$(find "$EFI" -type f -name elf_x86_64_efi.lds -printf '%h\n' -quit)
 test -n "$EFI_LIB" || { echo "ERROR: GNU-EFI linker scripts/libraries not found under $EFI" >&2; exit 1; }
 test -f "$EFI_LIB/crt0-efi-x86_64.o" || { echo "ERROR: GNU-EFI crt0 object missing in $EFI_LIB" >&2; exit 1; }
 
@@ -205,7 +205,7 @@ if grep -q 'SYSTEMES_KERNEL_FAIL:' "$OUT/debug.log"; then
   status=1
 fi
 if grep -qF '\r\n' "$OUT/debug.log"; then
-  echo "FAIL debug log contains literal \\r\\n escapes" >&2
+  echo "FAIL debug log contains literal \\r\n escapes" >&2
   status=1
 fi
 if ! grep -q 'SYSTEMES_KERNEL_OK' "$OUT/debug.log"; then
