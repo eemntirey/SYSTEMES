@@ -1245,6 +1245,24 @@ mod tests {
     }
 
     #[test]
+    fn syscall_cpu_local_layout_matches_the_gs_assembly_offsets() {
+        assert_eq!(core::mem::size_of::<SyscallCpuLocal>(), 16);
+        assert_eq!(core::mem::align_of::<SyscallCpuLocal>(), 16);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, kernel_stack_top), 0);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, user_rsp), 8);
+        assert_eq!(core::mem::size_of::<[InterruptStack; MAX_CPUS]>(),
+            MAX_CPUS * INTERRUPT_STACK_SIZE);
+    }
+
+    #[test]
+    fn syscall_entry_stack_size_is_sufficient_for_a_saved_register_frame() {
+        // user RSP plus the 15 general-purpose registers saved by the entry stub.
+        const SAVED_FRAME_BYTES: usize = 16 * core::mem::size_of::<u64>();
+        assert!(INTERRUPT_STACK_SIZE >= SAVED_FRAME_BYTES + 256);
+        assert_eq!(INTERRUPT_STACK_SIZE % 16, 0);
+    }
+
+    #[test]
     fn syscall_star_selectors_match_the_gdt_layout() {
         let syscall_code = (STAR_VALUE >> 32) as u16;
         let sysret_base = (STAR_VALUE >> 48) as u16;
