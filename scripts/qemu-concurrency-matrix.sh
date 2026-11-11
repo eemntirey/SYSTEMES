@@ -47,7 +47,7 @@ run_case() {
   # A failed build must never leave a previous run's debug log eligible for PASS.
   rm -f "$LOG" "$snapshot"
   set +e
-  "$ROOT/scripts/qemu-boot.sh" --smp "$n" --timeout "$TIMEOUT" "$@" >"$output" 2>&1
+  bash "$ROOT/scripts/qemu-boot.sh" --smp "$n" --timeout "$TIMEOUT" "$@" >"$output" 2>&1
   rc=$?
   set -e
 
