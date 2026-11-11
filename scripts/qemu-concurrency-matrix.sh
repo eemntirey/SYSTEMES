@@ -70,7 +70,8 @@ run_case() {
     fi
   fi
 
-  case "$mode" in
+  if [[ -s "$LOG" ]]; then
+    case "$mode" in
     smoke)
       # The single-CPU baseline is a normal production boot, not an SMP feature:
       # both SMP features deliberately require at least one application processor.
@@ -118,7 +119,8 @@ run_case() {
       }
       ;;
     *) die "internal error: unknown mode '$mode'" ;;
-  esac
+    esac
+  fi
 
   record "$name" "$n" "$verdict" "$notes"
   echo "case=$name smp=$n verdict=$verdict$notes"
