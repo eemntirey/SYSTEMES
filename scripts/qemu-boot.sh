@@ -72,27 +72,41 @@ test "$KERNEL_IMAGE_BYTES" -ge "$(stat -c %s "$OUT/KERNEL.BIN")" \
   || { echo "ERROR: kernel image exceeds reservation" >&2; exit 1; }
 
 echo "== Build GNU-EFI loader"
-if [ ! -f "$GNUEFI_WORK/usr/include/efi/efi.h" ]; then
-  mkdir -p "$GNUEFI_WORK"
-  if [ -f "$GNUEFI_WORK/gnu-efi.deb" ]; then
-    :
-  else
+mkdir -p "$GNUEFI_WORK"
+EFI=""
+# Prefer the distro package already installed by CI or by the local toolchain.
+# This avoids downloading/extracting a second copy into the build directory.
+if [ -f /usr/include/efi/efi.h ]; then
+  EFI=/usr
+elif [ -f "$GNUEFI_WORK/usr/include/efi/efi.h" ]; then
+  EFI="$GNUEFI_WORK/usr"
+else
+  if [ ! -f "$GNUEFI_WORK/gnu-efi.deb" ]; then
     ( cd "$GNUEFI_WORK" && apt-get download gnu-efi >/dev/null 2>&1 ) || {
       echo "ERROR: cannot download gnu-efi (need gnu-efi headers)" >&2; exit 1; }
-    mv "$GNUEFI_WORK"/gnu-efi_*_amd64.deb "$GNUEFI_WORK/gnu-efi.deb"
+    package=$(find "$GNUEFI_WORK" -maxdepth 1 -type f -name 'gnu-efi_*_*.deb' -print -quit)
+    if [ -z "$package" ]; then
+      echo "ERROR: apt-get download succeeded but no gnu-efi .deb was found" >&2
+      find "$GNUEFI_WORK" -maxdepth 1 -type f -printf '%f\\n' >&2
+      exit 1
+    fi
+    mv "$package" "$GNUEFI_WORK/gnu-efi.deb"
   fi
   dpkg-deb -x "$GNUEFI_WORK/gnu-efi.deb" "$GNUEFI_WORK" || exit 1
+  EFI="$GNUEFI_WORK/usr"
 fi
-EFI="$GNUEFI_WORK/usr"
 test -f "$EFI/include/efi/efi.h" || { echo "ERROR: gnu-efi headers missing in $EFI" >&2; exit 1; }
+EFI_LIB=$(find "$EFI" -type f -name elf_x86_64_efi.lds -printf '%h\\n' -quit)
+test -n "$EFI_LIB" || { echo "ERROR: GNU-EFI linker scripts/libraries not found under $EFI" >&2; exit 1; }
+test -f "$EFI_LIB/crt0-efi-x86_64.o" || { echo "ERROR: GNU-EFI crt0 object missing in $EFI_LIB" >&2; exit 1; }
 
 gcc -g -O0 -DKERNEL_IMAGE_BYTES=$KERNEL_IMAGE_BYTES \
   -I"$EFI/include/efi" -I"$EFI/include/efi/x86_64" \
   -DEFI_FUNCTION_WRAPPER -fpic -ffreestanding -fno-stack-protector \
   -fno-stack-check -fshort-wchar -mno-red-zone -maccumulate-outgoing-args \
   -c "$ROOT/boot/uefi-loader/main.c" -o "$OUT/loader.o" || exit 1
-ld -nostdlib -znocombreloc -T "$EFI/lib/elf_x86_64_efi.lds" -shared -Bsymbolic \
-  "$EFI/lib/crt0-efi-x86_64.o" "$OUT/loader.o" -L"$EFI/lib" -lefi -lgnuefi \
+ld -nostdlib -znocombreloc -T "$EFI_LIB/elf_x86_64_efi.lds" -shared -Bsymbolic \
+  "$EFI_LIB/crt0-efi-x86_64.o" "$OUT/loader.o" -L"$EFI_LIB" -lefi -lgnuefi \
   -o "$OUT/loader.so" || exit 1
 objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel \
   -j .rela -j .reloc -O efi-app-x86_64 "$OUT/loader.so" "$OUT/BOOTX64.EFI" || exit 1
