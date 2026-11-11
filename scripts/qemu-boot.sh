@@ -160,7 +160,12 @@ QEMU_CMD=(qemu-system-x86_64 -cpu max -machine q35 -smp "$SMP_CPUS" -m 512M
   -drive file="$OUT/systemes-k1.iso",media=cdrom,if=ide,readonly=on
   "${DISK_ARGS[@]}" -boot order=d -monitor none
   -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9
-  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot -no-shutdown)
+  -d int,cpu_reset -D "$OUT/qemu.log" -display none -no-reboot)
+# isa-debug-exit requests a guest shutdown; -no-shutdown would keep QEMU alive
+# after that request and turn a successful test into a timeout.
+if [ "$DEBUG_EXIT" -ne 1 ]; then
+  QEMU_CMD+=(-no-shutdown)
+fi
 if [ "$DEBUG_EXIT" -eq 1 ]; then
   QEMU_CMD+=(-device isa-debug-exit,iobase=0xf4,iosize=0x04)
 fi
