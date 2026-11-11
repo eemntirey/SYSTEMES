@@ -801,6 +801,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-none
+      - name: Validate QEMU matrix shell syntax
+        shell: bash
+        run: |
+          bash -n scripts/qemu-boot.sh
+          bash -n scripts/qemu-concurrency-matrix.sh
       - name: Run strict 1/2/4 CPU matrix
         shell: bash
         run: bash scripts/qemu-concurrency-matrix.sh
