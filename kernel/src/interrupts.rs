@@ -648,7 +648,6 @@ systemes_exception_common:
     kernel_data_selector = const KERNEL_DATA_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
-    interrupt_stack_size = const INTERRUPT_STACK_SIZE,
 );
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
