@@ -67,7 +67,7 @@ objcopy -O binary "$KERNEL_ELF" "$OUT/KERNEL.BIN" || exit 1
 test -s "$OUT/KERNEL.BIN" || { echo "ERROR: empty KERNEL.BIN" >&2; exit 1; }
 kernel_end=$(nm -n "$KERNEL_ELF" | awk '$3 == "__kernel_image_end" { print "0x" $1 }')
 test -n "$kernel_end" || { echo "ERROR: __kernel_image_end missing" >&2; exit 1; }
-KERNEL_IMAGE_BYTES=$((kernel_end - 0x00200000))
+KERNEL_IMAGE_BYTES=$((kernel_end - 0x02000000))
 test "$KERNEL_IMAGE_BYTES" -ge "$(stat -c %s "$OUT/KERNEL.BIN")" \
   || { echo "ERROR: kernel image exceeds reservation" >&2; exit 1; }
 
