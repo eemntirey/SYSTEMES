@@ -9,8 +9,7 @@
 #   scripts/qemu-boot.sh                     # production boot, no qemu-* feature
 #   scripts/qemu-boot.sh --ci-features       # same feature set as the CI job
 #   scripts/qemu-boot.sh --features qemu-virtio-vfs-test
-#   scripts/qemu-boot.sh --disk --input 'help
-'
+#   scripts/qemu-boot.sh --disk --input "help"
 #   scripts/qemu-boot.sh --smp 4 --features qemu-smp-test
 #   scripts/qemu-boot.sh --ci-features --ci-markers
 #
