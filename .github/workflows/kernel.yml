@@ -707,7 +707,7 @@ jobs:
           test -n "$variables"
           cp "$variables" build/uefi/OVMF_VARS.fd
           set +e
-          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 2 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot -no-shutdown
+          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 2 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial.log -debugcon file:build/uefi/debug.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu.log -display none -no-reboot
           qemu_status=$?
           set -e
           if [ "$qemu_status" -eq 35 ]; then
@@ -750,7 +750,7 @@ jobs:
           test -n "$variables"
           cp "$variables" build/uefi/OVMF_VARS_4.fd
           set +e
-          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 4 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS_4.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial-4.log -debugcon file:build/uefi/debug-4.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu-4.log -display none -no-reboot -no-shutdown
+          timeout 180s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp 4 -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file=build/uefi/OVMF_VARS_4.fd -drive file=build/uefi/systemes-smp-sched.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:build/uefi/serial-4.log -debugcon file:build/uefi/debug-4.log -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D build/uefi/qemu-4.log -display none -no-reboot
           qemu_status=$?
           set -e
           if [ "$qemu_status" -eq 35 ]; then
