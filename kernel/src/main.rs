@@ -59,8 +59,12 @@ fn halt() -> ! {
 
 #[cfg(feature = "qemu-smp-scheduler-test")]
 fn qemu_debug_exit(code: u32) -> ! {
+    // Do not let a local APIC tick preempt the final test/exit sequence.
+    unsafe { asm!("cli", options(nomem, nostack)); }
     // QEMU isa-debug-exit maps the value to (code << 1) | 1 and terminates the VM.
     unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
+    // Reaching this marker means the configured debug-exit device did not terminate QEMU.
+    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\\r\\n"); }
     halt()
 }
 
@@ -683,7 +687,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     // The BSP always owns a scheduler when the Local APIC timer is available.
     // The dedicated SMP scheduler test supplies workers; production starts with
     // the boot/idle task and can accept kernel tasks in a later process phase.
-    #[cfg(not(feature = "qemu-smp-scheduler-test"))]
+    #[cfg(all(
+        not(feature = "qemu-smp-scheduler-test"),
+        not(feature = "qemu-cooperative-scheduler-test"),
+        not(feature = "qemu-preemptive-scheduler-test"),
+        not(feature = "qemu-fpu-context-test"),
+        not(feature = "qemu-task-sleep-test"),
+    ))]
     if apic_timer_ready {
         if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[]).is_ok() {
             systemes_kernel::scheduler::enable_preemption();
