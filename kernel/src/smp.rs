@@ -665,6 +665,13 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     if slot < MAX_CPUS {
         // SAFETY: This CPU owns its slot and interrupts are disabled.
         unsafe { initialize_cpu(slot) };
+        // Program SYSCALL MSRs and the AP-local kernel entry stack only after
+        // this processor has loaded its private GDT/TSS/IDT.
+        if unsafe { crate::interrupts::initialize_syscalls() }.is_err()
+            || !crate::interrupts::verify_syscall_configuration()
+        {
+            park_forever();
+        }
     }
 
     // P1-6b/P1-6c: Enable this AP's Local APIC from the BSP-published ACPI
