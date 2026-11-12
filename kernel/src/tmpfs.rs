@@ -93,6 +93,7 @@ impl TmpFs {
         }
     }
     pub fn write(&mut self,path:&str,offset:usize,input:&[u8])->Result<usize,TmpFsError>{
+        if input.is_empty() { return Ok(0); }
         let parts=Self::components(path)?;
         let (parent,name)=Self::parent_mut(&mut self.root,&parts)?;
         let data=match &mut parent.kind {
@@ -151,19 +152,22 @@ impl TmpFs {
         let dst=Self::components(to)?;
         if src.is_empty()||dst.is_empty(){return Err(TmpFsError::InvalidPath);}
         if dst.starts_with(&src){return Err(TmpFsError::InvalidPath);}
+        // Validate the destination before removing the source so every error
+        // leaves the namespace unchanged.
+        let dst_parent_parts = &dst[..dst.len()-1];
+        let dst_parent = Self::node(&self.root, dst_parent_parts)?;
+        match &dst_parent.kind {
+            NodeKind::Directory(entries) => {
+                if entries.contains_key(dst[dst.len()-1]) { return Err(TmpFsError::AlreadyExists); }
+            }
+            NodeKind::File(_) => return Err(TmpFsError::NotDirectory),
+        }
         let (src_parent,src_name)=Self::parent_mut(&mut self.root,&src)?;
         let node=match &mut src_parent.kind {NodeKind::Directory(e)=>e.remove(&src_name).ok_or(TmpFsError::NotFound)?,NodeKind::File(_)=>return Err(TmpFsError::NotDirectory)};
-        let inserted={
-            let (dst_parent,dst_name)=Self::parent_mut(&mut self.root,&dst)?;
-            match &mut dst_parent.kind {
-                NodeKind::Directory(e)=>{if e.contains_key(&dst_name){false}else{e.insert(dst_name,node);true}},
-                NodeKind::File(_)=>false,
-            }
-        };
-        if inserted {Ok(())} else {
-            let (src_parent,src_name)=Self::parent_mut(&mut self.root,&src)?;
-            if let NodeKind::Directory(e)=&mut src_parent.kind {e.insert(src_name,node);}
-            Err(TmpFsError::AlreadyExists)
+        let (dst_parent,dst_name)=Self::parent_mut(&mut self.root,&dst)?;
+        match &mut dst_parent.kind {
+            NodeKind::Directory(entries) => { entries.insert(dst_name,node); Ok(()) }
+            NodeKind::File(_) => Err(TmpFsError::NotDirectory),
         }
     }
 }
