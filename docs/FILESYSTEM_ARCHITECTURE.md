@@ -18,7 +18,15 @@ filesystem is present yet.
   cannot provide a real flush/barrier.
 
 The cache is currently a standalone primitive and is not wired into rootfs or
-the VFS. The current legacy virtio driver does not yet negotiate/implement the
+the VFS. The `VirtioBlockDevice` adapter exposes sector reads/writes through the
+block contract, but its flush method deliberately returns Unsupported because
+the legacy driver has not negotiated VIRTIO_BLK_F_FLUSH.
+
+- `tmpfs::TmpFs`: bounded in-memory tree with create/mkdir/read/write/stat,
+  truncate/unlink/rename and payload-byte accounting. It is a standalone
+  filesystem primitive and is not yet mounted through VFS.
+- `devfs::DevFs`: /dev/null, /dev/zero and /dev/console read/write semantics.
+  Console I/O is delegated to kernel callbacks; it is not yet mounted through VFS. The current legacy virtio driver does not yet negotiate/implement the
 virtio BLK FLUSH feature, so a production backend must not claim durable sync.
 
 ## Planned layering
