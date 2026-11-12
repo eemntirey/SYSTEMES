@@ -105,6 +105,7 @@ impl<D: BlockDevice, const N: usize> BlockCache<D, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec;
     use std::vec::Vec;
     struct MemoryDisk { blocks: Vec<[u8; BLOCK_SIZE]>, fail_write: bool, flushes: usize }
     impl BlockDevice for MemoryDisk {
