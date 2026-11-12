@@ -110,6 +110,24 @@ static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
 static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
 static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
+
+/// Pending cooperative process-yield request, consumed by the process layer.
+static YIELD_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_yield_requested(requested: bool) {
+    YIELD_REQUESTED.store(requested, Ordering::Release);
+}
+
+/// Update the user stack pointer restored by the next SYSCALL/SYSRET return.
+///
+/// # Safety
+/// The caller must be the BSP syscall/process path and must ensure no other
+/// CPU concurrently uses the shared syscall entry stack.
+pub(crate) unsafe fn set_syscall_user_rsp(user_rsp: u64) {
+    unsafe {
+        core::ptr::addr_of_mut!(SYSTEMES_SYSCALL_USER_RSP).write_volatile(user_rsp);
+    }
+}
 #[unsafe(no_mangle)]
 static mut SYSTEMES_RING3_SAVED_KERNEL_RSP: u64 = 0;
 
