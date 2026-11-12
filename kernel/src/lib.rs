@@ -12,6 +12,7 @@ pub mod address_space;
 pub mod apic;
 pub mod block;
 pub mod tmpfs;
+pub mod devfs;
 pub mod console;
 pub mod clock;
 pub mod heap;
