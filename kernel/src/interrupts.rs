@@ -1326,3 +1326,29 @@ mod tests {
 const fn has_cpu_error_code(vector: u8) -> bool {
     matches!(vector, 8 | 10 | 11 | 12 | 13 | 14 | 17 | 21 | 29 | 30)
 }
+
+#[cfg(test)]
+mod syscall_cpu_local_layout_tests {
+    use super::SyscallCpuLocal;
+    use core::mem::{align_of, offset_of, size_of};
+
+    /// The SYSCALL entry stub uses literal GS displacements [0] and [8].
+    /// Keep this Rust layout contract synchronized with those assembly offsets.
+    #[test]
+    fn gs_entry_fields_match_the_assembly_contract() {
+        assert_eq!(offset_of!(SyscallCpuLocal, kernel_stack_top), 0);
+        assert_eq!(offset_of!(SyscallCpuLocal, user_rsp), 8);
+        assert_eq!(size_of::<SyscallCpuLocal>(), 16);
+        assert_eq!(align_of::<SyscallCpuLocal>(), 16);
+    }
+
+    #[test]
+    fn every_cpu_local_entry_slot_starts_with_empty_user_rsp() {
+        let local = SyscallCpuLocal {
+            kernel_stack_top: 0x1234_5000,
+            user_rsp: 0,
+        };
+        assert_eq!(local.kernel_stack_top, 0x1234_5000);
+        assert_eq!(local.user_rsp, 0);
+    }
+}
