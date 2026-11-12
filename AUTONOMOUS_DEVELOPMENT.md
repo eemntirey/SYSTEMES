@@ -3,24 +3,65 @@
 ## Project
 SYSTEMES native OS (https://github.com/eemntirey/SYSTEMES)
 
-## Roadmap Phase
-Current: **Phase B (deferred SMP) — P1-6a complete (merged), P1-6b next**
-Per `docs/PLAN_PROCHAINE_ETAPE.md`:
-- Phase A: Freestanding kernel contract ✓ (merged up to PR #74)
-- Phase B: SMP + scheduling + memory
-  - P1-6a: SMP AP bring-up (INIT/SIPI) — **PR #75 MERGED**
-  - P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler — **NEXT**
-  - P1-6c: lock-free per-CPU data structures
-- Phase C: VFS + syscalls + userland
-  - P2-1: writable VFS (other agent's PR #73, still open)
-  - P2-2: extended syscall surface
-  - ...
+## Current verified state — 2026-11-12
 
-## Remote State Verification
-- `origin/main` = `b3cbbe7e` (Merge PR #75 from p1-6-smp-ap-bringup) — includes P1-6a SMP bring-up
-- PR #73 (P1-5c — SYS_READDIR + `ls`) open on `p1-5c-ls-readdir` (`83a65649`), ALL technical CI ✓, only "Kilo Code Review: action_required"
-- Other agent owns PR #73, plans to merge then start P2-1 (writable VFS)
-- **This agent completed parallel independent workstream: P1-6a SMP AP bring-up** (files disjoint from PR #73)
+- Audited branch: `main`.
+- Audited HEAD: `a5c89e5d57bca9f874952d96ab801f98df1c27f1`.
+- Latest commit title claims `SYS_SPAWN`, `SYS_FORK`, `SYS_GETPID`,
+  `SYS_WAITPID`, `SYS_READKEY` and a PS/2 driver.
+- **Those claims are not true of the executable kernel on this HEAD.**
+- `kernel/src/syscall.rs` exposes syscall numbers 0–8 only. The five
+  advertised names are absent from the constants and dispatcher.
+- `kernel/src/process.rs` and `kernel/src/keyboard.rs` exist but neither
+  module is declared in `kernel/src/lib.rs`; Cargo does not compile them as
+  part of the kernel crate. `fork_current()` is explicitly a stub; the
+  keyboard methods are no-op stubs (`init() -> Ok("ok")`, `poll() -> 0`).
+- There is no demonstrated PS/2 controller initialization, IRQ1 handler,
+  keyboard event queue, process syscall integration, or wait/reap path.
+- The existing Ring 3 shell, file syscalls, UEFI boot and SMP work remain
+  distinct, already-integrated capabilities; do not conflate them with the
+  new commit's unintegrated files.
+
+### Validation evidence on the exact HEAD
+
+GitHub Actions run #423
+(https://github.com/eemntirey/SYSTEMES/actions/runs/43224174568) completed
+successfully on `a5c89e5d57bca9f874952d96ab801f98df1c27f1`:
+
+- 13/13 check-runs succeeded.
+- Host contract tests: CI step `cargo test --all-features --manifest-path
+  kernel/Cargo.toml` succeeded.
+- Target check: CI step `cargo check --all-features --manifest-path
+  kernel/Cargo.toml --target x86_64-unknown-none` succeeded.
+- UEFI/OVMF boot, production shell (with and without SYSFS), hardware-fault
+  QEMU jobs, SMP bring-up and QEMU 1/2/4 CPU matrix succeeded.
+- These results do **not** compile or validate `process.rs` or
+  `keyboard.rs`, because those modules are not in the crate module graph.
+  No process or keyboard-specific QEMU marker is asserted by the workflow.
+
+### Current phase and next step
+
+**Current phase: audit/correction of the advertised process and keyboard work.**
+
+The next implementation work must be split into targeted PRs:
+1. Process/syscall integration: define stable syscall numbers and ABI first;
+   export and compile process code; implement and test spawn, PID, fork
+   semantics, wait/reap, per-process resources and safe address-space cleanup.
+2. PS/2 keyboard: implement a real bounded 8042/PS/2 driver, scan-code set 2
+   decoder, IRQ routing/handler and event queue; then add the `SYS_READKEY`
+   contract and Ring 3/QEMU input proof.
+
+Do not call either feature complete until host tests, target compilation and
+QEMU/OVMF tests cover the actual behavior. Physical hardware remains a
+separate, unproven level. The detailed matrix and acceptance tests are in
+[`docs/STATE.md`](docs/STATE.md); the supported syscall contract is in
+[`docs/SYSCALL_ABI.md`](docs/SYSCALL_ABI.md).
+
+## Historical development log (archived entries below)
+
+The entries below are retained as historical records. Their "next" statements
+and branch/HEAD references are not the current repository state; use the
+verified state above and `docs/STATE.md` instead.
 
 ## Local Environment
 - `gh` CLI: NOT installed
