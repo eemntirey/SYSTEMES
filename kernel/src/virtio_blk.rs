@@ -183,6 +183,8 @@ impl VirtioBlk {
         })
     }
 
+    pub fn capacity_sectors(&self) -> u64 { self.capacity_sectors }
+
     /// Read one 512-byte sector through the device DMA virtqueue.
     ///
     /// # Safety
@@ -440,6 +442,48 @@ impl VirtioBlk {
             core::hint::spin_loop();
         }
         Err(VirtioBlkError::DmaTimeout)
+    }
+}
+
+
+/// Exclusive adapter exposing the legacy virtio device through the block layer.
+/// It deliberately reports no durability barrier until VIRTIO_BLK_F_FLUSH is
+/// negotiated and implemented by this driver.
+pub struct VirtioBlockDevice<'a> {
+    pub device: &'a mut VirtioBlk,
+    pub allocator: &'a mut PhysicalFrameAllocator,
+}
+
+impl crate::block::BlockDevice for VirtioBlockDevice<'_> {
+    fn capacity_blocks(&self) -> u64 { self.device.capacity_sectors() }
+
+    fn read_block(
+        &mut self,
+        lba: u64,
+        out: &mut [u8; crate::block::BLOCK_SIZE],
+    ) -> Result<(), crate::block::BlockError> {
+        let mut sector = [0u8; SECTOR_SIZE];
+        // SAFETY: this adapter exclusively borrows the configured device and its allocator.
+        unsafe { self.device.read_sector(lba, &mut sector, self.allocator) }
+            .map_err(|_| crate::block::BlockError::Io)?;
+        out.copy_from_slice(&sector);
+        Ok(())
+    }
+
+    fn write_block(
+        &mut self,
+        lba: u64,
+        data: &[u8; crate::block::BLOCK_SIZE],
+    ) -> Result<(), crate::block::BlockError> {
+        let mut sector = [0u8; SECTOR_SIZE];
+        sector.copy_from_slice(data);
+        // SAFETY: this adapter exclusively borrows the configured device and its allocator.
+        unsafe { self.device.write_sector(lba, &sector, self.allocator) }
+            .map_err(|_| crate::block::BlockError::Io)
+    }
+
+    fn flush(&mut self) -> Result<(), crate::block::BlockError> {
+        Err(crate::block::BlockError::Unsupported)
     }
 }
 
