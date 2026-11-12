@@ -16,6 +16,7 @@ pub mod heap;
 pub mod interrupts;
 pub mod memory;
 pub mod paging;
+pub mod process;
 pub mod rootfs;
 pub mod scheduler;
 pub mod sync;

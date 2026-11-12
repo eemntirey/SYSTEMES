@@ -366,3 +366,70 @@ pub(crate) fn close_current_process_files() {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ProcessState, ProcessTable, UserContext};
+    use crate::syscall::SyscallFrame;
+    use core::sync::atomic::Ordering;
+
+    fn sample_frame() -> SyscallFrame {
+        SyscallFrame {
+            r15: 15, r14: 14, r13: 13, r12: 12,
+            r11: 0x202, r10: 10, r9: 9, r8: 8,
+            rbp: 5, rdi: 7, rsi: 6, rdx: 3,
+            rcx: 4, rbx: 2, rax: 1, user_rsp: 0x7fff_ffff,
+        }
+    }
+
+    #[test]
+    fn syscall_register_context_round_trips_without_loss() {
+        let original = sample_frame();
+        let context = UserContext::from_syscall_frame(&original);
+        let mut restored = SyscallFrame {
+            r15: 0, r14: 0, r13: 0, r12: 0,
+            r11: 0, r10: 0, r9: 0, r8: 0,
+            rbp: 0, rdi: 0, rsi: 0, rdx: 0,
+            rcx: 0, rbx: 0, rax: 0, user_rsp: 0,
+        };
+
+        context.to_syscall_frame(&mut restored);
+
+        assert_eq!(restored.r15, original.r15);
+        assert_eq!(restored.r14, original.r14);
+        assert_eq!(restored.r13, original.r13);
+        assert_eq!(restored.r12, original.r12);
+        assert_eq!(restored.r11, original.r11);
+        assert_eq!(restored.r10, original.r10);
+        assert_eq!(restored.r9, original.r9);
+        assert_eq!(restored.r8, original.r8);
+        assert_eq!(restored.rbp, original.rbp);
+        assert_eq!(restored.rdi, original.rdi);
+        assert_eq!(restored.rsi, original.rsi);
+        assert_eq!(restored.rdx, original.rdx);
+        assert_eq!(restored.rcx, original.rcx);
+        assert_eq!(restored.rbx, original.rbx);
+        assert_eq!(restored.rax, original.rax);
+        assert_eq!(restored.user_rsp, original.user_rsp);
+    }
+
+    #[test]
+    fn new_process_table_has_no_runnable_processes() {
+        let table = ProcessTable::new();
+        assert_eq!(table.count_runnable(), 0);
+        assert_eq!(table.next_runnable(0), None);
+        assert!(table.get(0).is_none());
+        assert!(table.get(1).is_none());
+    }
+
+    #[test]
+    fn process_state_values_match_the_atomic_representation() {
+        assert_eq!(ProcessState::Empty as u8, 0);
+        assert_eq!(ProcessState::Runnable as u8, 1);
+        assert_eq!(ProcessState::Running as u8, 2);
+        assert_eq!(ProcessState::Exited as u8, 3);
+
+        let state = core::sync::atomic::AtomicU8::new(ProcessState::Runnable as u8);
+        assert_eq!(state.load(Ordering::Acquire), ProcessState::Runnable as u8);
+    }
+}
