@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod acpi;
 pub mod address_space;
 pub mod apic;
+pub mod block;
 pub mod console;
 pub mod clock;
 pub mod heap;
