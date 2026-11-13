@@ -664,6 +664,11 @@ systemes_exception_common:
 .Lsystemes_exception_gs_present:
     xor eax, eax
 .Lsystemes_exception_gs_mark:
+    /* bit 0: this entry performed SWAPGS; bit 1: original frame was CPL3. */
+    test byte ptr [r12 + 144], 3
+    jz .Lsystemes_exception_store_gs_marker
+    or eax, 2
+.Lsystemes_exception_store_gs_marker:
     push rax
     mov rdi, qword ptr [r12 + 120]
     mov rsi, qword ptr [r12 + 128]
@@ -671,8 +676,14 @@ systemes_exception_common:
     and rsp, -16
     call systemes_exception_dispatch
     lea rsp, [r12 - 8]
-    cmp qword ptr [rsp], 1
-    jne .Lsystemes_exception_gs_exit_ready
+    test qword ptr [rsp], 1
+    jz .Lsystemes_exception_gs_exit_ready
+    /* A validated INT 0x80 exit rewrites CPL3 to CPL0: keep kernel GS. */
+    test qword ptr [rsp], 2
+    jz .Lsystemes_exception_swapgs_back
+    test byte ptr [r12 + 144], 3
+    jz .Lsystemes_exception_gs_exit_ready
+.Lsystemes_exception_swapgs_back:
     swapgs
 .Lsystemes_exception_gs_exit_ready:
     mov rsp, r12
