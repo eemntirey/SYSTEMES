@@ -67,8 +67,8 @@ struct InterruptStack([u8; INTERRUPT_STACK_SIZE]);
 struct SyscallCpuLocal {
     syscall_stack: InterruptStack,
     syscall_stack_top: u64,
-    user_rsp: u64,
-    saved_kernel_rsp: u64,
+    user_rsp: AtomicU64,
+    saved_kernel_rsp: AtomicU64,
     ring3_active: AtomicBool,
     exit_validated: AtomicBool,
     expected_user_rsp: AtomicU64,
@@ -79,8 +79,8 @@ impl SyscallCpuLocal {
         Self {
             syscall_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             syscall_stack_top: 0,
-            user_rsp: 0,
-            saved_kernel_rsp: 0,
+            user_rsp: AtomicU64::new(0),
+            saved_kernel_rsp: AtomicU64::new(0),
             ring3_active: AtomicBool::new(false),
             exit_validated: AtomicBool::new(false),
             expected_user_rsp: AtomicU64::new(0),
@@ -890,14 +890,20 @@ fn write_msr(msr: u32, value: u64) {
 #[cfg(feature = "qemu-ring3-test")]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
     let local = current_syscall_local();
-    local.exit_validated.store(false, Ordering::Release);
-    local.expected_user_rsp.store(user_rsp, Ordering::Release);
-    local.ring3_active.store(true, Ordering::Release);
-    local.exit_status.store(0, Ordering::Release);
+    // SAFETY: The current CPU exclusively owns these atomic per-CPU fields.
+    unsafe {
+        (*local).exit_validated.store(false, Ordering::Release);
+        (*local).expected_user_rsp.store(user_rsp, Ordering::Release);
+        (*local).ring3_active.store(true, Ordering::Release);
+        (*local).exit_status.store(0, Ordering::Release);
+    }
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(user_rip, user_rsp, USER_TEST_RFLAGS) };
-    local.ring3_active.store(false, Ordering::Release);
-    local.exit_validated.load(Ordering::Acquire)
+    // SAFETY: The current CPU exclusively owns these atomic per-CPU fields.
+    unsafe {
+        (*local).ring3_active.store(false, Ordering::Release);
+        (*local).exit_validated.load(Ordering::Acquire)
+    }
 }
 
 /// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
@@ -915,19 +921,22 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
 }
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
-fn current_syscall_local() -> &'static SyscallCpuLocal {
+fn current_syscall_local() -> *mut SyscallCpuLocal {
     let cpu_index = current_cpu_index();
     assert!(cpu_index < MAX_CPUS, "current APIC ID exceeds supported CPU slots");
-    // SAFETY: Each APIC ID owns one permanently allocated CPU context.
-    unsafe { &(*addr_of!(CPU_CONTEXTS[cpu_index])).syscall }
+    // SAFETY: Each APIC ID owns one permanently allocated CPU context. The raw
+    // pointer avoids creating a shared reference while assembly updates its stack.
+    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
 }
 
 pub(crate) fn set_user_exit_status(status: u64) {
-    current_syscall_local().exit_status.store(status, Ordering::Release);
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe { (*current_syscall_local()).exit_status.store(status, Ordering::Release) };
 }
 
 pub(crate) fn user_exit_status() -> u64 {
-    current_syscall_local().exit_status.load(Ordering::Acquire)
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
 }
 
 /// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
@@ -1125,7 +1134,8 @@ pub extern "C" fn systemes_exception_dispatch(
     }
 
     let syscall_local = current_syscall_local();
-    if vector == USER_EXIT_VECTOR && syscall_local.ring3_active.load(Ordering::Acquire) {
+    // SAFETY: Exception dispatch executes on the CPU whose local context is addressed.
+    if vector == USER_EXIT_VECTOR && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) } {
         if let Some(frame_ref) = unsafe { frame.as_mut() } {
             let privilege_frame = frame.cast::<u64>();
             // A CPL3 interrupt frame appends the interrupted RSP and SS after RFLAGS.
@@ -1136,21 +1146,23 @@ pub extern "C" fn systemes_exception_dispatch(
                     frame_ref,
                     user_rsp,
                     user_ss,
-                    syscall_local.expected_user_rsp.load(Ordering::Acquire),
+                    unsafe { (*syscall_local).expected_user_rsp.load(Ordering::Acquire) },
                 )
             {
                 frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
                 let kernel_rsp = unsafe {
-                    addr_of!(syscall_local.saved_kernel_rsp).read_volatile()
+                    (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire)
                 };
                 unsafe {
                     privilege_frame.add(20).write(kernel_rsp);
                     privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                 }
-                syscall_local.ring3_active.store(false, Ordering::Release);
-                syscall_local.exit_validated.store(true, Ordering::Release);
+                unsafe {
+                    (*syscall_local).ring3_active.store(false, Ordering::Release);
+                    (*syscall_local).exit_validated.store(true, Ordering::Release);
+                }
                 unsafe {
                     debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\r\n");
                 }
@@ -1228,14 +1240,14 @@ mod tests {
     fn syscall_cpu_local_state_is_independent_between_instances() {
         let first = SyscallCpuLocal::new();
         let second = SyscallCpuLocal::new();
-        first.saved_kernel_rsp = 0x1111;
-        second.saved_kernel_rsp = 0x2222;
+        first.saved_kernel_rsp.store(0x1111, Ordering::Release);
+        second.saved_kernel_rsp.store(0x2222, Ordering::Release);
         first.expected_user_rsp.store(0x3333, Ordering::Release);
         second.expected_user_rsp.store(0x4444, Ordering::Release);
         first.exit_status.store(7, Ordering::Release);
         second.exit_status.store(9, Ordering::Release);
-        assert_eq!(first.saved_kernel_rsp, 0x1111);
-        assert_eq!(second.saved_kernel_rsp, 0x2222);
+        assert_eq!(first.saved_kernel_rsp.load(Ordering::Acquire), 0x1111);
+        assert_eq!(second.saved_kernel_rsp.load(Ordering::Acquire), 0x2222);
         assert_eq!(first.expected_user_rsp.load(Ordering::Acquire), 0x3333);
         assert_eq!(second.expected_user_rsp.load(Ordering::Acquire), 0x4444);
         assert_eq!(first.exit_status.load(Ordering::Acquire), 7);
