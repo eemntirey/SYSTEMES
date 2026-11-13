@@ -65,7 +65,7 @@ struct InterruptStack([u8; INTERRUPT_STACK_SIZE]);
 /// Per-CPU syscall and Ring 3 transition state. GS_BASE points here in Ring 0.
 #[repr(C, align(16))]
 struct SyscallCpuLocal {
-    syscall_stack: InterruptStack,
+    syscall_stack: [u8; INTERRUPT_STACK_SIZE],
     syscall_stack_top: u64,
     user_rsp: AtomicU64,
     saved_kernel_rsp: AtomicU64,
@@ -77,7 +77,7 @@ struct SyscallCpuLocal {
 impl SyscallCpuLocal {
     const fn new() -> Self {
         Self {
-            syscall_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+            syscall_stack: [0; INTERRUPT_STACK_SIZE],
             syscall_stack_top: 0,
             user_rsp: AtomicU64::new(0),
             saved_kernel_rsp: AtomicU64::new(0),
@@ -979,7 +979,7 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
     // Establish the invariant: kernel GS is this CPU's context; user GS is zero.
     let syscall_local = unsafe { addr_of_mut!((*ctx).syscall) };
     let syscall_stack_top = unsafe {
-        addr_of_mut!((*syscall_local).syscall_stack.0)
+        addr_of_mut!((*syscall_local).syscall_stack)
             .cast::<u8>()
             .add(INTERRUPT_STACK_SIZE) as u64
     };
