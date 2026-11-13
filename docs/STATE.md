@@ -9,7 +9,7 @@ Ce document sépare l'état réellement intégré dans `main` des modifications 
 
 ## Verdict P0
 
-<badge>NON VALIDÉ</badge>
+**Statut : NON VALIDÉ**
 
 Le noyau ne peut pas encore être déclaré sûr pour l'exécution concurrente de processus Ring 3 et d'appels SYSCALL sur plusieurs CPU.
 
