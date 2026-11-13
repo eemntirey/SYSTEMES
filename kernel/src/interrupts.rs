@@ -590,6 +590,10 @@ systemes_irq_common:
     push r14
     push r15
     mov r12, rsp
+    test byte ptr [rsp + 144], 3
+    jz .Lsystemes_irq_gs_ready
+    swapgs
+.Lsystemes_irq_gs_ready:
     and rsp, -16
     call systemes_fpu_save_current
     mov rsp, r12
@@ -617,6 +621,10 @@ systemes_irq_common:
     pop rbx
     pop rax
     add rsp, 16
+    test byte ptr [rsp + 8], 3
+    jz .Lsystemes_irq_gs_exit_ready
+    swapgs
+.Lsystemes_irq_gs_exit_ready:
     iretq
 
 .global systemes_exception_common
@@ -638,12 +646,20 @@ systemes_exception_common:
     push r14
     push r15
     mov r12, rsp
+    test byte ptr [rsp + 144], 3
+    jz .Lsystemes_exception_gs_ready
+    swapgs
+.Lsystemes_exception_gs_ready:
     mov rdi, qword ptr [rsp + 120]
     mov rsi, qword ptr [rsp + 128]
     mov rdx, r12
     and rsp, -16
     call systemes_exception_dispatch
     mov rsp, r12
+    test byte ptr [rsp + 144], 3
+    jz .Lsystemes_exception_gs_exit_ready
+    swapgs
+.Lsystemes_exception_gs_exit_ready:
     pop r15
     pop r14
     pop r13
