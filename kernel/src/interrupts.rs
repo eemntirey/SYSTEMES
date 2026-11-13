@@ -709,7 +709,6 @@ systemes_exception_common:
     kernel_data_selector = const KERNEL_DATA_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
-    interrupt_stack_size = const INTERRUPT_STACK_SIZE,
     gs_syscall_stack_top = const GS_SYSCALL_STACK_TOP,
     gs_user_rsp = const GS_USER_RSP,
     gs_saved_kernel_rsp = const GS_SAVED_KERNEL_RSP,
