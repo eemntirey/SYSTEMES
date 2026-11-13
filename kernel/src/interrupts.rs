@@ -650,20 +650,32 @@ systemes_exception_common:
     push r14
     push r15
     mov r12, rsp
-    test byte ptr [rsp + 144], 3
-    jz .Lsystemes_exception_gs_ready
+    /* Paranoid exception entry: NMI/MCE may arrive inside a SWAPGS window.
+       Read IA32_GS_BASE instead of inferring its state from saved CS. */
+    mov ecx, 0xC0000101
+    rdmsr
+    test eax, eax
+    jnz .Lsystemes_exception_gs_present
+    test edx, edx
+    jnz .Lsystemes_exception_gs_present
     swapgs
-.Lsystemes_exception_gs_ready:
-    mov rdi, qword ptr [rsp + 120]
-    mov rsi, qword ptr [rsp + 128]
+    mov eax, 1
+    jmp .Lsystemes_exception_gs_mark
+.Lsystemes_exception_gs_present:
+    xor eax, eax
+.Lsystemes_exception_gs_mark:
+    push rax
+    mov rdi, qword ptr [r12 + 120]
+    mov rsi, qword ptr [r12 + 128]
     mov rdx, r12
     and rsp, -16
     call systemes_exception_dispatch
-    mov rsp, r12
-    test byte ptr [rsp + 144], 3
-    jz .Lsystemes_exception_gs_exit_ready
+    lea rsp, [r12 - 8]
+    cmp qword ptr [rsp], 1
+    jne .Lsystemes_exception_gs_exit_ready
     swapgs
 .Lsystemes_exception_gs_exit_ready:
+    mov rsp, r12
     pop r15
     pop r14
     pop r13
