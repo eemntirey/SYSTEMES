@@ -834,13 +834,20 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
 
 /// Confirm the enabled syscall bit and programmed selectors/entry mask.
 pub fn verify_syscall_configuration() -> bool {
-    let stack_start = addr_of!(SYSTEMES_SYSCALL_KERNEL_STACK) as *const u8 as usize;
-    let stack_top = stack_start + core::mem::size_of::<InterruptStack>();
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
+    let local = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].syscall) };
+    let expected_gs = local as u64;
+    let stack_top = unsafe { addr_of!((*local).syscall_stack_top).read() };
     read_msr(MSR_EFER) & EFER_SCE != 0
         && read_msr(MSR_STAR) == STAR_VALUE
         && read_msr(MSR_LSTAR) == systemes_syscall_entry as *const () as usize as u64
         && read_msr(MSR_SFMASK) == SFMASK_VALUE
-        && stack_start != 0
+        && read_msr(MSR_GS_BASE) == expected_gs
+        && read_msr(MSR_KERNEL_GS_BASE) == 0
+        && stack_top != 0
         && stack_top & 0x0F == 0
 }
 
@@ -1204,6 +1211,36 @@ const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syscall_cpu_local_layout_matches_gs_assembly_offsets() {
+        assert_eq!(core::mem::align_of::<SyscallCpuLocal>(), 16);
+        assert_eq!(GS_SYSCALL_STACK_TOP, INTERRUPT_STACK_SIZE);
+        assert_eq!(GS_USER_RSP, INTERRUPT_STACK_SIZE + 8);
+        assert_eq!(GS_SAVED_KERNEL_RSP, INTERRUPT_STACK_SIZE + 16);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, ring3_active), INTERRUPT_STACK_SIZE + 24);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, exit_validated), INTERRUPT_STACK_SIZE + 25);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, expected_user_rsp), INTERRUPT_STACK_SIZE + 32);
+        assert_eq!(GS_EXIT_STATUS, INTERRUPT_STACK_SIZE + 40);
+    }
+
+    #[test]
+    fn syscall_cpu_local_state_is_independent_between_instances() {
+        let first = SyscallCpuLocal::new();
+        let second = SyscallCpuLocal::new();
+        first.saved_kernel_rsp = 0x1111;
+        second.saved_kernel_rsp = 0x2222;
+        first.expected_user_rsp.store(0x3333, Ordering::Release);
+        second.expected_user_rsp.store(0x4444, Ordering::Release);
+        first.exit_status.store(7, Ordering::Release);
+        second.exit_status.store(9, Ordering::Release);
+        assert_eq!(first.saved_kernel_rsp, 0x1111);
+        assert_eq!(second.saved_kernel_rsp, 0x2222);
+        assert_eq!(first.expected_user_rsp.load(Ordering::Acquire), 0x3333);
+        assert_eq!(second.expected_user_rsp.load(Ordering::Acquire), 0x4444);
+        assert_eq!(first.exit_status.load(Ordering::Acquire), 7);
+        assert_eq!(second.exit_status.load(Ordering::Acquire), 9);
+    }
 
     #[test]
     fn encodes_a_64_bit_ring_zero_interrupt_gate() {
