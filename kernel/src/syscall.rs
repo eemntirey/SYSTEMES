@@ -1,4 +1,4 @@
-//! Minimal x86_64 syscall ABI for the single-core user-mode bring-up.
+//! Minimal x86_64 syscall ABI; entry stacks and Ring 3 return state are CPU-local.
 
 use core::arch::asm;
 
