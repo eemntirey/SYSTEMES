@@ -27,8 +27,8 @@
 //!   initializes a CPU-local scheduler, then enters the scheduler idle loop.
 //! - Runnable task descriptors may be transferred between per-CPU task tables;
 //!   stack and FXSAVE resources remain pinned while both run-queue locks are held.
-//! - The BSP-only SYSCALL/SYSRET and Ring 3 assembly stack ABI remains a separate
-//!   limitation; per-CPU syscall entry is not implemented by this scheduler phase.
+//! - SYSCALL/SYSRET and Ring 3 entry state are anchored per CPU through GS;
+//!   every AP programs its own syscall MSRs before entering the scheduler.
 //! - The trampoline page (< 1 MiB) stays reserved for AP bring-up.
 //! - The kernel CR3 must sit below 4 GiB because the 32-bit trampoline stage
 //!   loads it with a 32-bit immediate. QEMU/OVMF images satisfy this today.
