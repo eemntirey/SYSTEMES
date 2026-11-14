@@ -725,7 +725,7 @@ static RING3_SMP_TEST_RESULTS: [AtomicU64; RING3_SMP_MAX_CPUS] =
 #[cfg(feature = "qemu-ring3-smp-test")]
 pub struct Ring3SmpTestPlan {
     space: AddressSpace,
-    free_pages_before: usize,
+    free_pages_before: u64,
     barrier_frame: u64,
 }
 
