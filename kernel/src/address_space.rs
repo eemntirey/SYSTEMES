@@ -821,7 +821,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
         code[length..length + 6].copy_from_slice(&[0x41, 0xBC, 0x10, 0x27, 0x00, 0x00]); // mov r12d, 10,000
         length += 6;
         let syscall_burst = [
-            0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, SYS_GET_API_VERSION
+            0xB8, 0x00, 0x00, 0x00, 0x00, // mov eax, SYS_GET_API_VERSION
             0x0F, 0x05,                   // syscall
             0x48, 0x83, 0xF8, 0x01,       // cmp rax, API_VERSION
             0x74, 0x02,                   // je over ud2
