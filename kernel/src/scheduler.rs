@@ -859,7 +859,7 @@ pub fn current_task() -> TaskId {
 pub fn current_task_id() -> Option<TaskId> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return None; }
-    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let sched = cpu_scheduler(cpu_index);
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return None; }
     let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
     if current >= unsafe { (*sched).task_count.load(Ordering::Acquire) } { return None; }
@@ -870,7 +870,7 @@ pub fn current_task_id() -> Option<TaskId> {
 pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
-    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let sched = cpu_scheduler(cpu_index);
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return Err(SchedulerError::NotInitialized); }
     lock_run_queue(cpu_index);
     let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
@@ -887,7 +887,7 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
         unlock_run_queue(cpu_index);
         return Err(SchedulerError::CurrentTask);
     }
-    let task = unsafe { task_ptr(cpu_index, task_id.0) };
+    let task = task_ptr(cpu_index, task_id.0);
     if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Runnable as u8
         || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } != usize::MAX
     {
@@ -908,7 +908,7 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
 pub fn mark_current_exited(reason: TaskExitReason) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
-    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let sched = cpu_scheduler(cpu_index);
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return Err(SchedulerError::NotInitialized); }
     lock_run_queue(cpu_index);
     let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
@@ -917,7 +917,7 @@ pub fn mark_current_exited(reason: TaskExitReason) -> Result<(), SchedulerError>
         unlock_run_queue(cpu_index);
         return Err(SchedulerError::InvalidTask);
     }
-    let task = unsafe { task_ptr(cpu_index, current) };
+    let task = task_ptr(cpu_index, current);
     // SAFETY: The queue lock serializes the sole write and state publication.
     let marked = unsafe { (*task).try_mark_exited(reason) };
     unlock_run_queue(cpu_index);
@@ -929,7 +929,7 @@ pub fn mark_current_exited(reason: TaskExitReason) -> Result<(), SchedulerError>
 pub fn schedule_after_exit(saved_rsp: usize) -> usize {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return saved_rsp; }
-    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let sched = cpu_scheduler(cpu_index);
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return saved_rsp; }
     lock_run_queue(cpu_index);
     let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
@@ -946,7 +946,7 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize {
     }
     let next = select_next(current, &states[..count]);
     if let Some(next_index) = next {
-        let next_task = unsafe { task_ptr(cpu_index, next_index) };
+        let next_task = task_ptr(cpu_index, next_index);
         let next_rsp = unsafe { (*next_task).saved_rsp.load(Ordering::Acquire) };
         if next_rsp != 0
             && unsafe { (*next_task).state.compare_exchange(TaskState::Runnable as u8, TaskState::Running as u8, Ordering::AcqRel, Ordering::Acquire) }.is_ok()
@@ -1259,7 +1259,7 @@ mod tests {
         ];
 
         for reason in cases {
-            let task = Task::new();
+            let mut task = Task::new();
             task.state.store(TaskState::Running as u8, Ordering::Relaxed);
             assert!(task.try_mark_exited(reason));
             assert_eq!(task.exit_reason, Some(reason));
@@ -1269,7 +1269,7 @@ mod tests {
 
     #[test]
     fn double_termination_does_not_overwrite_the_first_exit_reason() {
-        let task = Task::new();
+        let mut task = Task::new();
         task.state.store(TaskState::Running as u8, Ordering::Relaxed);
         let first = TaskExitReason::VoluntaryExit { code: 7 };
         let second = TaskExitReason::PageFault { cr2: 0xdead_0000, error_code: 4, rip: 0x6000 };
