@@ -126,7 +126,7 @@ Ce mécanisme et le reaper ne font **pas** partie de l'interface scheduler 4d ; 
 |---|---|
 | Faute pendant un changement de contexte | Utiliser le frame et la pile valides du CPU. Si l'identité de tâche n'est pas stable ou si le switch est critique, marquer une terminaison différée ; ne jamais libérer dans le handler. |
 | Un autre CPU lit la tâche pendant sa terminaison | Le lecteur prend une référence/pin avant de déréférencer le contexte. Le reaper attend références à zéro et shootdown ACK. |
-| Double terminaison (SYS_EXIT puis faute ou double événement) | CAS unique `Running/Runnable -> Exited`; un seul gagnant enregistre la raison et publie la réclamation. Les suivants observent Exited/Reaping/Reaped et ne libèrent rien. |
+| Double terminaison (SYS_EXIT puis faute ou double événement) | Sous `run_queue_lock`, un seul gagnant écrit `exit_reason` puis publie `Exited` en Release. Les suivants observent Exited/Reaping/Reaped et ne modifient jamais la première raison ni ne publient une seconde réclamation. |
 | Timer après Exited | Le chemin de sauvegarde reconnaît Exited et ne sauvegarde pas le RSP comme Runnable. |
 | Tâche Ring 3 trouvée par work-stealing | Refuser le transfert tant que registres CPU-locaux, TSS et CR3 ne sont pas migrables. |
 | Aucun autre Runnable | Revenir à idle/boot ; le reaper travaille ensuite depuis une pile distincte. |
@@ -140,8 +140,11 @@ Ne pas changer sélection round-robin, timer, priorités ou politique des tâche
 ### Types et champs
 
 - `Ring3TaskContextRef` : identifiant opaque stable du contexte propriétaire ; pas un pointeur non protégé.
-- `TaskExitReason` : code volontaire ou diagnostic faute { vector, error_code, cr2, rip }.
-- Dans `Task`, ajouter `ring3_context_id: AtomicUsize`, initialisé à `usize::MAX`, et `cpu_affine: AtomicBool` pour exclure les tâches Ring 3 de `steal_task`.
+- `TaskExitReason` : enum `Copy`, sans allocation et à payload de taille fixe : `VoluntaryExit { code: i32 }`, `PageFault { cr2: usize, error_code: usize, rip: usize }` et `GeneralProtection { error_code: usize, rip: usize }`. L'option `None` signifie qu'aucune raison n'a été publiée.
+- Dans `Task`, ajouter `ring3_context_id: AtomicUsize`, initialisé à `usize::MAX`, `cpu_affine: AtomicBool` initialisé à `false`, et `exit_reason: Option<TaskExitReason>` initialisé à `None`.
+- Le champ `exit_reason` est écrit une seule fois sous `run_queue_lock`, avant la publication `Exited` avec ordre `Release`. Le gagnant vérifie l'état source puis écrit la raison et publie `Exited`; tout appel ultérieur qui observe `Exited`/`Reaping`/`Reaped` retourne sans toucher au champ. La raison n'est donc jamais remplacée.
+- Le reaper observe d'abord `Exited` avec un chargement `Acquire`, puis lit `exit_reason` sans reprendre de verrou : la publication `Release` rend l'écriture visible et l'état terminal garantit qu'aucun écrivain ultérieur ne peut modifier le champ. L'ordre d'acquisition est donc uniquement `run_queue_lock` pour l'écriture ; le lecteur ne prend ni `run_queue_lock` ni verrou de reaper pour lire la raison. Le reaper acquiert séparément son verrou de file locale uniquement après le détachement CR3, conformément à C3 ; il ne garde jamais ce verrou pendant la lecture/ destruction du contexte.
+- Les tâches noyau existantes conservent `exit_reason == None` tant qu'elles n'utilisent pas explicitement cette API ; leur initialisation et leur chemin de terminaison historiques ne sont pas modifiés.
 - Ne pas placer `AddressSpace` ni des allocations dans `Task` : le scheduler conserve une référence/ID ; le propriétaire mémoire reste hors scheduler.
 
 ### Signatures exactes
@@ -164,7 +167,7 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize;
 Contrat :
 - `attach_ring3_context` n'accepte qu'un slot initialisé non-boot, non courant, vide de contexte et dans l'état attendu ; il le rend CPU-affine avant de publier le contexte.
 - `current_task_id` retourne le slot courant seulement si l'ordonnanceur est initialisé et l'index valide.
-- `mark_current_exited` effectue une transition idempotente atomique sous le verrou de queue ; un seul appelant gagne et le contexte reste référencé pour le reaper.
+- `mark_current_exited` effectue sous `run_queue_lock` la transition idempotente : vérifier l'état, écrire `exit_reason` une seule fois, puis publier `Exited` en `Release`. Un seul appelant gagne ; une seconde terminaison ne peut ni remplacer la raison ni publier une nouvelle réclamation. Le contexte reste référencé pour le reaper.
 - `schedule_after_exit` exige que la tâche courante soit déjà Exited ; il appelle la sélection existante sans sauver ni réactiver la tâche terminée. Il ne libère aucune ressource et retourne uniquement le RSP du prochain contexte.
 - Le chemin timer/yield ordinaire garde son comportement actuel. Le scheduler ne fait ni switch CR3, ni manipulation TSS/GS, ni libération mémoire.
 
