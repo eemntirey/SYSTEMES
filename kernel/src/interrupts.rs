@@ -31,6 +31,7 @@ const USER_CODE_DESCRIPTOR: u64 = 0x00AF_FA00_0000_FFFF;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 const USER_EXIT_VECTOR: u64 = 0x80;
+const USER_FAULT_EXIT_STATUS: u64 = 0xF001_FA017_FA017001;
 
 /// Maximum number of CPUs supported (matches smp::MAX_CPUS_PER_APIC_ID).
 pub const MAX_CPUS: usize = 64;
@@ -1194,6 +1195,50 @@ pub extern "C" fn systemes_exception_dispatch(
     }
 
     let syscall_local = current_syscall_local();
+    // The processor-saved CS is authoritative. A CPL0 fault, including one
+    // raised while servicing a syscall/UACCESS, remains a fatal kernel fault.
+    if let Some(frame_ref) = unsafe { frame.as_mut() } {
+        if frame_ref.cs & 3 == 3 && matches!(vector, 13 | 14)
+            && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) }
+        {
+            let privilege_frame = frame.cast::<u64>();
+            let user_rsp = unsafe { privilege_frame.add(20).read() };
+            let user_ss = unsafe { privilege_frame.add(21).read() };
+            if user_ss == USER_DATA_RPL3 as u64 {
+                let cr2 = if vector == 14 {
+                    let value: u64;
+                    unsafe { asm!("mov {}, cr2", out(reg) value, options(nomem, nostack, preserves_flags)); }
+                    value
+                } else { 0 };
+                unsafe {
+                    (*syscall_local).fault_vector.store(vector, Ordering::Release);
+                    (*syscall_local).fault_error.store(error_code, Ordering::Release);
+                    (*syscall_local).fault_cr2.store(cr2, Ordering::Release);
+                    (*syscall_local).fault_rip.store(frame_ref.rip, Ordering::Release);
+                    (*syscall_local).exit_status.store(USER_FAULT_EXIT_STATUS, Ordering::Release);
+                    (*syscall_local).ring3_active.store(false, Ordering::Release);
+                }
+                frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+                frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
+                frame_ref.rflags = 0x02;
+                let kernel_rsp = unsafe { (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire) };
+                unsafe {
+                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
+                    debug_write(b"SYSTEMES_TEST: Ring 3 fault detected vector=0x");
+                    debug_hex(vector);
+                    debug_write(b" error=0x");
+                    debug_hex(error_code);
+                    debug_write(b" cr2=0x");
+                    debug_hex(cr2);
+                    debug_write(b" rip=0x");
+                    debug_hex((*syscall_local).fault_rip.load(Ordering::Acquire));
+                    debug_write(b"\\r\\n");
+                }
+                return;
+            }
+        }
+    }
     // SAFETY: Exception dispatch executes on the CPU whose local context is addressed.
     if vector == USER_EXIT_VECTOR && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) } {
         if let Some(frame_ref) = unsafe { frame.as_mut() } {
