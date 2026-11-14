@@ -780,7 +780,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
 
     // User code: increment ready_count; wait until it equals expected_count;
     // call SYS_GET_API_VERSION; BSP/even APIC IDs use SYS_EXIT, odd APIC IDs use INT 0x80.
-    let mut code = [0u8; 128];
+    let mut code = [0u8; 160];
     let mut length = 0usize;
     let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
     code[length..length + 2].copy_from_slice(&[0x48, 0xBB]); // mov rbx, imm64
