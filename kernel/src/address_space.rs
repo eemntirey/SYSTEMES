@@ -1057,7 +1057,7 @@ pub unsafe fn run_qemu_ring3_smp_test(
     RING3_SMP_TEST_ROOT.store(0, Ordering::Release);
     crate::console::debug_write(b"SYSTEMES_TEST: non-faulting CPU participants completed count=");
     let mut peer_digits = [0u8; 20];
-    let peer_count = crate::apic::active_cpu_count().saturating_sub(1);
+    let peer_count = apic_ids.len();
     let peer_len = encode_decimal(peer_count as u64, &mut peer_digits);
     crate::console::debug_write(&peer_digits[..peer_len]);
     crate::console::debug_write(b"\\r\\n");
