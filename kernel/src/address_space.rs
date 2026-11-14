@@ -769,7 +769,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     }
 
     // User code: increment ready_count; wait until it equals expected_count;
-    // call SYS_GET_API_VERSION; BSP exits via INT 0x80, APs via SYS_EXIT.
+    // call SYS_GET_API_VERSION; BSP/even APIC IDs use SYS_EXIT, odd APIC IDs use INT 0x80.
     let mut code = [0u8; 80];
     let mut length = 0usize;
     let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
@@ -797,13 +797,13 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 4;
     code[length..length + 2].copy_from_slice(&[0x85, 0xC0]); // test eax, eax
     length += 2;
-    code[length..length + 2].copy_from_slice(&[0x75, 0x0C]); // APs skip the int 0x80 exit
+    code[length..length + 2].copy_from_slice(&[0x75, 0x0C]); // SYS_EXIT participants skip the int 0x80 exit
     length += 2;
     code[length..length + 2].copy_from_slice(&[0x48, 0xB8]); // movabs rax, Ring 3 exit magic
     length += 2;
     code[length..length + 8].copy_from_slice(&RING3_TEST_MAGIC.to_le_bytes());
     length += 8;
-    code[length..length + 2].copy_from_slice(&[0xCD, 0x80]); // int 0x80: BSP exit path
+    code[length..length + 2].copy_from_slice(&[0xCD, 0x80]); // int 0x80 exit path
     length += 2;
     code[length] = 0xB8; // mov eax, SYS_EXIT
     length += 1;
