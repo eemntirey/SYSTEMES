@@ -965,7 +965,7 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     let kernel_rflags: u64;
     // Preserve the caller's IF state; exception and SYSCALL exit frames resume
     // with IF clear so the kernel stack is restored before interrupts re-open.
-    unsafe { asm!("pushfq; pop {}", out(reg) kernel_rflags, options(nomem, preserves_flags)); }
+    unsafe { asm!("pushfq; pop {}", out(reg) kernel_rflags, options(preserves_flags)); }
     let local = current_syscall_local();
     unsafe {
         (*local).exit_status.store(0, Ordering::Release);
