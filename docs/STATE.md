@@ -2,9 +2,9 @@
 
 **Actualisation :** 2026-11-14  
 **Branche de référence :** `main`  
-**Commit de référence :** `d3e7c090a585b0b9dbf5c6dfef17519a38948d82` (squash de la PR #89 précédente)
+**Commit de référence :** `d3e7c090a585b0b9dbf5c6dfef17519a38948d82` (squash de la PR #88)
 
-Ce document décrit l'état intégré dans `main` après la PR #86. Les constats de l'audit du 13 novembre qui qualifiaient les états Ring 3/SYSCALL de globaux ne décrivent plus le code courant lorsqu'ils concernent les champs remplacés par le contexte CPU-local. La fermeture complète de P0 n'est toutefois pas acquise : la stabilisation complémentaire des transitions reste à auditer (section 6).
+Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8 ; la section 6 est un historique de la feuille de route antérieure.
 
 ## 1. État global P0
 
