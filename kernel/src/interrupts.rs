@@ -913,7 +913,7 @@ fn write_msr(msr: u32, value: u64) {
 /// The caller must have installed the kernel GDT/IDT/TSS, mapped `user_rip`
 /// executable and `user_rsp` writable in the active address space, and disabled
 /// interrupts. The user code must use a supported exit path: `int 0x80` or `SYS_EXIT`.
-#[cfg(feature = "qemu-ring3-test")]
+#[cfg(any(feature = "qemu-ring3-test", feature = "qemu-ring3-smp-test"))]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
     let local = current_syscall_local();
     // SAFETY: The current CPU exclusively owns these atomic per-CPU fields.
