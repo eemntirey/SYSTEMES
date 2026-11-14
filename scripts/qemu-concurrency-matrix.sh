@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Functional QEMU matrix for SYSTEMES SMP bring-up and scheduler migration.
+# Baseline branch intentionally contains fault tests without the Ring 3 recovery patch.
 # Run from any directory with: bash scripts/qemu-concurrency-matrix.sh
 # Optional: CPUS="2 4" TIMEOUT=180 bash scripts/qemu-concurrency-matrix.sh
 set -Eeuo pipefail
