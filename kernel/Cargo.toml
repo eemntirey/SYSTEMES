@@ -28,6 +28,8 @@ qemu-smap-violation-test = []
 qemu-smep-violation-test = []
 qemu-smp-test = []
 qemu-ring3-smp-test = ["qemu-smp-test"]
+qemu-ring3-fault-pf-test = ["qemu-ring3-smp-test"]
+qemu-ring3-fault-gp-test = ["qemu-ring3-smp-test"]
 qemu-smp-scheduler-test = ["qemu-smp-test"]
 
 [lib]
