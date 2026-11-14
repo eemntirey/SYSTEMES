@@ -5,7 +5,7 @@
 //! device mappings stay visible after a CR3 switch. User leaves always carry
 //! the U/S bit; writable-executable user pages are not representable.
 
-#[cfg(feature = "qemu-ring3-test")]
+#[cfg(any(feature = "qemu-ring3-test", feature = "qemu-ring3-smp-test"))]
 use crate::interrupts::RING3_TEST_MAGIC;
 use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
 use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
@@ -770,7 +770,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
 
     // User code: increment ready_count; wait until it equals expected_count;
     // call SYS_GET_API_VERSION; save RAX; then exit through SYS_EXIT.
-    let mut code = [0u8; 64];
+    let mut code = [0u8; 80];
     let mut length = 0usize;
     let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
     code[length..length + 2].copy_from_slice(&[0x48, 0xBB]); // mov rbx, imm64
@@ -793,6 +793,20 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 2;
     code[length..length + 5].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF8]); // mov [rsp-8], rax
     length += 5;
+    code[length..length + 4].copy_from_slice(&[0x8B, 0x44, 0x24, 0xE8]); // mov eax, [rsp-24]
+    length += 4;
+    code[length..length + 2].copy_from_slice(&[0x85, 0xC0]); // test eax, eax
+    length += 2;
+    code[length..length + 2].copy_from_slice(&[0x75, 0x0C]); // APs skip the int 0x80 exit
+    length += 2;
+    code[length..length + 10].copy_from_slice(&[0x48, 0xB8, RING3_TEST_MAGIC as u8,
+        (RING3_TEST_MAGIC >> 8) as u8, (RING3_TEST_MAGIC >> 16) as u8,
+        (RING3_TEST_MAGIC >> 24) as u8, (RING3_TEST_MAGIC >> 32) as u8,
+        (RING3_TEST_MAGIC >> 40) as u8, (RING3_TEST_MAGIC >> 48) as u8,
+        (RING3_TEST_MAGIC >> 56) as u8]); // movabs rax, Ring 3 exit magic
+    length += 10;
+    code[length..length + 2].copy_from_slice(&[0xCD, 0x80]); // int 0x80: BSP exit path
+    length += 2;
     code[length] = 0xB8; // mov eax, SYS_EXIT
     length += 1;
     code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_EXIT as u32).to_le_bytes());
@@ -858,7 +872,21 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         core::arch::asm!("pushfq; pop {}; cli", out(reg) previous_flags, options(nomem));
         write_cr3(root);
     }
-    let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
+    let is_bsp = crate::apic::is_bootstrap_cpu();
+    let exit_ok = {
+        let _smap_guard = crate::uaccess::UserAccessGuard::new();
+        // SAFETY: This CPU owns its user stack page in the shared test address space.
+        unsafe {
+            core::ptr::write_volatile((user_rsp - 24) as *mut u32, if is_bsp { 0 } else { 1 });
+        }
+        if is_bsp {
+            // BSP uses the DPL3 INT 0x80 exit path while APs use SYS_EXIT.
+            unsafe { crate::interrupts::enter_ring3_test_context(RING3_SMP_CODE_ADDRESS, user_rsp) }
+        } else {
+            let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
+            exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64
+        }
+    };
     let observed_api = {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
         // SAFETY: The shared user address space remains active until all CPUs finish.
@@ -870,9 +898,7 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         // SAFETY: Restore the caller's original interrupt state after leaving the shared test root.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
     }
-    let expected_exit_status = RING3_SMP_EXIT_STATUS + cpu_index as u64;
-    let success = exit_status == expected_exit_status
-        && observed_api == crate::syscall::API_VERSION;
+    let success = exit_ok && observed_api == crate::syscall::API_VERSION;
     RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
     RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
 }
