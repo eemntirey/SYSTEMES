@@ -135,3 +135,16 @@ Le niveau 2, terminaison d'une tâche Ring 3 ordonnançable et sélection d'une 
 
 
 Le test d'une faute CPL0 n'est pas intégré à la matrice 1/2/4 CPU : le chemin fatal `cli; hlt` immobiliserait le CPU de test avant le rendez-vous SMP et `--debug-exit`. Une validation dédiée demanderait un boot QEMU isolé et un point de terminaison réservé au test ; le chemin de production reste fatal.
+
+
+## 9. P0 — contrat scheduler de terminaison Ring 3 (incrément 1, PR en cours)
+
+La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans raccorder encore l'entrée Ring 3, le CR3, le TSS/GS, le trampoline ni le reaper.
+
+- `TaskExitReason` est un enum `Copy` à payload fixe (sortie volontaire, #PF, #GP), sans allocation.
+- `Task.exit_reason` vaut `None` à l'initialisation. La première terminaison écrit la raison sous `run_queue_lock`, puis publie `Exited` en Release ; une terminaison ultérieure ne remplace pas la première valeur.
+- Le contexte Ring 3 est référencé par un identifiant opaque. `attach_ring3_context` marque le slot CPU-affine avant de publier cet identifiant.
+- `steal_task` ignore les slots CPU-affines. Le scénario QEMU SMP ajoute deux tâches marquées Ring 3 au test work-stealing ; les tâches noyau ordinaires restent éligibles au vol.
+- `current_task_id`, `mark_current_exited` et `schedule_after_exit` constituent l'interface additive. Aucun chemin de faute ou syscall existant n'est encore branché sur ces API.
+
+**Validation :** les tests dédiés sont présents dans la branche, mais leur résultat, les builds de production et la matrice QEMU 1/2/4 CPU restent en attente de la CI du SHA final de la PR. Ne pas considérer l'incrément comme validé avant le rapport CI.
