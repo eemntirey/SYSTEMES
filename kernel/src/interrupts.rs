@@ -1244,10 +1244,11 @@ pub extern "C" fn systemes_exception_dispatch(
                     value
                 } else { 0 };
                 unsafe {
+                    (*syscall_local).fault_error.store(error_code, Ordering::Relaxed);
+                    (*syscall_local).fault_cr2.store(cr2, Ordering::Relaxed);
+                    (*syscall_local).fault_rip.store(frame_ref.rip, Ordering::Relaxed);
+                    // Publish the complete record last; readers acquire fault_vector.
                     (*syscall_local).fault_vector.store(vector, Ordering::Release);
-                    (*syscall_local).fault_error.store(error_code, Ordering::Release);
-                    (*syscall_local).fault_cr2.store(cr2, Ordering::Release);
-                    (*syscall_local).fault_rip.store(frame_ref.rip, Ordering::Release);
                     (*syscall_local).exit_status.store(USER_FAULT_EXIT_STATUS, Ordering::Release);
                     (*syscall_local).ring3_active.store(false, Ordering::Release);
                 }
