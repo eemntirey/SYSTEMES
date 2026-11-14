@@ -1065,7 +1065,7 @@ pub unsafe fn run_qemu_ring3_smp_test(
     unsafe { crate::console::debug_write(b"SYSTEMES_TEST: non-faulting CPU participants completed count="); }
     let mut peer_digits = [0u8; 20];
     let peer_count = apic_ids.len();
-    let peer_len = encode_decimal(peer_count as u64, &mut peer_digits);
+    let peer_len = crate::console::encode_decimal(peer_count as u64, &mut peer_digits);
     unsafe { crate::console::debug_write(&peer_digits[..peer_len]); }
     unsafe { crate::console::debug_write(b"\r\n"); }
     // SAFETY: Every participant restored its original CR3 before incrementing DONE.
