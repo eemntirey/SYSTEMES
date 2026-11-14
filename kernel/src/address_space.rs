@@ -567,7 +567,7 @@ pub unsafe fn run_qemu_syscall_test(
         return Err(AddressSpaceError::FrameOutsideIdentityWindow);
     }
 
-    let mut code = [0u8; 128];
+    let mut code = [0u8; 160];
     let mut code_len = 0;
     emit_syscall(
         &mut code,
