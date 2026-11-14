@@ -969,9 +969,9 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
             }
             let fault_info_ok = crate::interrupts::last_user_fault().is_some_and(|fault| {
                 #[cfg(feature = "qemu-ring3-fault-pf-test")]
-                { fault.vector == 14 && fault.cr2 == USER_BASE + 0x5000 && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS + 10 }
+                { fault.vector == 14 && fault.error_code == 0x4 && fault.cr2 == USER_BASE + 0x5000 && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS + 10 }
                 #[cfg(feature = "qemu-ring3-fault-gp-test")]
-                { fault.vector == 13 && fault.cr2 == 0 && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS }
+                { fault.vector == 13 && fault.error_code == 0 && fault.cr2 == 0 && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS }
             });
             repeated_ok &= fault_info_ok;
             if repeated_ok {
