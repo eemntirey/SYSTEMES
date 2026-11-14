@@ -51,3 +51,6 @@ Les tests ajoutés dans la branche p0-ring3-fault-handling couvrent :
 **État : implémentation présente sur la branche, validation QEMU/CI en attente.** Ne pas interpréter les marqueurs attendus dans les scripts comme des résultats déjà observés. Le niveau 2 (terminaison d'une tâche Ring 3 ordonnançable) n'est pas traité ; voir [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md).
 
 IST1 (#DF), IST2 (NMI) et IST3 (#MC) ne sont pas modifiées. Une exception imbriquée depuis CPL0 reste fatale. Aucun fichier de scheduler ne doit être modifié dans cette phase.
+
+
+**Test CPL0 non exécuté :** le gestionnaire fatal actuel exécute `cli; hlt` sur le CPU fautif. Injecter volontairement une faute noyau dans la matrice SMP arrêterait ce CPU avant le rendez-vous et le marqueur `--debug-exit` ; cela ne permettrait pas de distinguer proprement le comportement fatal du blocage de la matrice. Une preuve dédiée nécessiterait un démarrage QEMU isolé et un point d'arrêt/debug-exit réservé à cette configuration de test. Le chemin de production reste fatal et n'est pas modifié.
