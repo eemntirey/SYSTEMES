@@ -799,12 +799,10 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 2;
     code[length..length + 2].copy_from_slice(&[0x75, 0x0C]); // APs skip the int 0x80 exit
     length += 2;
-    code[length..length + 10].copy_from_slice(&[0x48, 0xB8, RING3_TEST_MAGIC as u8,
-        (RING3_TEST_MAGIC >> 8) as u8, (RING3_TEST_MAGIC >> 16) as u8,
-        (RING3_TEST_MAGIC >> 24) as u8, (RING3_TEST_MAGIC >> 32) as u8,
-        (RING3_TEST_MAGIC >> 40) as u8, (RING3_TEST_MAGIC >> 48) as u8,
-        (RING3_TEST_MAGIC >> 56) as u8]); // movabs rax, Ring 3 exit magic
-    length += 10;
+    code[length..length + 2].copy_from_slice(&[0x48, 0xB8]); // movabs rax, Ring 3 exit magic
+    length += 2;
+    code[length..length + 8].copy_from_slice(&RING3_TEST_MAGIC.to_le_bytes());
+    length += 8;
     code[length..length + 2].copy_from_slice(&[0xCD, 0x80]); // int 0x80: BSP exit path
     length += 2;
     code[length] = 0xB8; // mov eax, SYS_EXIT
