@@ -106,6 +106,12 @@ run_case() {
       [[ "$ap_count" -eq "$expected_aps" ]] || {
         verdict=FAIL; notes+=" AP-count=$ap_count expected=$expected_aps;"
       }
+      has "SYSTEMES_TEST: Ring 3 AP rendezvous completed: MADT APs=$expected_aps, Ring 3 APs=$expected_aps" || {
+        verdict=FAIL; notes+=" missing-MADT-to-Ring3-rendezvous-proof;"
+      }
+      if grep -Eq "NoLowMemoryPage|no-low-memory-page" "$LOG"; then
+        verdict=FAIL; notes+=" NoLowMemoryPage-marker;"
+      fi
       has "SYSTEMES_TEST: simultaneous Ring 3 SYSCALL and per-CPU exit contexts verified across $n CPUs" || {
         verdict=FAIL; notes+=" missing-simultaneous-ring3-syscall-proof;"
       }
