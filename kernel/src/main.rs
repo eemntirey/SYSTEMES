@@ -537,7 +537,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         let previous_flags: u64;
         // SAFETY: Keep the boot CPU out of timer scheduling while the shared
         // test page tables and user mappings are constructed.
-        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags, options(nomem)); }
+        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags); }
         let prepared = unsafe {
             systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
         };
