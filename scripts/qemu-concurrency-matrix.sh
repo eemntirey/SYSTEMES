@@ -114,7 +114,7 @@ run_case() {
       has 'SYSTEMES_TEST: Ring 3 fault returned to kernel; repeated=10' || { verdict=FAIL; notes+=" missing-fault-return-repeated;"; }
       has 'SYSTEMES_TEST: Ring 3 fault cleanup complete' || { verdict=FAIL; notes+=" missing-fault-cleanup;"; }
       has 'SYSTEMES_TEST: non-faulting CPU participants completed count=' || { verdict=FAIL; notes+=" missing-peer-completion;"; }
-      has 'SYSTEMES_TEST: frame and stack allocation counters unchanged' || { verdict=FAIL; notes+=" frame-or-stack-leak;"; }
+      has 'SYSTEMES_TEST: frame allocator count restored; user stacks included' || { verdict=FAIL; notes+=" frame-or-stack-leak;"; }
       ;;
     syscall)
       has 'SYSTEMES_TEST: invalid SYS_READ/SYS_WRITE pointers returned -EFAULT; Ring 3 continued' || { verdict=FAIL; notes+=" missing-EFAULT-syscall-proof;"; }
