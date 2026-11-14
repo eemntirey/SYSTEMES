@@ -861,7 +861,13 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
 
 /// Confirm the enabled syscall bit and programmed selectors/entry mask.
 pub fn verify_syscall_configuration() -> bool {
-    let cpu_index = current_cpu_index();
+    verify_syscall_configuration_for_cpu(current_cpu_index())
+}
+
+/// Verify an explicitly assigned CPU slot without relying on Local APIC MMIO.
+/// APs call this immediately after their GS anchor is installed, before their
+/// Local APIC timer setup is complete.
+pub(crate) fn verify_syscall_configuration_for_cpu(cpu_index: usize) -> bool {
     if cpu_index >= MAX_CPUS {
         return false;
     }
