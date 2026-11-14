@@ -949,7 +949,16 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         write_cr3(root);
     }
     let is_bsp = crate::apic::is_bootstrap_cpu();
-    let use_sys_exit = is_bsp || cpu_index & 1 == 0;
+    // Fault-recovery matrix: keep non-faulting peers on the INT 0x80 exit
+    // path after their syscall burst. SYS_EXIT remains covered by the regular
+    // Ring 3 SMP matrix; mixing its independent exit-status assertion into the
+    // fault rendezvous obscures whether peer syscalls survived the BSP fault.
+    let use_sys_exit = {
+        #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+        { is_bsp }
+        #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+        { is_bsp || cpu_index & 1 == 0 }
+    };
     let user_irq_before = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
     {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
