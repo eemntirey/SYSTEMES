@@ -692,6 +692,15 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     if crate::scheduler::initialize_cpu(slot, &[]).is_err() {
         park_forever();
     }
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    {
+        // Publish readiness before waiting so the BSP can release all CPUs
+        // into the shared user-mode barrier at the same time.
+        AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
+        // SAFETY: The test rendezvous and Ring 3 entry require local IRQs masked.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        crate::address_space::wait_and_run_qemu_ring3_smp_test(slot);
+    }
     crate::scheduler::enable_preemption();
     AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
     crate::scheduler::run_cpu_loop()
