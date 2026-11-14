@@ -62,10 +62,10 @@ fn halt() -> ! {
 fn qemu_debug_exit(code: u32) -> ! {
     // Do not let a local APIC tick preempt the final test/exit sequence.
     unsafe { asm!("cli", options(nomem, nostack)); }
-    // QEMU isa-debug-exit maps the value to (code << 1) | 1 and terminates the VM.
+    // QEMU isa-debug-exit maps the value to (code << 1) | 1 and requests VM termination.
+    // The I/O instruction may retire before QEMU stops the vCPU, so never execute
+    // diagnostic code after it: park the CPU until the host terminates the VM.
     unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
-    // Reaching this marker means the configured debug-exit device did not terminate QEMU.
-    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\r\n"); }
     halt()
 }
 
