@@ -934,7 +934,7 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
 /// QEMU diagnostic bitmask: bit 0 exit path, bit 1 API result, bit 2 GS restore,
 /// bit 3 Ring 3-origin timer IRQ. Zero means the CPU did not publish a result.
 #[cfg(feature = "qemu-ring3-smp-test")]
-pub(crate) fn qemu_ring3_smp_test_result(cpu_index: usize) -> u64 {
+pub fn qemu_ring3_smp_test_result(cpu_index: usize) -> u64 {
     if cpu_index < RING3_SMP_MAX_CPUS {
         RING3_SMP_TEST_RESULTS[cpu_index].load(Ordering::Acquire)
     } else {
