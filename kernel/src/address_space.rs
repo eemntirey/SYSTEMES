@@ -873,19 +873,20 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         write_cr3(root);
     }
     let is_bsp = crate::apic::is_bootstrap_cpu();
+    let use_sys_exit = is_bsp || cpu_index & 1 == 0;
     {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
         // SAFETY: This CPU owns its user stack page in the shared test address space.
         unsafe {
-            core::ptr::write_volatile((user_rsp - 24) as *mut u32, if is_bsp { 0 } else { 1 });
+            core::ptr::write_volatile((user_rsp - 24) as *mut u32, if use_sys_exit { 1 } else { 0 });
         }
     }
-    let exit_ok = if is_bsp {
-        // BSP uses the DPL3 INT 0x80 exit path while APs use SYS_EXIT.
-        unsafe { crate::interrupts::enter_ring3_test_context(RING3_SMP_CODE_ADDRESS, user_rsp) }
-    } else {
+    let exit_ok = if use_sys_exit {
         let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
         exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64
+    } else {
+        // Odd APs exercise the DPL3 INT 0x80 exit path concurrently.
+        unsafe { crate::interrupts::enter_ring3_test_context(RING3_SMP_CODE_ADDRESS, user_rsp) }
     };
     let observed_api = {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
