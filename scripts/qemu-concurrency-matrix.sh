@@ -105,9 +105,20 @@ run_case() {
       ap_count=$(count_matches 'SYSTEMES_TEST: AP [0-9]+ started in kernel long mode')
       [[ "$ap_count" -eq "$expected_aps" ]] || { verdict=FAIL; notes+=" AP-count=$ap_count expected=$expected_aps;"; }
       has 'SYSTEMES_TEST: Ring 3 fault detected' || { verdict=FAIL; notes+=" missing-fault-detected;"; }
+      if [[ "$name" == qemu-ring3-fault-pf ]]; then
+        grep -Eq 'SYSTEMES_TEST: Ring 3 fault detected vector=0x0*E' "$LOG" || { verdict=FAIL; notes+=" missing-#PF-vector;"; }
+        grep -Eq 'cr2=0x[0-9A-Fa-f]+' "$LOG" || { verdict=FAIL; notes+=" missing-#PF-CR2;"; }
+      else
+        grep -Eq 'SYSTEMES_TEST: Ring 3 fault detected vector=0x0*D' "$LOG" || { verdict=FAIL; notes+=" missing-#GP-vector;"; }
+      fi
       has 'SYSTEMES_TEST: Ring 3 fault returned to kernel; repeated=10' || { verdict=FAIL; notes+=" missing-fault-return-repeated;"; }
       has 'SYSTEMES_TEST: Ring 3 fault cleanup complete' || { verdict=FAIL; notes+=" missing-fault-cleanup;"; }
-      has 'SYSTEMES_TEST: non-faulting CPU participants completed' || { verdict=FAIL; notes+=" missing-peer-completion;"; }
+      has 'SYSTEMES_TEST: non-faulting CPU participants completed count=' || { verdict=FAIL; notes+=" missing-peer-completion;"; }
+      has 'SYSTEMES_TEST: frame and stack allocation counters unchanged' || { verdict=FAIL; notes+=" frame-or-stack-leak;"; }
+      ;;
+    syscall)
+      has 'SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors' || { verdict=FAIL; notes+=" missing-EFAULT-syscall-proof;"; }
+      has 'SYSTEMES_TEST: user process exited and kernel resumed' || { verdict=FAIL; notes+=" user-context-was-not-resumed;"; }
       ;;
     ring3)
       local expected_aps=$((n - 1))
@@ -164,6 +175,7 @@ run_case() {
 for n in "${CPU_LIST[@]}"; do
   if [[ "$n" == 1 ]]; then
     run_case single-core-smoke 1 smoke
+    run_case qemu-syscall-test 1 syscall --features qemu-syscall-test --debug-exit
   fi
   run_case qemu-ring3-smp-test "$n" ring3 --features qemu-ring3-smp-test --debug-exit
   run_case qemu-ring3-fault-pf "$n" ring3-fault-pf --features qemu-ring3-fault-pf-test --debug-exit
