@@ -1232,7 +1232,7 @@ pub extern "C" fn systemes_exception_dispatch(
                     debug_hex(cr2);
                     debug_write(b" rip=0x");
                     debug_hex((*syscall_local).fault_rip.load(Ordering::Acquire));
-                    debug_write(b"\\r\\n");
+                    debug_write(b"\r\n");
                 }
                 return;
             }
