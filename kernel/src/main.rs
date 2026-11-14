@@ -640,6 +640,14 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             // The BSP scheduler regression test uses the BSP's actual APIC slot.
             static SMP_TASK_A_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
             static SMP_TASK_B_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            static RING3_AFFINE_COUNTS: [core::sync::atomic::AtomicUsize; 2] = [
+                core::sync::atomic::AtomicUsize::new(0),
+                core::sync::atomic::AtomicUsize::new(0),
+            ];
+            static RING3_AFFINE_MIGRATIONS: [core::sync::atomic::AtomicUsize; 2] = [
+                core::sync::atomic::AtomicUsize::new(0),
+                core::sync::atomic::AtomicUsize::new(0),
+            ];
 
             extern "C" fn smp_worker_a() {
                 let mut observed_migrations = 0usize;
@@ -672,8 +680,38 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
 
-            if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[smp_worker_a, smp_worker_b]).is_ok()
+            extern "C" fn ring3_affine_worker_a() {
+                for _ in 0..20_000 {
+                    if systemes_kernel::scheduler::current_task_migration_count() != 0 {
+                        RING3_AFFINE_MIGRATIONS[0].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
+                    RING3_AFFINE_COUNTS[0].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+            extern "C" fn ring3_affine_worker_b() {
+                for _ in 0..20_000 {
+                    if systemes_kernel::scheduler::current_task_migration_count() != 0 {
+                        RING3_AFFINE_MIGRATIONS[1].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
+                    RING3_AFFINE_COUNTS[1].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    systemes_kernel::scheduler::yield_now();
+                }
+            }
+
+            if systemes_kernel::scheduler::initialize_cpu(
+                bsp_cpu_index,
+                &[smp_worker_a, smp_worker_b, ring3_affine_worker_a, ring3_affine_worker_b],
+            ).is_ok()
                 && systemes_kernel::scheduler::validate_initial_contexts()
+                && systemes_kernel::scheduler::attach_ring3_context(
+                    systemes_kernel::scheduler::TaskId(3),
+                    systemes_kernel::scheduler::Ring3TaskContextRef::new(0xA001),
+                ).is_ok()
+                && systemes_kernel::scheduler::attach_ring3_context(
+                    systemes_kernel::scheduler::TaskId(4),
+                    systemes_kernel::scheduler::Ring3TaskContextRef::new(0xA002),
+                ).is_ok()
             {
                 systemes_kernel::scheduler::enable_preemption();
                 unsafe { debug_write(b"SYSTEMES: per-CPU schedulers initialized; work-stealing enabled\r\n"); }
@@ -687,9 +725,15 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
                 let migrations = systemes_kernel::scheduler::migration_count();
                 let resumed = systemes_kernel::scheduler::migrated_task_execution_count();
-                if migrations < 2 || resumed < 2 {
-                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: repeated task migrations did not resume on receiver CPUs\r\n"); }
+                if migrations < 2 || resumed < 2
+                    || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) == 0)
+                    || RING3_AFFINE_MIGRATIONS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != 0)
+                {
+                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute\r\n"); }
                     qemu_debug_exit(0x11);
+                }
+                unsafe {
+                    debug_write(b"SYSTEMES_TEST: CPU-affine Ring 3 tasks were not stolen while idle CPUs attempted work-stealing\r\n");
                 }
                 unsafe {
                     debug_write(b"SYSTEMES_TEST: cross-CPU work-stealing migration confirmed count=");

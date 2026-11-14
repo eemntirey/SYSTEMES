@@ -54,3 +54,14 @@ IST1 (#DF), IST2 (NMI) et IST3 (#MC) ne sont pas modifiées. Une exception imbri
 
 
 **Test CPL0 non exécuté :** le gestionnaire fatal actuel exécute `cli; hlt` sur le CPU fautif. Injecter volontairement une faute noyau dans la matrice SMP arrêterait ce CPU avant le rendez-vous et le marqueur `--debug-exit` ; cela ne permettrait pas de distinguer proprement le comportement fatal du blocage de la matrice. Une preuve dédiée nécessiterait un démarrage QEMU isolé et un point d'arrêt/debug-exit réservé à cette configuration de test. Le chemin de production reste fatal et n'est pas modifié.
+
+
+## 9. Suivi — contrat scheduler de terminaison Ring 3 (incrément 1)
+
+La branche `p0-ring3-task-termination` introduit une interface scheduler additive pour préparer la terminaison d'une tâche Ring 3 ordonnançable : attachement d'un identifiant opaque de contexte, lecture du TaskId courant, publication d'une raison de sortie unique et sélection après `Exited`.
+
+`TaskExitReason` couvre les sorties volontaires, #PF (CR2/code/RIP) et #GP (code/RIP) avec des payloads fixes et sans allocation. Le champ `Task.exit_reason` reste `None` par défaut. L'écriture est sérialisée sous `run_queue_lock`, avant la publication Release de `Exited`; le lecteur post-Exited acquiert l'état puis lit la valeur immuable sans verrou additionnel. La double terminaison ne remplace pas la première raison.
+
+Les slots associés à un contexte Ring 3 sont CPU-affines et exclus du work-stealing. Le scénario SMP ajouté doit démontrer ce comportement sur 2 et 4 CPU pendant que les AP inactifs tentent de voler les tâches ; il n'est pas encore considéré comme réussi avant CI.
+
+**Limite :** aucune entrée #PF/#GP, aucun SYS_EXIT, aucun switch CR3/TSS/GS et aucune libération/reaper ne sont raccordés par cet incrément. Le constat de l'audit selon lequel les fautes Ring 3 ne terminent pas encore une tâche ordonnançable reste donc vrai jusqu'aux incréments ultérieurs.
