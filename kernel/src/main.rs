@@ -533,13 +533,24 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
     #[cfg(feature = "qemu-ring3-smp-test")]
-    let ring3_smp_plan = match unsafe {
-        systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
-    } {
-        Ok(plan) => Some(plan),
-        Err(_) => {
-            unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\\r\\n"); }
-            qemu_debug_exit(0x11);
+    let ring3_smp_plan = {
+        let previous_flags: u64;
+        // SAFETY: Keep the boot CPU out of timer scheduling while the shared
+        // test page tables and user mappings are constructed.
+        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags, options(nomem)); }
+        let prepared = unsafe {
+            systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
+        };
+        if previous_flags & (1 << 9) != 0 {
+            // SAFETY: Restore the original boot interrupt state after preparation.
+            unsafe { asm!("sti", options(nomem, nostack)); }
+        }
+        match prepared {
+            Ok(plan) => Some(plan),
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\\r\\n"); }
+                qemu_debug_exit(0x11);
+            }
         }
     };
     #[cfg(feature = "qemu-ring3-smp-test")]
