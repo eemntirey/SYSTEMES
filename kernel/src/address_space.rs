@@ -962,7 +962,7 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
         #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
         if cpu_index == crate::interrupts::bootstrap_cpu_index() {
-            let mut repeated_ok = exit_status == RING3_SMP_FAULT_EXIT_STATUS;
+            let mut repeated_ok = exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64;
             for _ in 1..10 {
                 let repeated = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_FAULT_CODE_ADDRESS, user_rsp) };
                 repeated_ok &= repeated == RING3_SMP_FAULT_EXIT_STATUS;
