@@ -57,7 +57,7 @@ Script : [`scripts/qemu-concurrency-matrix.sh`](https://github.com/eemntirey/SYS
 
 - La liste par défaut est `CPUS="1 2 4"` ; les valeurs acceptées sont strictement 1, 2 et 4.
 - Les cas sont exécutés séquentiellement dans un seul job, chaque cas supprimant l'ancien journal avant le démarrage QEMU et sauvegardant son propre instantané.
-- Pour chaque configuration, le script exécute `qemu-ring3-smp-test`. Pour 1 CPU, il exécute aussi le démarrage de référence `single-core-smoke). Pour 2 et 4 CPU, il exécute en plus `qemu-smp-test` et `qemu-smp-scheduler-test`.
+- Pour chaque configuration, le script exécute `qemu-ring3-smp-test`. Pour 1 CPU, il exécute aussi le démarrage de référence `single-core-smoke`. Pour 2 et 4 CPU, il exécute en plus `qemu-smp-test` et `qemu-smp-scheduler-test`.
 - Chaque cas échoue si QEMU retourne un code non nul, si le journal est absent, si `SYSTEMES_KERNEL_FAIL:` apparaît ou si `SYSTEMES_KERNEL_OK` manque.
 - Le cas Ring 3 vérifie le nombre d'AP attendu (`CPU - 1`), le rendez-vous MADT/AP, la preuve d'exécution SYSCALL simultanée, et la preuve d'interruptions timer APIC depuis Ring 3.
 - Le script imprime un verdict `case=... smp=... verdict=PASS|FAIL` pour chaque cas, puis `MATRIX_OK` uniquement si aucun cas n'a échoué.
@@ -66,7 +66,7 @@ La matrice est séquentielle : elle fournit un verdict par cas QEMU, pas un verd
 
 ## 4. Validation CI de la PR #86
 
-Workflow run [#43593078770](https://github.com/eemntirey/SYSTEMES/actions/runs/43593078770), associé au SHA source final `0ff021dc42cc3593cbcddf382a25af6e3704450) : **13 jobs sur 13 terminés avec succès**.
+Workflow run [#43593078770](https://github.com/eemntirey/SYSTEMES/actions/runs/43593078770), associé au SHA source final `0ff021dc42cc3593cbcddf382a25af6e3704450` : **13 jobs sur 13 terminés avec succès**.
 
 Jobs observés :
 
