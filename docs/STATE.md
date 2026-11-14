@@ -1,142 +1,123 @@
-# État du noyau — audit de concurrence P0
+# État du noyau — suivi P0
 
-**Date de l'audit :** 2026-11-13  
-**Base auditée :** `main`  
-**SHA de base :** `a5c89e5d57bca9f874952d96ab801f98df1c27f1`  
-**Branche de cet audit :** `p0-concurrency-audit`
+**Actualisation :** 2026-11-14  
+**Branche de référence :** `main`  
+**Commit de référence :** `484c01e82568994bd9244e519839367f1ddc09cd` (squash de la PR #86)
 
-Ce document sépare l'état réellement intégré dans `main` des modifications encore proposées dans des PR. L'audit est une inspection statique du code GitHub. Il ne constitue ni une compilation locale, ni un test QEMU, ni une preuve de sécurité SMP.
+Ce document décrit l'état intégré dans `main` après la PR #86. Les constats de l'audit du 13 novembre qui qualifiaient les états Ring 3/SYSCALL de globaux ne décrivent plus le code courant lorsqu'ils concernent les champs remplacés par le contexte CPU-local. La fermeture complète de P0 n'est toutefois pas acquise : la stabilisation complémentaire des transitions reste à auditer (section 6).
 
-## Verdict P0
+## 1. État global P0
 
-**Statut : NON VALIDÉ**
+**Étape 1 — isolation Ring 3 / SYSCALL par CPU : intégrée et validée par la CI de la PR #86.**  
+**P0 complet : non déclaré terminé.** L'audit de durcissement décrit en section 6 reste à réaliser avant toute correction supplémentaire.
 
-Le noyau ne peut pas encore être déclaré sûr pour l'exécution concurrente de processus Ring 3 et d'appels SYSCALL sur plusieurs CPU.
+La PR [#86](https://github.com/eemntirey/SYSTEMES/pull/86) a été fusionnée le 14 novembre 2026. Son commit source est `0ff021dc42cc3593cbcddf382a25aaf6e3704450`, et son commit squash est `484c01e82568994bd9244e519839367f1ddc09cd`.
 
-Les blocages critiques sont :
-1. La table de processus et l'allocateur de frames sont des `static mut` exposés par des fonctions qui rendent des références mutables à durée de vie `'static`, sans verrou ni propriété exclusive démontrée.
-2. Le PID courant est un unique atomique global, et non un état local au CPU. Il ne représente donc pas correctement plusieurs processus exécutés simultanément.
-3. La PR #78 rend la pile et les données d'entrée SYSCALL locales au CPU, mais conserve des états de sortie Ring 3 globaux.
-4. Le code SYSCALL utilise une table de descripteurs globale alors que `Process` possède déjà une table par processus. Les chemins syscall n'utilisent pas `current_file_table()`.
-5. Les tests SMP actuels vérifient notamment le démarrage des AP, des compteurs atomiques/verrouillés et la migration de tâches. Ils ne démontrent pas des appels SYSCALL Ring 3 concurrents sur 2 et 4 CPU.
+## 2. Acquis de la PR #86
 
-Aucune expansion fonctionnelle ne doit être ajoutée pendant la fermeture de ces blocages.
+### 2.1 Contexte Ring 3 et SYSCALL CPU-local
 
-## 1. Inventaire des `static mut` dans `main`
+Dans `kernel/src/interrupts.rs` :
 
-Les déclarations ci-dessous ont été retrouvées dans les sources de `kernel/src` sur le SHA de base. Leur présence dans un fichier ne signifie pas nécessairement que ce fichier appartient au graphe Cargo : `process.rs` n'est pas déclaré dans `kernel/src/lib.rs` sur cette base.
+- `SyscallCpuLocal` contient la pile d'entrée SYSCALL, le RSP utilisateur sauvegardé, le RSP noyau sauvegardé, les drapeaux `ring3_active` et `exit_validated`, le RSP utilisateur attendu et le statut de sortie.
+- `CpuContext` regroupe ce contexte SYSCALL avec la GDT, la TSS, l'IDT et les piles d'interruption.
+- `CPU_CONTEXTS` est indexé par slot CPU. Le commentaire du type indique que `GS_BASE` pointe sur le contexte du CPU courant en Ring 0.
+- Le code de la PR traite `SWAPGS` sur SYSCALL, INT 0x80, exceptions, IRQ et interruption APIC spurious. Le chemin d'exception tient compte des fenêtres de transition NMI/MCE.
 
-| Fichier / symbole | Rôle | Accès / garantie observée | Verdict P0 |
-|---|---|---|---|
-| `heap.rs::HEAP_STORAGE` | Arène statique du tas | Adresse obtenue pendant l'initialisation de `GLOBAL_ALLOCATOR`; l'état du tas est protégé par le verrou interne `KernelHeap`. | Justification présente ; vérifier qu'aucun accès direct concurrent ne contourne le verrou. |
-| `process.rs::PROCESS_TABLE` | Table de processus | `process_table()` retourne `&'static mut ProcessTable` sans synchronisation. | **Critique — non sûr.** |
-| `process.rs::FRAME_ALLOCATOR` | Allocateur de frames | `frame_allocator()` retourne `Option<&'static mut PhysicalFrameAllocator>` depuis un global mutable sans verrou. | **Critique — non sûr.** |
-| `smp.rs::SYSTEMES_AP_STACKS` | Pointeurs de piles AP consommés avant Rust | Écrit par le BSP et lu par le trampoline AP ; la sûreté dépend de la publication avant SIPI et de l'ordre de démarrage. | À justifier formellement par le protocole release/acquire et le code assembleur. |
-| `interrupts.rs::CPU_CONTEXTS` | GDT/IDT/TSS et piles d'interruption par CPU | Indexé par slot CPU ; `CPU_INIT_STATE` utilise un compare-exchange pour réserver le slot et un état publié à la fin de l'initialisation. | Modèle par slot plausible ; vérifier tous les lecteurs et l'unicité APIC ID → slot. |
-| `interrupts.rs::SYSTEMES_SYSCALL_KERNEL_STACK` | Pile d'entrée SYSCALL historique | Une pile unique partagée. | **Critique — incompatible SMP.** Remplacée dans la branche de la PR #78, pas dans `main`. |
-| `interrupts.rs::SYSTEMES_SYSCALL_USER_RSP` | RSP utilisateur sauvegardé à l'entrée SYSCALL | Un emplacement global partagé par tous les CPU. | **Critique — corruption possible entre appels concurrents.** Remplacé dans la branche de la PR #78. |
-| `interrupts.rs::SYSTEMES_RING3_SAVED_KERNEL_RSP` | RSP noyau sauvegardé lors de l'entrée Ring 3 | Une seule valeur globale lue par le chemin de sortie d'interruption. | **Critique — non isolé par CPU/processus**, y compris dans la branche #78. |
-| `scheduler.rs::CPU_SCHEDULERS` | Files et métadonnées d'ordonnanceur par CPU | Pointeurs bruts vers un slot indexé par CPU ; le code emploie un verrou de file par CPU et plusieurs champs atomiques. | Protection partielle ; audit des accès hors verrou et des migrations encore requis. |
-| `scheduler.rs::TASK_RESOURCES` | Piles noyau et buffers FXSAVE des tâches | Pointeurs bruts vers des ressources stables ; commentaire de code décrit un transfert de propriété lors des migrations. | Invariant de propriété à documenter et tester ; pas une preuve suffisante à lui seul. |
+Le modèle documenté par la PR est : en Ring 0, `GS_BASE` désigne le contexte CPU-local ; en Ring 3, le GS utilisateur est nul. Les états de sortie précédemment globaux ont été déplacés dans `SyscallCpuLocal`.
 
-## 2. État partagé supplémentaire (pas nécessairement `static mut`)
+### 2.2 Initialisation des AP
 
-| Symbole | Protection / usage | Risque restant |
-|---|---|---|
-| `process.rs::CURRENT_PID` | `AtomicU32` avec Acquire/Release. | Atomique mais global : un seul PID courant pour tous les CPU. Doit devenir CPU-local ou être dérivé du contexte CPU courant. |
-| `interrupts.rs::RING3_ACTIVE` | `AtomicBool` global. | L'atomicité n'isole pas les sessions Ring 3 : un CPU peut modifier l'état observé par un autre. |
-| `interrupts.rs::RING3_EXIT_VALIDATED` | `AtomicBool` global. | Même problème d'isolation. |
-| `interrupts.rs::RING3_EXPECTED_USER_RSP` | `AtomicU64` global. | Un test Ring 3 concurrent peut valider le mauvais RSP. |
-| `interrupts.rs::SYSTEMES_SYSCALL_EXIT_STATUS` | `AtomicU64` global exporté pour l'assembleur. | Statut de sortie partagé ; doit être CPU-local ou rattaché au contexte de processus. |
-| `syscall.rs::PROCESS_FILES` | `SpinLock<ProcessFileTable>`. | Pas de data race sur la table, mais sémantique globale incompatible avec l'isolation des FD par processus. |
-| `rootfs.rs::ROOT` | `SpinLock<Option<Vfs<'static>>>` ; accès via `with_root`. | Accès sérialisé ; documenter les règles d'ordre des verrous et éviter les appels imbriqués non maîtrisés. |
-| `heap.rs::GLOBAL_ALLOCATOR` | `KernelHeap` avec verrou atomique et `UnsafeCell`. | Protection annoncée dans le code ; attention aux allocations pendant qu'un verrou non réentrant est détenu. |
-| Compteurs AP / horloge / APIC | Principalement atomiques. | Vérifier que chaque variable globale représente bien un compteur partagé, et non un état qui devrait être local au CPU. |
+Dans `kernel/src/smp.rs`, l'entrée Rust de chaque AP initialise son contexte GDT/IDT/TSS, appelle `interrupts::initialize_syscalls()`, puis vérifie la configuration SYSCALL pour son slot CPU. En cas d'échec, l'AP est immobilisé au lieu de poursuivre avec une configuration incomplète.
 
-## 3. Table de processus et allocateur — branche de la PR #82
+La pile de démarrage AP est allouée et publiée par APIC ID avant l'envoi des INIT/SIPI. La page trampoline basse mémoire est réservée par `reserve_trampoline_page()` et conservée pour le démarrage des AP.
 
-La PR #82 (`test/process-context-contracts`) ajoute `pub mod process` dans `lib.rs`, ce qui fait entrer `process.rs` dans le graphe Cargo. Elle ne corrige pas les accès globaux.
+### 2.3 Rendez-vous Ring 3 SMP
 
-Constats dans cette branche :
-- `process_table()` fabrique une référence mutable globale sans verrou.
-- Les fonctions de création, sélection, changement de processus, sortie et accès à la table des fichiers appellent directement `process_table()`.
-- `frame_allocator()` peut fabriquer plusieurs références mutables aliasées vers le même allocateur.
-- `current_file_table()` retourne lui aussi une référence mutable à durée de vie `'static` dérivée de la table globale.
-- `CURRENT_PID` est un unique atomique global ; il ne peut pas représenter les PID courants de plusieurs CPU.
-- Les tests ajoutés dans #82 couvrent le round-trip des registres, l'état initial de la table et les discriminants d'état. Ils ne couvrent pas l'accès concurrent à la table, l'allocateur, le changement de CR3 ou le scheduling Ring 3.
+La feature `qemu-ring3-smp-test` prépare un espace utilisateur partagé, des piles distinctes et une barrière de départ. Les AP publient leur état prêt puis attendent le rendez-vous ; le BSP libère le test après le démarrage des AP.
 
-**Conclusion :** ne pas intégrer #82 telle quelle dans une base qui prétend prendre en charge plusieurs processus Ring 3 simultanés.
+Le scénario exécute simultanément les transitions Ring 3/SYSCALL sur les CPU participants et vérifie l'indépendance des champs CPU-locaux. Les chemins de sortie sont alternés entre `SYS_EXIT` et `INT 0x80` avec des statuts distincts. Le scénario vérifie également des interruptions timer APIC provenant de Ring 3 sur les CPU dont les interruptions sont activées.
 
-## 4. Descripteurs de fichiers — double modèle
+Dans `kernel/src/main.rs`, l'espace utilisateur du test n'est préparé qu'après le rendez-vous de démarrage des AP, afin que les allocations de tables de pages ne consomment pas la page trampoline réservée.
 
-Dans `syscall.rs`, les chemins `open`, `read`, `readdir`, `close` et la fermeture à la sortie utilisent `PROCESS_FILES`, une table globale protégée par `SpinLock`.
+### 2.4 Dépendance de feature nécessaire
 
-Dans `process.rs`, chaque `Process` possède déjà `file_table: ProcessFileTable`, et des fonctions `current_file_table()` / `close_current_process_files()` ciblent cette table par processus. Les chemins syscall ne s'appuient pas sur ces fonctions.
+Dans `kernel/Cargo.toml` :
 
-Le verrou global empêche une corruption concurrente de la structure globale, mais ne garantit pas l'isolation :
-- deux processus partageraient le même espace de descripteurs ;
-- les numéros de FD ne seraient pas indépendants ;
-- la fermeture globale pourrait fermer les handles d'un autre processus ;
-- la table par processus resterait inutilisée par les syscalls.
+```toml
+qemu-smp-test = []
+qemu-ring3-smp-test = ["qemu-smp-test"]
+```
 
-Correction attendue : une seule source d'autorité par processus, accès contrôlé à partir du contexte de processus courant, et fermeture limitée aux handles de ce processus. Ne pas conserver deux tables concurrentes.
+Cette dépendance est intentionnelle. Le test Ring 3 SMP a besoin du chemin de démarrage des processeurs secondaires et de la réservation de la page trampoline sous 1 Mio. Sans l'activation de `qemu-smp-test`, le scénario Ring 3 peut démarrer sans les fondations de bring-up AP requises.
 
-## 5. Entrée SYSCALL et sortie Ring 3 — PR #78 / #84
+## 3. Matrice QEMU 1 / 2 / 4 CPU
 
-### PR #78 — `p1-6d-per-cpu-syscall-entry`
+Script : [`scripts/qemu-concurrency-matrix.sh`](https://github.com/eemntirey/SYSTEMES/blob/main/scripts/qemu-concurrency-matrix.sh).
 
-La branche ajoute :
-- un `SyscallCpuLocal` indexé par CPU avec `kernel_stack_top` à l'offset 0 et `user_rsp` à l'offset 8 ;
-- une pile noyau SYSCALL par CPU ;
-- `SWAPGS` à l'entrée et à la sortie SYSRET ;
-- la programmation de GS_BASE / KERNEL_GS_BASE et des MSR SYSCALL sur BSP et AP.
+- La liste par défaut est `CPUS="1 2 4"` ; les valeurs acceptées sont strictement 1, 2 et 4.
+- Les cas sont exécutés séquentiellement dans un seul job, chaque cas supprimant l'ancien journal avant le démarrage QEMU et sauvegardant son propre instantané.
+- Pour chaque configuration, le script exécute `qemu-ring3-smp-test`. Pour 1 CPU, il exécute aussi le démarrage de référence `single-core-smoke`. Pour 2 et 4 CPU, il exécute en plus `qemu-smp-test` et `qemu-smp-scheduler-test`.
+- Chaque cas échoue si QEMU retourne un code non nul, si le journal est absent, si `SYSTEMES_KERNEL_FAIL:` apparaît ou si `SYSTEMES_KERNEL_OK` manque.
+- Le cas Ring 3 vérifie le nombre d'AP attendu (`CPU - 1`), le rendez-vous MADT/AP, la preuve d'exécution SYSCALL simultanée, et la preuve d'interruptions timer APIC depuis Ring 3.
+- Le script imprime un verdict `case=... smp=... verdict=PASS|FAIL` pour chaque cas, puis `MATRIX_OK` uniquement si aucun cas n'a échoué.
 
-Mais les symboles suivants restent globaux dans cette branche :
-- `SYSTEMES_RING3_SAVED_KERNEL_RSP` ;
-- `RING3_ACTIVE` ;
-- `RING3_EXIT_VALIDATED` ;
-- `RING3_EXPECTED_USER_RSP` ;
-- `SYSTEMES_SYSCALL_EXIT_STATUS`.
+La matrice est séquentielle : elle fournit un verdict par cas QEMU, pas un verdict indépendant pour chaque CPU au sein d'un cas. Les preuves par CPU sont portées par les marqueurs et diagnostics série émis par le noyau.
 
-La pile et le RSP d'entrée deviennent locaux au CPU ; le protocole de sortie Ring 3, lui, ne l'est pas. Le contrat actuel suppose également que le GS utilisateur vaut zéro : l'utilisation ultérieure de GS côté userland/TLS devra être conçue explicitement.
+## 4. Validation CI de la PR #86
 
-### PR #84 — `p1-7a-syscall-entry-contracts`
+Workflow run [#43593078770](https://github.com/eemntirey/SYSTEMES/actions/runs/43593078770), associé au SHA source final `0ff021dc42cc3593cbcddf382a25af6e3704450` : **13 jobs sur 13 terminés avec succès**.
 
-Cette PR ajoute des tests de layout pour les offsets GS [0] et [8]. Ces tests valident un contrat mémoire, pas la sûreté de l'entrée/sortie concurrente. La PR est empilée sur #78 et ne doit pas être fusionnée indépendamment de sa parente.
+Jobs observés :
 
-**Conclusion :** #78 et #84 restent des travaux préparatoires ; leurs tests de layout ne ferment pas les blocages de concurrence Ring 3.
+1. SMP application processor bring-up
+2. QEMU hardware fault — SMEP must block supervisor execution of a user page
+3. SMP bring-up + BSP scheduler regression
+4. QEMU hardware fault — NX execution must fault
+5. Production boot — userland shell with SYSFS disk
+6. QEMU hardware fault — SMAP must block supervisor read of a user page
+7. no_std contract tests and x86_64 target check
+8. QEMU hardware fault — RX write must fault
+9. QEMU SMP concurrency matrix (1, 2 and 4 CPUs)
+10. Production boot — userland shell without disk
+11. QEMU hardware fault — NMI IST2 stack switch
+12. QEMU hardware fault — Machine Check IST3 stack switch
+13. Build UEFI loader and boot kernel in QEMU/OVMF
 
-## 6. Verrous et ordre d'acquisition
+La réussite de cette CI valide les scénarios effectivement exécutés par ces jobs sur le SHA indiqué. Elle ne constitue pas une preuve de couverture des cas supplémentaires listés dans la phase de durcissement ci-dessous.
 
-- `SpinLock` sérialise les données qu'il protège, mais n'offre pas de détection d'inversion de verrous ni de réentrance.
-- `rootfs::with_root` acquiert le verrou `ROOT` pendant l'exécution de sa closure.
-- Les syscalls actuels prennent généralement une copie du handle sous `PROCESS_FILES`, libèrent ce verrou, puis appellent `with_root`. L'inventaire ne montre donc pas, dans ces chemins précis, une acquisition imbriquée systématique des deux verrous.
-- Le chemin de sortie de processus de la branche #82 manipule la table de processus puis appelle le VFS pour fermer les handles ; la table de processus n'est pas protégée par un verrou aujourd'hui. Une future correction devra définir un ordre unique et éviter de conserver un verrou de table de processus pendant des opérations VFS/allocation potentiellement bloquantes.
-- L'allocateur de frames ne doit pas être appelé via une référence mutable globale non exclusive. L'ordre entre verrou de processus, allocateur, heap et VFS doit être explicite avant de remplacer les globals par des verrous.
+## 5. Périmètre explicitement non modifié
 
-**Limite de l'audit :** l'analyse statique des chemins identifiés ne remplace pas un audit dynamique de tous les entrelacements. Aucun ordre global de verrous n'est actuellement prouvé par des assertions ou un outil de vérification.
+La PR #86 n'a pas modifié le code de l'ordonnanceur. La matrice continue de lancer ses tests de régression SMP/scheduler, mais l'objectif de cette étape était l'isolation des transitions Ring 3/SYSCALL.
 
-## 7. État des preuves et critères de sortie
+Les fonctionnalités de processus, PID, tables de fichiers par processus, `fork`, VFS et ELF n'ont pas été livrées par la PR #86 et ne doivent pas être considérées comme acquises sur la seule base de cette fusion.
 
-| Contrôle P0 | État constaté | Preuve requise pour clôture |
-|---|---|---|
-| Inventaire des `static mut` | Inventaire initial de `main` établi ; branches PR distinguées. | Refaire l'inventaire sur le SHA final après corrections. |
-| Références mutables globales dangereuses | Plusieurs identifiées, notamment table de processus et allocateur. | Zéro accès non justifié ; API sans références mutables globales aliasables. |
-| Contexte GS | Entrée per-CPU proposée dans #78 ; sortie Ring 3 encore globale. | Isolation complète et testée sur chaque CPU. |
-| SYSCALL concurrent | Non démontré. | Test Ring 3 qui exécute des syscalls simultanément sur 2 et 4 CPU et vérifie les contextes/compteurs indépendants. |
-| SMP 1 / 2 / 4 CPU | Des tests SMP et une matrice QEMU existent dans le workflow. | Exécution réussie sur le SHA final ; les tests existants ne suffisent pas à prouver les syscalls concurrents. |
-| Tests de concurrence processus | Insuffisants. | Tests concurrents de la table, de l'allocateur, des FD et des changements de contexte. |
-| Documentation | Ce document crée la base de suivi P0 sur cette branche. | Actualiser les preuves, les SHA et les résultats après chaque correction. |
-| CI sur SHA final | Non vérifiée pour cette branche. | Tous les checks requis verts sur le HEAD exact de la PR finale. |
+## 6. Travail restant — durcissement P0
 
-## 8. Plan de correction strictement limité à P0
+La phase suivante est un audit du chemin d'entrée/sortie Ring 3 et SYSCALL sur le code courant, avant toute modification. Elle doit classer chaque point BUG CONFIRMÉ / RISQUE / OK et ne retenir que les deux premières catégories lorsqu'elles sont justifiées par le code.
 
-1. Finaliser le modèle CPU-local du contexte SYSCALL et des états de sortie Ring 3 ; ne pas créer une deuxième implémentation concurrente de #78.
-2. Remplacer les références mutables globales de la table de processus et de l'allocateur par des API synchronisées à durée de vie bornée (verrou/guard ou closures), sans exposer de `&'static mut`.
-3. Remplacer le PID courant global par un état CPU-local cohérent avec le contexte GS/per-CPU.
-4. Unifier la gestion des FD sur la table du processus courant ; supprimer la table globale syscall après migration et tests, pas avant.
-5. Formaliser l'ordre des verrous et la propriété des ressources pendant spawn, yield, exit et migration.
-6. Ajouter les tests concurrents et les scénarios QEMU SYSCALL Ring 3 sur 1, 2 et 4 CPU.
-7. Mettre à jour ce fichier avec le SHA testé, les logs QEMU et les résultats CI. Aucun merge avant CI entièrement verte sur le SHA exact.
+Points à vérifier :
 
-Aucune implémentation de fork complet, extension POSIX, VFS inscriptible, ELF avancé ou nouveau pilote n'entre dans cette mission.
+1. Programmation et vérification de STAR, LSTAR, SFMASK et EFER.SCE sur le BSP et chaque AP.
+2. Pile d'entrée SYSCALL, pile noyau courante par thread, RSP0 de la TSS, IST et chargement TR sur chaque CPU.
+3. Appariement SWAPGS sur SYSCALL, INT 0x80, IRQ, exceptions, NMI et #MC, y compris les fenêtres de transition et les chemins d'erreur.
+4. Choix SYSRET/IRETQ, canonicalité des adresses de retour, restauration des registres et nettoyage de l'état sensible.
+5. Absence d'état mutable partagé entre CPU sur les chemins de transition et syscall.
+6. Validation des pointeurs utilisateur, bornes/canonicalité, et discipline SMAP STAC/CLAC autour des accès.
+7. Fenêtres d'interruption entre l'entrée SYSCALL et la mise en place de la pile noyau ; cohérence de SFMASK.
+8. Traitement des fautes Ring 3 (#PF/#GP) sans corruption de l'état d'un autre CPU.
+
+Aucun bug n'est présumé dans cette liste : chaque constat doit être établi à partir du code actuel et, pour être corrigé, reproduit par un test QEMU qui échoue avant la correction. Les cas de test à ajouter si l'audit les justifie comprennent les syscalls concurrents sur 1/2/4 CPU, les pointeurs invalides/non canoniques, les transitions répétées sous timer/IPI et une faute Ring 3 simultanée à des syscalls sur un autre CPU.
+
+### Critères de clôture
+
+- Les correctifs doivent rester limités aux fichiers nécessaires ; aucun changement de scheduler sans nécessité démontrée et signalée.
+- Les tests doivent prouver le défaut avant correction et le comportement corrigé après.
+- Le build de production sans feature de test doit rester valide.
+- Tous les jobs CI doivent être verts sur le SHA exact de la PR.
+- Les résultats de la matrice doivent inclure le verdict de chaque configuration, le nombre d'AP démarrés et l'absence de marqueur d'erreur noyau.
+- Aucun merge avant CI entièrement verte sur le SHA final et accord explicite.
+
+## 7. Historique de l'actualisation
+
+L'audit initial du 13 novembre décrivait notamment la pile SYSCALL et plusieurs états Ring 3 comme globaux, car il portait sur une base antérieure à la PR #86. Ces constats restent utiles comme historique, mais ne doivent plus être présentés comme l'état du code après le commit squash ci-dessus lorsque les champs concernés ont été déplacés dans `SyscallCpuLocal`.
