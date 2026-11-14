@@ -769,7 +769,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     }
 
     // User code: increment ready_count; wait until it equals expected_count;
-    // call SYS_GET_API_VERSION; save RAX; then exit through SYS_EXIT.
+    // call SYS_GET_API_VERSION; BSP exits via INT 0x80, APs via SYS_EXIT.
     let mut code = [0u8; 80];
     let mut length = 0usize;
     let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
