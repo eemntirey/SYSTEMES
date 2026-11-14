@@ -109,6 +109,9 @@ run_case() {
       has "SYSTEMES_TEST: simultaneous Ring 3 SYSCALL and per-CPU exit contexts verified across $n CPUs" || {
         verdict=FAIL; notes+=" missing-simultaneous-ring3-syscall-proof;"
       }
+      has 'SYSTEMES_TEST: Ring 3-origin APIC timer interrupts verified on IF-enabled CPUs' || {
+        verdict=FAIL; notes+=" missing-ring3-timer-interrupt-proof;"
+      }
       ;;
     scheduler)
       local expected_aps=$((n - 1))
