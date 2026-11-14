@@ -955,11 +955,11 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
 fn current_syscall_local() -> *mut SyscallCpuLocal {
-    let cpu_index = current_cpu_index();
-    assert!(cpu_index < MAX_CPUS, "current APIC ID exceeds supported CPU slots");
-    // SAFETY: Each APIC ID owns one permanently allocated CPU context. The raw
-    // pointer avoids creating a shared reference while assembly updates its stack.
-    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
+    let local = read_msr(MSR_GS_BASE) as *mut SyscallCpuLocal;
+    assert!(!local.is_null(), "kernel GS context is not initialized");
+    // SAFETY: Every kernel entry path establishes GS_BASE before dispatch. The
+    // raw pointer avoids creating a reference while assembly updates its stack.
+    local
 }
 
 pub(crate) fn set_user_exit_status(status: u64) {
