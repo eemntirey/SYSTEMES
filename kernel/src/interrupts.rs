@@ -962,6 +962,10 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
+    let kernel_rflags: u64;
+    // Preserve the caller's IF state; exception and SYSCALL exit frames resume
+    // with IF clear so the kernel stack is restored before interrupts re-open.
+    unsafe { asm!("pushfq; pop {}", out(reg) kernel_rflags, options(nomem, preserves_flags)); }
     let local = current_syscall_local();
     unsafe {
         (*local).exit_status.store(0, Ordering::Release);
@@ -974,7 +978,12 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
     unsafe { (*local).ring3_active.store(false, Ordering::Release); }
-    crate::interrupts::user_exit_status()
+    let status = crate::interrupts::user_exit_status();
+    if kernel_rflags & (1 << 9) != 0 {
+        // SAFETY: The original kernel continuation and its stack are restored.
+        unsafe { asm!("sti", options(nomem, nostack)); }
+    }
+    status
 }
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
