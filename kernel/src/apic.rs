@@ -388,6 +388,17 @@ pub unsafe fn stop_local_timer() {
 pub extern "C" fn systemes_apic_timer_dispatch(vector: u64, saved_rsp: usize) -> usize {
     match vector {
         0x40 => {
+            #[cfg(feature = "qemu-ring3-smp-test")]
+            {
+                // The common IRQ frame stores CS at saved_rsp + 18 qwords.
+                // Count only timer interrupts that actually arrived from CPL3.
+                let saved_cs = unsafe { *((saved_rsp as *const u64).add(18)) };
+                if saved_cs & 3 == 3 {
+                    if let Some(cpu_id) = current_apic_id() {
+                        crate::address_space::record_qemu_ring3_smp_user_irq(cpu_id as usize);
+                    }
+                }
+            }
             if is_bootstrap_cpu() {
                 crate::clock::on_timer_interrupt();
             }

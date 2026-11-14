@@ -99,6 +99,26 @@ run_case() {
         verdict=FAIL; notes+=" missing-SMP-complete-marker;"
       }
       ;;
+    ring3)
+      local expected_aps=$((n - 1))
+      local ap_count
+      ap_count=$(count_matches 'SYSTEMES_TEST: AP [0-9]+ started in kernel long mode')
+      [[ "$ap_count" -eq "$expected_aps" ]] || {
+        verdict=FAIL; notes+=" AP-count=$ap_count expected=$expected_aps;"
+      }
+      has "SYSTEMES_TEST: Ring 3 AP rendezvous completed: MADT APs=$expected_aps, Ring 3 APs=$expected_aps" || {
+        verdict=FAIL; notes+=" missing-MADT-to-Ring3-rendezvous-proof;"
+      }
+      if grep -Eq "NoLowMemoryPage|no-low-memory-page" "$LOG"; then
+        verdict=FAIL; notes+=" NoLowMemoryPage-marker;"
+      fi
+      has "SYSTEMES_TEST: simultaneous Ring 3 SYSCALL and per-CPU exit contexts verified across $n CPUs" || {
+        verdict=FAIL; notes+=" missing-simultaneous-ring3-syscall-proof;"
+      }
+      has 'SYSTEMES_TEST: Ring 3-origin APIC timer interrupts verified on IF-enabled CPUs' || {
+        verdict=FAIL; notes+=" missing-ring3-timer-interrupt-proof;"
+      }
+      ;;
     scheduler)
       local expected_aps=$((n - 1))
       local ap_count migrations resumed
@@ -134,7 +154,9 @@ run_case() {
 for n in "${CPU_LIST[@]}"; do
   if [[ "$n" == 1 ]]; then
     run_case single-core-smoke 1 smoke
-  else
+  fi
+  run_case qemu-ring3-smp-test "$n" ring3 --features qemu-ring3-smp-test --debug-exit
+  if [[ "$n" != 1 ]]; then
     run_case qemu-smp-test "$n" smp --features qemu-smp-test
     run_case qemu-smp-scheduler-test "$n" scheduler --features qemu-smp-scheduler-test --debug-exit
   fi

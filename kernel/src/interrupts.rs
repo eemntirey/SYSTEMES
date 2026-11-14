@@ -62,9 +62,37 @@ struct TaskStateSegment {
 #[repr(align(4096))]
 struct InterruptStack([u8; INTERRUPT_STACK_SIZE]);
 
-/// Per-CPU context containing descriptor tables and interrupt stacks.
+/// Per-CPU syscall and Ring 3 transition state. GS_BASE points here in Ring 0.
+#[repr(C, align(16))]
+struct SyscallCpuLocal {
+    syscall_stack: [u8; INTERRUPT_STACK_SIZE],
+    syscall_stack_top: u64,
+    user_rsp: AtomicU64,
+    saved_kernel_rsp: AtomicU64,
+    ring3_active: AtomicBool,
+    exit_validated: AtomicBool,
+    expected_user_rsp: AtomicU64,
+    exit_status: AtomicU64,
+}
+impl SyscallCpuLocal {
+    const fn new() -> Self {
+        Self {
+            syscall_stack: [0; INTERRUPT_STACK_SIZE],
+            syscall_stack_top: 0,
+            user_rsp: AtomicU64::new(0),
+            saved_kernel_rsp: AtomicU64::new(0),
+            ring3_active: AtomicBool::new(false),
+            exit_validated: AtomicBool::new(false),
+            expected_user_rsp: AtomicU64::new(0),
+            exit_status: AtomicU64::new(0),
+        }
+    }
+}
+
+/// Per-CPU context containing the GS anchor, descriptor tables and interrupt stacks.
 #[repr(C, align(4096))]
 struct CpuContext {
+    syscall: SyscallCpuLocal,
     gdt: [u64; 7],
     tss: TaskStateSegment,
     idt: [IdtEntry; 256],
@@ -77,6 +105,7 @@ struct CpuContext {
 impl CpuContext {
     const fn new() -> Self {
         Self {
+            syscall: SyscallCpuLocal::new(),
             gdt: [0; 7],
             tss: TaskStateSegment {
                 reserved0: 0, rsp0: 0, rsp1: 0, rsp2: 0, reserved1: 0,
@@ -99,19 +128,12 @@ static mut CPU_CONTEXTS: [CpuContext; MAX_CPUS] = [const { CpuContext::new() }; 
 /// Track which CPU contexts have been initialized.
 static CPU_INIT_STATE: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
-/* Validated BSP-only compatibility ABI. AP-local syscall stacks and GS-based
-   user/kernel GS switching are not yet implemented; do not pass user RSI/RDI
-   as kernel pointers to these entry stubs. */
-#[unsafe(no_mangle)]
-static mut SYSTEMES_SYSCALL_KERNEL_STACK: InterruptStack =
-    InterruptStack([0; INTERRUPT_STACK_SIZE]);
-#[unsafe(no_mangle)]
-static mut SYSTEMES_SYSCALL_USER_RSP: u64 = 0;
-static RING3_ACTIVE: AtomicBool = AtomicBool::new(false);
-static RING3_EXIT_VALIDATED: AtomicBool = AtomicBool::new(false);
-static RING3_EXPECTED_USER_RSP: AtomicU64 = AtomicU64::new(0);
-#[unsafe(no_mangle)]
-static mut SYSTEMES_RING3_SAVED_KERNEL_RSP: u64 = 0;
+const MSR_GS_BASE: u32 = 0xC000_0101;
+const MSR_KERNEL_GS_BASE: u32 = 0xC000_0102;
+const GS_SYSCALL_STACK_TOP: usize = core::mem::offset_of!(SyscallCpuLocal, syscall_stack_top);
+const GS_USER_RSP: usize = core::mem::offset_of!(SyscallCpuLocal, user_rsp);
+const GS_SAVED_KERNEL_RSP: usize = core::mem::offset_of!(SyscallCpuLocal, saved_kernel_rsp);
+const GS_EXIT_STATUS: usize = core::mem::offset_of!(SyscallCpuLocal, exit_status);
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -272,12 +294,13 @@ systemes_enter_ring3:
     push r13
     push r14
     push r15
-    mov qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP], rsp
+    mov qword ptr gs:[{gs_saved_kernel_rsp}], rsp
     push {user_data_selector}
     push rsi
     push rdx
     push {user_code_selector}
     push rdi
+    swapgs
     iretq
 
 .global systemes_ring3_exit_trampoline
@@ -286,7 +309,7 @@ systemes_ring3_exit_trampoline:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov rsp, qword ptr [rip + SYSTEMES_RING3_SAVED_KERNEL_RSP]
+    mov rsp, qword ptr gs:[{gs_saved_kernel_rsp}]
     pop r15
     pop r14
     pop r13
@@ -485,10 +508,10 @@ systemes_user_exit:
 
 .global systemes_syscall_entry
 systemes_syscall_entry:
-    mov qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP], rsp
-    lea rsp, [rip + SYSTEMES_SYSCALL_KERNEL_STACK]
-    add rsp, {interrupt_stack_size}
-    push qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
+    swapgs
+    mov qword ptr gs:[{gs_user_rsp}], rsp
+    mov rsp, qword ptr gs:[{gs_syscall_stack_top}]
+    push qword ptr gs:[{gs_user_rsp}]
     push rax
     push rbx
     push rcx
@@ -525,10 +548,11 @@ systemes_syscall_entry:
     pop rbx
     pop rax
     add rsp, 8
-    mov rsp, qword ptr [rip + SYSTEMES_SYSCALL_USER_RSP]
+    mov rsp, qword ptr gs:[{gs_user_rsp}]
+    swapgs
     sysretq
 .Lsystemes_syscall_exit:
-    mov rax, qword ptr [rip + SYSTEMES_SYSCALL_EXIT_STATUS]
+    mov rax, qword ptr gs:[{gs_exit_status}]
     jmp systemes_ring3_exit_trampoline
 
 .global systemes_lapic_timer
@@ -545,6 +569,11 @@ systemes_scheduler_yield:
 
 .global systemes_apic_spurious
 systemes_apic_spurious:
+    test byte ptr [rsp + 8], 3
+    jz .Lsystemes_spurious_gs_ready
+    swapgs
+    swapgs
+.Lsystemes_spurious_gs_ready:
     iretq
 
 .global systemes_irq_common
@@ -566,6 +595,10 @@ systemes_irq_common:
     push r14
     push r15
     mov r12, rsp
+    test byte ptr [rsp + 144], 3
+    jz .Lsystemes_irq_gs_ready
+    swapgs
+.Lsystemes_irq_gs_ready:
     and rsp, -16
     call systemes_fpu_save_current
     mov rsp, r12
@@ -593,6 +626,10 @@ systemes_irq_common:
     pop rbx
     pop rax
     add rsp, 16
+    test byte ptr [rsp + 8], 3
+    jz .Lsystemes_irq_gs_exit_ready
+    swapgs
+.Lsystemes_irq_gs_exit_ready:
     iretq
 
 .global systemes_exception_common
@@ -614,11 +651,42 @@ systemes_exception_common:
     push r14
     push r15
     mov r12, rsp
-    mov rdi, qword ptr [rsp + 120]
-    mov rsi, qword ptr [rsp + 128]
+    /* Paranoid exception entry: NMI/MCE may arrive inside a SWAPGS window.
+       Read IA32_GS_BASE instead of inferring its state from saved CS. */
+    mov ecx, 0xC0000101
+    rdmsr
+    test eax, eax
+    jnz .Lsystemes_exception_gs_present
+    test edx, edx
+    jnz .Lsystemes_exception_gs_present
+    swapgs
+    mov eax, 1
+    jmp .Lsystemes_exception_gs_mark
+.Lsystemes_exception_gs_present:
+    xor eax, eax
+.Lsystemes_exception_gs_mark:
+    /* bit 0: this entry performed SWAPGS; bit 1: original frame was CPL3. */
+    test byte ptr [r12 + 144], 3
+    jz .Lsystemes_exception_store_gs_marker
+    or eax, 2
+.Lsystemes_exception_store_gs_marker:
+    push rax
+    mov rdi, qword ptr [r12 + 120]
+    mov rsi, qword ptr [r12 + 128]
     mov rdx, r12
     and rsp, -16
     call systemes_exception_dispatch
+    lea rsp, [r12 - 8]
+    test qword ptr [rsp], 1
+    jz .Lsystemes_exception_gs_exit_ready
+    /* A validated INT 0x80 exit rewrites CPL3 to CPL0: keep kernel GS. */
+    test qword ptr [rsp], 2
+    jz .Lsystemes_exception_swapgs_back
+    test byte ptr [r12 + 144], 3
+    jz .Lsystemes_exception_gs_exit_ready
+.Lsystemes_exception_swapgs_back:
+    swapgs
+.Lsystemes_exception_gs_exit_ready:
     mov rsp, r12
     pop r15
     pop r14
@@ -642,7 +710,10 @@ systemes_exception_common:
     kernel_data_selector = const KERNEL_DATA_SELECTOR,
     user_data_selector = const USER_DATA_RPL3,
     user_code_selector = const USER_CODE_RPL3,
-    interrupt_stack_size = const INTERRUPT_STACK_SIZE,
+    gs_syscall_stack_top = const GS_SYSCALL_STACK_TOP,
+    gs_user_rsp = const GS_USER_RSP,
+    gs_saved_kernel_rsp = const GS_SAVED_KERNEL_RSP,
+    gs_exit_status = const GS_EXIT_STATUS,
 );
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
@@ -767,9 +838,8 @@ pub enum SyscallInitError {
 ///
 /// # Safety
 ///
-/// Must run at CPL0 after the kernel GDT is active and before user code can
-/// execute `SYSCALL`. This kernel currently uses one shared syscall stack and
-/// therefore supports only one CPU at a time for syscalls (the BSP).
+/// Must run at CPL0 after this CPU's GS anchor and kernel GDT are installed,
+/// and before user code can execute `SYSCALL`. Call once on every CPU.
 pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
     let maximum_extended_leaf = core::arch::x86_64::__cpuid(0x8000_0000).eax;
     if maximum_extended_leaf < 0x8000_0001
@@ -791,13 +861,26 @@ pub unsafe fn initialize_syscalls() -> Result<(), SyscallInitError> {
 
 /// Confirm the enabled syscall bit and programmed selectors/entry mask.
 pub fn verify_syscall_configuration() -> bool {
-    let stack_start = addr_of!(SYSTEMES_SYSCALL_KERNEL_STACK) as *const u8 as usize;
-    let stack_top = stack_start + core::mem::size_of::<InterruptStack>();
+    verify_syscall_configuration_for_cpu(current_cpu_index())
+}
+
+/// Verify an explicitly assigned CPU slot without relying on Local APIC MMIO.
+/// APs call this immediately after their GS anchor is installed, before their
+/// Local APIC timer setup is complete.
+pub(crate) fn verify_syscall_configuration_for_cpu(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
+    let local = unsafe { addr_of!(CPU_CONTEXTS[cpu_index].syscall) };
+    let expected_gs = local as u64;
+    let stack_top = unsafe { addr_of!((*local).syscall_stack_top).read() };
     read_msr(MSR_EFER) & EFER_SCE != 0
         && read_msr(MSR_STAR) == STAR_VALUE
         && read_msr(MSR_LSTAR) == systemes_syscall_entry as *const () as usize as u64
         && read_msr(MSR_SFMASK) == SFMASK_VALUE
-        && stack_start != 0
+        && read_msr(MSR_GS_BASE) == expected_gs
+        && read_msr(MSR_KERNEL_GS_BASE) == 0
+        && stack_top != 0
         && stack_top & 0x0F == 0
 }
 
@@ -837,16 +920,23 @@ fn write_msr(msr: u32, value: u64) {
 /// The caller must have installed the kernel GDT/IDT/TSS, mapped `user_rip`
 /// executable and `user_rsp` writable in the active address space, and disabled
 /// interrupts. The user code must use a supported exit path: `int 0x80` or `SYS_EXIT`.
-#[cfg(feature = "qemu-ring3-test")]
+#[cfg(any(feature = "qemu-ring3-test", feature = "qemu-ring3-smp-test"))]
 pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> bool {
-    RING3_EXIT_VALIDATED.store(false, Ordering::Release);
-    RING3_EXPECTED_USER_RSP.store(user_rsp, Ordering::Release);
-    RING3_ACTIVE.store(true, Ordering::Release);
-    SYSTEMES_SYSCALL_EXIT_STATUS.store(0, Ordering::Release);
+    let local = current_syscall_local();
+    // SAFETY: The current CPU exclusively owns these atomic per-CPU fields.
+    unsafe {
+        (*local).exit_validated.store(false, Ordering::Release);
+        (*local).expected_user_rsp.store(user_rsp, Ordering::Release);
+        (*local).ring3_active.store(true, Ordering::Release);
+        (*local).exit_status.store(0, Ordering::Release);
+    }
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(user_rip, user_rsp, USER_TEST_RFLAGS) };
-    RING3_ACTIVE.store(false, Ordering::Release);
-    RING3_EXIT_VALIDATED.load(Ordering::Acquire)
+    // SAFETY: The current CPU exclusively owns these atomic per-CPU fields.
+    unsafe {
+        (*local).ring3_active.store(false, Ordering::Release);
+        (*local).exit_validated.load(Ordering::Acquire)
+    }
 }
 
 /// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
@@ -864,15 +954,32 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
 }
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
-#[unsafe(export_name = "SYSTEMES_SYSCALL_EXIT_STATUS")]
-static SYSTEMES_SYSCALL_EXIT_STATUS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+fn current_syscall_local() -> *mut SyscallCpuLocal {
+    // Host-side unit tests run at CPL3 and cannot execute RDMSR. Their isolated
+    // test context uses the bootstrap CPU slot instead of the hardware GS base.
+    let cpu_index = current_cpu_index();
+    assert!(cpu_index < MAX_CPUS, "test CPU index exceeds supported slots");
+    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
+}
+
+#[cfg(not(test))]
+fn current_syscall_local() -> *mut SyscallCpuLocal {
+    let local = read_msr(MSR_GS_BASE) as *mut SyscallCpuLocal;
+    assert!(!local.is_null(), "kernel GS context is not initialized");
+    // SAFETY: Every kernel entry path establishes GS_BASE before dispatch. The
+    // raw pointer avoids creating a reference while assembly updates its stack.
+    local
+}
 
 pub(crate) fn set_user_exit_status(status: u64) {
-    SYSTEMES_SYSCALL_EXIT_STATUS.store(status, Ordering::Release);
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe { (*current_syscall_local()).exit_status.store(status, Ordering::Release) };
 }
 
 pub(crate) fn user_exit_status() -> u64 {
-    SYSTEMES_SYSCALL_EXIT_STATUS.load(Ordering::Acquire)
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
 }
 
 /// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
@@ -911,6 +1018,17 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
 
     // SAFETY: CPU_CONTEXTS is a static array; we compute the element pointer manually.
     let ctx = unsafe { (addr_of_mut!(CPU_CONTEXTS) as *mut CpuContext).add(cpu_index) };
+
+    // Establish the invariant: kernel GS is this CPU's context; user GS is zero.
+    let syscall_local = unsafe { addr_of_mut!((*ctx).syscall) };
+    let syscall_stack_top = unsafe {
+        addr_of_mut!((*syscall_local).syscall_stack)
+            .cast::<u8>()
+            .add(INTERRUPT_STACK_SIZE) as u64
+    };
+    unsafe { addr_of_mut!((*syscall_local).syscall_stack_top).write(syscall_stack_top) };
+    write_msr(MSR_GS_BASE, syscall_local as u64);
+    write_msr(MSR_KERNEL_GS_BASE, 0);
 
     // Initialize independent emergency stacks before exposing IST-backed gates.
     let rsp0_top = unsafe { addr_of_mut!((*ctx).privilege_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
@@ -1058,7 +1176,9 @@ pub extern "C" fn systemes_exception_dispatch(
         }
     }
 
-    if vector == USER_EXIT_VECTOR && RING3_ACTIVE.load(Ordering::Acquire) {
+    let syscall_local = current_syscall_local();
+    // SAFETY: Exception dispatch executes on the CPU whose local context is addressed.
+    if vector == USER_EXIT_VECTOR && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) } {
         if let Some(frame_ref) = unsafe { frame.as_mut() } {
             let privilege_frame = frame.cast::<u64>();
             // A CPL3 interrupt frame appends the interrupted RSP and SS after RFLAGS.
@@ -1069,21 +1189,23 @@ pub extern "C" fn systemes_exception_dispatch(
                     frame_ref,
                     user_rsp,
                     user_ss,
-                    RING3_EXPECTED_USER_RSP.load(Ordering::Acquire),
+                    unsafe { (*syscall_local).expected_user_rsp.load(Ordering::Acquire) },
                 )
             {
                 frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
                 let kernel_rsp = unsafe {
-                    addr_of!(SYSTEMES_RING3_SAVED_KERNEL_RSP).read_volatile()
+                    (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire)
                 };
                 unsafe {
                     privilege_frame.add(20).write(kernel_rsp);
                     privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                 }
-                RING3_ACTIVE.store(false, Ordering::Release);
-                RING3_EXIT_VALIDATED.store(true, Ordering::Release);
+                unsafe {
+                    (*syscall_local).ring3_active.store(false, Ordering::Release);
+                    (*syscall_local).exit_validated.store(true, Ordering::Release);
+                }
                 unsafe {
                     debug_write(b"SYSTEMES_TEST: Ring 3 interrupt returned through TSS RSP0\r\n");
                 }
@@ -1144,6 +1266,48 @@ const fn encode_tss_descriptor(base: u64, limit: u32) -> [u64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syscall_cpu_local_layout_matches_gs_assembly_offsets() {
+        assert_eq!(core::mem::align_of::<SyscallCpuLocal>(), 16);
+        assert_eq!(GS_SYSCALL_STACK_TOP, INTERRUPT_STACK_SIZE);
+        assert_eq!(GS_USER_RSP, INTERRUPT_STACK_SIZE + 8);
+        assert_eq!(GS_SAVED_KERNEL_RSP, INTERRUPT_STACK_SIZE + 16);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, ring3_active), INTERRUPT_STACK_SIZE + 24);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, exit_validated), INTERRUPT_STACK_SIZE + 25);
+        assert_eq!(core::mem::offset_of!(SyscallCpuLocal, expected_user_rsp), INTERRUPT_STACK_SIZE + 32);
+        assert_eq!(GS_EXIT_STATUS, INTERRUPT_STACK_SIZE + 40);
+    }
+
+    #[test]
+    fn syscall_cpu_local_state_is_independent_between_instances() {
+        let first = SyscallCpuLocal::new();
+        let second = SyscallCpuLocal::new();
+        first.user_rsp.store(0x1010, Ordering::Release);
+        second.user_rsp.store(0x2020, Ordering::Release);
+        first.saved_kernel_rsp.store(0x1111, Ordering::Release);
+        second.saved_kernel_rsp.store(0x2222, Ordering::Release);
+        first.ring3_active.store(true, Ordering::Release);
+        second.ring3_active.store(false, Ordering::Release);
+        first.exit_validated.store(false, Ordering::Release);
+        second.exit_validated.store(true, Ordering::Release);
+        first.expected_user_rsp.store(0x3333, Ordering::Release);
+        second.expected_user_rsp.store(0x4444, Ordering::Release);
+        first.exit_status.store(7, Ordering::Release);
+        second.exit_status.store(9, Ordering::Release);
+        assert_eq!(first.user_rsp.load(Ordering::Acquire), 0x1010);
+        assert_eq!(second.user_rsp.load(Ordering::Acquire), 0x2020);
+        assert_eq!(first.saved_kernel_rsp.load(Ordering::Acquire), 0x1111);
+        assert_eq!(second.saved_kernel_rsp.load(Ordering::Acquire), 0x2222);
+        assert!(first.ring3_active.load(Ordering::Acquire));
+        assert!(!second.ring3_active.load(Ordering::Acquire));
+        assert!(!first.exit_validated.load(Ordering::Acquire));
+        assert!(second.exit_validated.load(Ordering::Acquire));
+        assert_eq!(first.expected_user_rsp.load(Ordering::Acquire), 0x3333);
+        assert_eq!(second.expected_user_rsp.load(Ordering::Acquire), 0x4444);
+        assert_eq!(first.exit_status.load(Ordering::Acquire), 7);
+        assert_eq!(second.exit_status.load(Ordering::Acquire), 9);
+    }
 
     #[test]
     fn encodes_a_64_bit_ring_zero_interrupt_gate() {

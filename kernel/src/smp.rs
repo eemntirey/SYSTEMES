@@ -27,8 +27,8 @@
 //!   initializes a CPU-local scheduler, then enters the scheduler idle loop.
 //! - Runnable task descriptors may be transferred between per-CPU task tables;
 //!   stack and FXSAVE resources remain pinned while both run-queue locks are held.
-//! - The BSP-only SYSCALL/SYSRET and Ring 3 assembly stack ABI remains a separate
-//!   limitation; per-CPU syscall entry is not implemented by this scheduler phase.
+//! - SYSCALL/SYSRET and Ring 3 entry state are anchored per CPU through GS;
+//!   every AP programs its own syscall MSRs before entering the scheduler.
 //! - The trampoline page (< 1 MiB) stays reserved for AP bring-up.
 //! - The kernel CR3 must sit below 4 GiB because the 32-bit trampoline stage
 //!   loads it with a 32-bit immediate. QEMU/OVMF images satisfy this today.
@@ -665,6 +665,13 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     if slot < MAX_CPUS {
         // SAFETY: This CPU owns its slot and interrupts are disabled.
         unsafe { initialize_cpu(slot) };
+        // Every AP must program its own STAR/LSTAR/SFMASK/EFER state; these
+        // MSRs are CPU-local even though the entry point is shared.
+        if unsafe { crate::interrupts::initialize_syscalls() }.is_err()
+            || !crate::interrupts::verify_syscall_configuration_for_cpu(slot)
+        {
+            park_forever();
+        }
     }
 
     // P1-6b/P1-6c: Enable this AP's Local APIC from the BSP-published ACPI
@@ -684,6 +691,15 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
     // The boot task is the AP's idle context; it can receive stolen work on a timer tick.
     if crate::scheduler::initialize_cpu(slot, &[]).is_err() {
         park_forever();
+    }
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    {
+        // Publish readiness before waiting so the BSP can release all CPUs
+        // into the shared user-mode barrier at the same time.
+        AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
+        // SAFETY: The test rendezvous and Ring 3 entry require local IRQs masked.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        crate::address_space::wait_and_run_qemu_ring3_smp_test(slot);
     }
     crate::scheduler::enable_preemption();
     AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);

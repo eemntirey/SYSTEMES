@@ -37,6 +37,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-smep-violation-test",
         feature = "qemu-smp-test",
         feature = "qemu-smp-scheduler-test",
+        feature = "qemu-ring3-smp-test",
     ));
 
 unsafe extern "C" {
@@ -57,15 +58,28 @@ fn halt() -> ! {
     }
 }
 
-#[cfg(feature = "qemu-smp-scheduler-test")]
+#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test"))]
 fn qemu_debug_exit(code: u32) -> ! {
     // Do not let a local APIC tick preempt the final test/exit sequence.
     unsafe { asm!("cli", options(nomem, nostack)); }
-    // QEMU isa-debug-exit maps the value to (code << 1) | 1 and terminates the VM.
+    // QEMU isa-debug-exit maps the value to (code << 1) | 1 and requests VM termination.
+    // The I/O instruction may retire before QEMU stops the vCPU, so never execute
+    // diagnostic code after it: park the CPU until the host terminates the VM.
     unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
-    // Reaching this marker means the configured debug-exit device did not terminate QEMU.
-    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\\r\\n"); }
     halt()
+}
+
+#[cfg(feature = "qemu-ring3-smp-test")]
+fn ring3_smp_failure_name(error: systemes_kernel::address_space::AddressSpaceError) -> &'static [u8] {
+    use systemes_kernel::address_space::AddressSpaceError as Error;
+    match error {
+        Error::Ring3TransitionFailed => b"ring3-transition-failed",
+        Error::SyscallReturnMismatch => b"syscall-return-mismatch",
+        Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",
+        Error::OutOfFrames => b"out-of-frames",
+        Error::OutOfMemory => b"out-of-memory",
+        _ => b"other-address-space-error",
+    }
 }
 
 /// Stable spelling of a bring-up failure so CI can match one marker prefix.
@@ -531,6 +545,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
     }
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    let mut ring3_smp_apic_ids = [0u8; systemes_kernel::smp::MAX_CPUS_PER_APIC_ID];
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    let mut ring3_smp_ap_count = 0usize;
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    let mut ring3_smp_madt_ap_count = 0usize;
+
     if let Some(madt) = discovered_madt.as_ref().filter(|_| apic_timer_ready && systemes_kernel::apic::is_active()) {
         // SAFETY: page tables, Local APIC and the kernel heap are active; the
         // bring-up saves and masks the caller's interrupt flag itself.
@@ -542,6 +563,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             )
         } {
             Ok(summary) => {
+                #[cfg(feature = "qemu-ring3-smp-test")]
+                {
+                    ring3_smp_madt_ap_count = summary.discovered_count;
+                    ring3_smp_ap_count = summary.started_count;
+                    ring3_smp_apic_ids[..ring3_smp_ap_count]
+                        .copy_from_slice(&summary.started_apic_ids[..ring3_smp_ap_count]);
+                }
                 #[cfg(feature = "qemu-smp-test")]
                 unsafe {
                     let mut digits = [0u8; 20];
@@ -575,7 +603,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
             Err(error) => {
-                #[cfg(feature = "qemu-smp-test")]
+                #[cfg(feature = "qemu-ring3-smp-test")]
+                if error != systemes_kernel::smp::SmpBringUpError::NoApplicationProcessors {
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP AP bring-up failed, error=");
+                        debug_write(smp_failure_name(error));
+                        debug_write(b"\r\n");
+                    }
+                    qemu_debug_exit(0x11);
+                }
+                #[cfg(all(feature = "qemu-smp-test", not(feature = "qemu-ring3-smp-test")))]
                 {
                     unsafe {
                         debug_write(b"SYSTEMES_KERNEL_FAIL: SMP bring-up failed, error=");
@@ -682,6 +719,84 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         }
         #[cfg(not(feature = "qemu-smp-test"))]
         unsafe { debug_write(b"SYSTEMES: SMP unavailable; continuing in BSP mode\r\n"); }
+    }
+
+    // AP startup needs its reserved low-memory trampoline page. Allocate the
+    // Ring 3 test address space only after every AP has reached its rendezvous,
+    // so user page-table frames cannot consume that page.
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    let ring3_smp_plan = {
+        let previous_flags: u64;
+        // SAFETY: Keep the BSP out of timer scheduling while shared test mappings
+        // are constructed; APs are parked at the Ring 3 test start gate.
+        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags); }
+        let prepared = unsafe {
+            systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
+        };
+        if previous_flags & (1 << 9) != 0 {
+            // SAFETY: Restore the original BSP interrupt state after preparation.
+            unsafe { asm!("sti", options(nomem, nostack)); }
+        }
+        match prepared {
+            Ok(plan) => Some(plan),
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\r\n"); }
+                qemu_debug_exit(0x11);
+            }
+        }
+    };
+
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    {
+        let plan = ring3_smp_plan.expect("Ring 3 SMP test plan prepared after AP startup");
+        let apic_ids = &ring3_smp_apic_ids[..ring3_smp_ap_count];
+        match unsafe {
+            systemes_kernel::address_space::run_qemu_ring3_smp_test(
+                plan,
+                &mut frame_allocator,
+                bsp_cpu_index,
+                apic_ids,
+            )
+        } {
+            Ok(()) => unsafe {
+                debug_write(b"SYSTEMES_TEST: Ring 3 AP rendezvous completed: MADT APs=");
+                let mut digits = [0u8; 20];
+                let length = encode_decimal(ring3_smp_madt_ap_count as u64, &mut digits);
+                debug_write(&digits[..length]);
+                debug_write(b", Ring 3 APs=");
+                let length = encode_decimal(ring3_smp_ap_count as u64, &mut digits);
+                debug_write(&digits[..length]);
+                debug_write(b"\r\n");
+                debug_write(b"SYSTEMES_TEST: simultaneous Ring 3 SYSCALL and per-CPU exit contexts verified across ");
+                let mut digits = [0u8; 20];
+                let length = encode_decimal((ring3_smp_ap_count + 1) as u64, &mut digits);
+                debug_write(&digits[..length]);
+                debug_write(b" CPUs\r\n");
+                debug_write(b"SYSTEMES_TEST: Ring 3-origin APIC timer interrupts verified on IF-enabled CPUs\r\n");
+                qemu_debug_exit(0x10);
+            },
+            Err(error) => {
+                unsafe {
+                    debug_write(b"SYSTEMES_KERNEL_FAIL: simultaneous Ring 3 SYSCALL test failed, error=");
+                    debug_write(ring3_smp_failure_name(error));
+                    debug_write(b"\r\n");
+                    for cpu_index in 0..systemes_kernel::smp::MAX_CPUS_PER_APIC_ID {
+                        let result = systemes_kernel::address_space::qemu_ring3_smp_test_result(cpu_index);
+                        if result != 0 {
+                            debug_write(b"SYSTEMES_TEST: Ring 3 CPU ");
+                            let mut digits = [0u8; 20];
+                            let length = encode_decimal(cpu_index as u64, &mut digits);
+                            debug_write(&digits[..length]);
+                            debug_write(b" result=");
+                            let length = encode_decimal(result, &mut digits);
+                            debug_write(&digits[..length]);
+                            debug_write(b"\r\n");
+                        }
+                    }
+                }
+                qemu_debug_exit(0x11);
+            }
+        }
     }
 
     // The BSP always owns a scheduler when the Local APIC timer is available.
