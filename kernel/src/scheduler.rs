@@ -870,21 +870,28 @@ pub fn current_task_id() -> Option<TaskId> {
 pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    let flags = irq_save_disable();
     let sched = cpu_scheduler(cpu_index);
-    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return Err(SchedulerError::NotInitialized); }
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
     lock_run_queue(cpu_index);
     let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
     if task_id.0 == 0 {
         unlock_run_queue(cpu_index);
+        irq_restore(flags);
         return Err(SchedulerError::BootTask);
     }
     if task_id.0 >= count {
         unlock_run_queue(cpu_index);
+        irq_restore(flags);
         return Err(SchedulerError::InvalidTask);
     }
     if task_id.0 == current {
         unlock_run_queue(cpu_index);
+        irq_restore(flags);
         return Err(SchedulerError::CurrentTask);
     }
     let task = task_ptr(cpu_index, task_id.0);
@@ -892,6 +899,7 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
         || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } != usize::MAX
     {
         unlock_run_queue(cpu_index);
+        irq_restore(flags);
         return Err(SchedulerError::ContextAlreadyAttached);
     }
     // Affinity is published before the opaque context ID, while thief and attach
@@ -901,6 +909,7 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
         (*task).ring3_context_id.store(context.0, Ordering::Release);
     }
     unlock_run_queue(cpu_index);
+    irq_restore(flags);
     Ok(())
 }
 
@@ -908,19 +917,25 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
 pub fn mark_current_exited(reason: TaskExitReason) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    let flags = irq_save_disable();
     let sched = cpu_scheduler(cpu_index);
-    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return Err(SchedulerError::NotInitialized); }
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
     lock_run_queue(cpu_index);
     let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
     let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
     if current == 0 || current >= count {
         unlock_run_queue(cpu_index);
+        irq_restore(flags);
         return Err(SchedulerError::InvalidTask);
     }
     let task = task_ptr(cpu_index, current);
     // SAFETY: The queue lock serializes the sole write and state publication.
     let marked = unsafe { (*task).try_mark_exited(reason) };
     unlock_run_queue(cpu_index);
+    irq_restore(flags);
     if marked { Ok(()) } else { Err(SchedulerError::AlreadyExited) }
 }
 
