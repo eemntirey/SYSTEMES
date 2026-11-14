@@ -858,7 +858,8 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     #[cfg(feature = "qemu-ring3-fault-pf-test")]
     unsafe {
         core::ptr::write_bytes(fault_code_frame as *mut u8, 0x90, PAGE_SIZE as usize);
-        let stub = [0x48, 0xB8, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x00];
+        let mut stub = [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x8B, 0x00];
+        stub[2..10].copy_from_slice(&(USER_BASE + 0x5000).to_le_bytes());
         core::ptr::copy_nonoverlapping(stub.as_ptr(), fault_code_frame as *mut u8, stub.len());
     }
     #[cfg(feature = "qemu-ring3-fault-gp-test")]
