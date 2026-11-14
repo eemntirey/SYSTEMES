@@ -73,6 +73,10 @@ struct SyscallCpuLocal {
     exit_validated: AtomicBool,
     expected_user_rsp: AtomicU64,
     exit_status: AtomicU64,
+    fault_vector: AtomicU64,
+    fault_error: AtomicU64,
+    fault_cr2: AtomicU64,
+    fault_rip: AtomicU64,
 }
 impl SyscallCpuLocal {
     const fn new() -> Self {
@@ -85,6 +89,10 @@ impl SyscallCpuLocal {
             exit_validated: AtomicBool::new(false),
             expected_user_rsp: AtomicU64::new(0),
             exit_status: AtomicU64::new(0),
+            fault_vector: AtomicU64::new(0),
+            fault_error: AtomicU64::new(0),
+            fault_cr2: AtomicU64::new(0),
+            fault_rip: AtomicU64::new(0),
         }
     }
 }
@@ -947,9 +955,18 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
-    crate::interrupts::set_user_exit_status(0);
+    let local = current_syscall_local();
+    unsafe {
+        (*local).exit_status.store(0, Ordering::Release);
+        (*local).ring3_active.store(true, Ordering::Release);
+        (*local).fault_vector.store(0, Ordering::Release);
+        (*local).fault_error.store(0, Ordering::Release);
+        (*local).fault_cr2.store(0, Ordering::Release);
+        (*local).fault_rip.store(0, Ordering::Release);
+    }
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
+    unsafe { (*local).ring3_active.store(false, Ordering::Release); }
     crate::interrupts::user_exit_status()
 }
 
