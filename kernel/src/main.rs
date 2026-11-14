@@ -65,7 +65,7 @@ fn qemu_debug_exit(code: u32) -> ! {
     // QEMU isa-debug-exit maps the value to (code << 1) | 1 and terminates the VM.
     unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
     // Reaching this marker means the configured debug-exit device did not terminate QEMU.
-    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\\r\\n"); }
+    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: QEMU isa-debug-exit port returned unexpectedly\r\n"); }
     halt()
 }
 
@@ -548,7 +548,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         match prepared {
             Ok(plan) => Some(plan),
             Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\\r\\n"); }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\r\n"); }
                 qemu_debug_exit(0x11);
             }
         }
@@ -611,7 +611,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 #[cfg(feature = "qemu-ring3-smp-test")]
                 if error != systemes_kernel::smp::SmpBringUpError::NoApplicationProcessors {
                     unsafe {
-                        debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test requires every AP to reach its rendezvous\\r\\n");
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test requires every AP to reach its rendezvous\r\n");
                     }
                     qemu_debug_exit(0x11);
                 }
@@ -741,11 +741,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let mut digits = [0u8; 20];
                 let length = encode_decimal((ring3_smp_ap_count + 1) as u64, &mut digits);
                 debug_write(&digits[..length]);
-                debug_write(b" CPUs\\r\\n");
+                debug_write(b" CPUs\r\n");
                 qemu_debug_exit(0x10);
             },
             Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: simultaneous Ring 3 SYSCALL test failed\\r\\n"); }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: simultaneous Ring 3 SYSCALL test failed\r\n"); }
                 qemu_debug_exit(0x11);
             }
         }
