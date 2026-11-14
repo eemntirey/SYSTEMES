@@ -570,7 +570,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         } {
             Ok(summary) => {
                 #[cfg(feature = "qemu-ring3-smp-test")]
-                {
+                unsafe {
                     ring3_smp_ap_count = summary.started_count;
                     ring3_smp_apic_ids[..ring3_smp_ap_count]
                         .copy_from_slice(&summary.started_apic_ids[..ring3_smp_ap_count]);
