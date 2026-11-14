@@ -79,6 +79,14 @@ struct SyscallCpuLocal {
     fault_cr2: AtomicU64,
     fault_rip: AtomicU64,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UserFaultInfo {
+    pub vector: u64,
+    pub error_code: u64,
+    pub cr2: u64,
+    pub rip: u64,
+}
+
 impl SyscallCpuLocal {
     const fn new() -> Self {
         Self {
@@ -949,7 +957,7 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 }
 
 /// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
-/// to `SYS_EXIT`; a user process that does not exit or faults remains non-returning.
+/// to `SYS_EXIT`; a recoverable CPL3 #PF/#GP returns USER_FAULT_EXIT_STATUS.
 ///
 /// # Safety
 ///
@@ -998,6 +1006,25 @@ pub(crate) fn set_user_exit_status(status: u64) {
 pub(crate) fn user_exit_status() -> u64 {
     // SAFETY: The current CPU exclusively owns its local syscall context.
     unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
+}
+
+/// Return the most recent recoverable CPL3 fault on this CPU, if any.
+pub fn last_user_fault() -> Option<UserFaultInfo> {
+    let local = current_syscall_local();
+    // SAFETY: The current CPU owns its GS-local fault record.
+    let vector = unsafe { (*local).fault_vector.load(Ordering::Acquire) };
+    if vector == 0 {
+        return None;
+    }
+    // SAFETY: The record is published before the continuation is resumed.
+    Some(unsafe {
+        UserFaultInfo {
+            vector,
+            error_code: (*local).fault_error.load(Ordering::Acquire),
+            cr2: (*local).fault_cr2.load(Ordering::Acquire),
+            rip: (*local).fault_rip.load(Ordering::Acquire),
+        }
+    })
 }
 
 /// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
