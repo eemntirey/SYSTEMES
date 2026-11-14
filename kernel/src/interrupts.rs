@@ -680,8 +680,11 @@ systemes_exception_common:
     test qword ptr [rsp], 1
     jz .Lsystemes_exception_gs_exit_ready
     /* A validated INT 0x80 exit rewrites CPL3 to CPL0: keep kernel GS. */
+    /* A kernel-mode exception must resume with kernel GS even if it arrived
+       in the SWAPGS window after SYSCALL/IRET setup. A user-mode exception
+       returns with user GS only when the dispatcher kept the frame at CPL3. */
     test qword ptr [rsp], 2
-    jz .Lsystemes_exception_swapgs_back
+    jz .Lsystemes_exception_gs_exit_ready
     test byte ptr [r12 + 144], 3
     jz .Lsystemes_exception_gs_exit_ready
 .Lsystemes_exception_swapgs_back:
