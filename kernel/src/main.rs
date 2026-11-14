@@ -58,7 +58,7 @@ fn halt() -> ! {
     }
 }
 
-#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test"))]
+#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test", feature = "qemu-syscall-pointer-isolation-test"))]
 fn qemu_debug_exit(code: u32) -> ! {
     // Do not let a local APIC tick preempt the final test/exit sequence.
     unsafe { asm!("cli", options(nomem, nostack)); }
