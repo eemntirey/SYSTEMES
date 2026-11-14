@@ -716,6 +716,9 @@ static RING3_SMP_TEST_START: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "qemu-ring3-smp-test")]
 static RING3_SMP_TEST_DONE: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "qemu-ring3-smp-test")]
+static RING3_SMP_TEST_IRQS: [AtomicU64; RING3_SMP_MAX_CPUS] =
+    [const { AtomicU64::new(0) }; RING3_SMP_MAX_CPUS];
+#[cfg(feature = "qemu-ring3-smp-test")]
 static RING3_SMP_TEST_RESULTS: [AtomicU64; RING3_SMP_MAX_CPUS] =
     [const { AtomicU64::new(0) }; RING3_SMP_MAX_CPUS];
 
@@ -785,6 +788,12 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 4;
     code[length..length + 2].copy_from_slice(&[0x75, 0xF7]); // jne back to ready check
     length += 2;
+    code[length..length + 5].copy_from_slice(&[0xB9, 0x80, 0x96, 0x98, 0x00]); // mov ecx, 10,000,000
+    length += 5;
+    code[length..length + 2].copy_from_slice(&[0xF3, 0x90]); // pause while user IF is enabled
+    length += 2;
+    code[length..length + 2].copy_from_slice(&[0xE2, 0xFC]); // loop back to pause
+    length += 2;
     code[length] = 0xB8; // mov eax, SYS_GET_API_VERSION
     length += 1;
     code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_GET_API_VERSION as u32).to_le_bytes());
@@ -839,11 +848,22 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     for result in &RING3_SMP_TEST_RESULTS {
         result.store(0, Ordering::Release);
     }
+    for irq_count in &RING3_SMP_TEST_IRQS {
+        irq_count.store(0, Ordering::Release);
+    }
     RING3_SMP_TEST_DONE.store(0, Ordering::Release);
     RING3_SMP_TEST_START.store(false, Ordering::Release);
     RING3_SMP_TEST_ROOT.store(space.root(), Ordering::Release);
 
     Ok(Ring3SmpTestPlan { space, free_pages_before, barrier_frame })
+}
+
+/// Record an APIC timer interrupt that interrupted Ring 3 in the SMP test.
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub(crate) fn record_qemu_ring3_smp_user_irq(cpu_index: usize) {
+    if cpu_index < RING3_SMP_MAX_CPUS {
+        RING3_SMP_TEST_IRQS[cpu_index].fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 /// AP-side rendezvous. APs publish their parked state before waiting here so
@@ -872,6 +892,7 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     }
     let is_bsp = crate::apic::is_bootstrap_cpu();
     let use_sys_exit = is_bsp || cpu_index & 1 == 0;
+    let user_irq_before = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
     {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
         // SAFETY: This CPU owns its user stack page in the shared test address space.
@@ -898,7 +919,12 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
     }
     let gs_restored = crate::interrupts::verify_syscall_configuration();
-    let success = exit_ok && observed_api == crate::syscall::API_VERSION && gs_restored;
+    let user_irq_after = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
+    let user_irq_ok = !use_sys_exit || user_irq_after > user_irq_before;
+    let success = exit_ok
+        && observed_api == crate::syscall::API_VERSION
+        && gs_restored
+        && user_irq_ok;
     RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
     RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
 }
