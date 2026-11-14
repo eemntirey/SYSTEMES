@@ -897,7 +897,8 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         // SAFETY: Restore the caller's original interrupt state after leaving the shared test root.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
     }
-    let success = exit_ok && observed_api == crate::syscall::API_VERSION;
+    let gs_restored = crate::interrupts::verify_syscall_configuration();
+    let success = exit_ok && observed_api == crate::syscall::API_VERSION && gs_restored;
     RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
     RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
 }
