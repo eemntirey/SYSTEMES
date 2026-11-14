@@ -755,6 +755,18 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
         // SAFETY: Every frame was just allocated and is identity accessible.
         unsafe { core::ptr::write_bytes(*frame as *mut u8, 0, PAGE_SIZE as usize) };
     }
+    for (cpu_index, frame) in stack_frames.iter().enumerate() {
+        // Give every CPU a distinct SYS_EXIT status so a shared exit-status
+        // variable cannot accidentally pass the SMP test.
+        let status = (RING3_SMP_EXIT_STATUS + cpu_index as u64) as u32;
+        // SAFETY: The stack frame is freshly allocated and identity accessible.
+        unsafe {
+            core::ptr::write_volatile(
+                (*frame as *mut u8).add(PAGE_SIZE as usize - 32).cast::<u32>(),
+                status,
+            );
+        }
+    }
 
     // User code: increment ready_count; wait until it equals expected_count;
     // call SYS_GET_API_VERSION; save RAX; then exit through SYS_EXIT.
@@ -785,8 +797,8 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 1;
     code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_EXIT as u32).to_le_bytes());
     length += 4;
-    code[length..length + 5].copy_from_slice(&[0xBF, RING3_SMP_EXIT_STATUS as u8, 0, 0, 0]); // mov edi, 42
-    length += 5;
+    code[length..length + 4].copy_from_slice(&[0x8B, 0x7C, 0x24, 0xF0]); // mov edi, [rsp-16]
+    length += 4;
     code[length..length + 2].copy_from_slice(&[0x0F, 0x05]); // syscall
     length += 2;
     code[length..length + 2].copy_from_slice(&[0x0F, 0x0B]); // ud2 if SYS_EXIT returns
@@ -858,7 +870,8 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         // SAFETY: Restore the caller's original interrupt state after leaving the shared test root.
         unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
     }
-    let success = exit_status == RING3_SMP_EXIT_STATUS
+    let expected_exit_status = RING3_SMP_EXIT_STATUS + cpu_index as u64;
+    let success = exit_status == expected_exit_status
         && observed_api == crate::syscall::API_VERSION;
     RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
     RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
