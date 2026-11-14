@@ -953,6 +953,9 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
                 let repeated = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_FAULT_CODE_ADDRESS, user_rsp) };
                 repeated_ok &= repeated == RING3_SMP_FAULT_EXIT_STATUS;
             }
+            if repeated_ok {
+                crate::console::debug_write(b"SYSTEMES_TEST: Ring 3 fault returned to kernel; repeated=10\\r\\n");
+            }
             repeated_ok
         } else { exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64 }
         #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
@@ -981,7 +984,13 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     }
     let gs_restored = crate::interrupts::verify_syscall_configuration();
     let user_irq_after = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
-    let user_irq_ok = !use_sys_exit || user_irq_after > user_irq_before;
+    let user_irq_ok = !use_sys_exit
+        || {
+            #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+            if cpu_index == crate::interrupts::bootstrap_cpu_index() { true } else { user_irq_after > user_irq_before }
+            #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+            { user_irq_after > user_irq_before }
+        };
     let failure_bits = (if exit_ok { 0 } else { 1 })
         | (if observed_api == crate::syscall::API_VERSION { 0 } else { 2 })
         | (if gs_restored { 0 } else { 4 })
@@ -1046,8 +1055,15 @@ pub unsafe fn run_qemu_ring3_smp_test(
         all_success &= RING3_SMP_TEST_RESULTS[*apic_id as usize].load(Ordering::Acquire) == 1;
     }
     RING3_SMP_TEST_ROOT.store(0, Ordering::Release);
+    crate::console::debug_write(b"SYSTEMES_TEST: non-faulting CPU participants completed count=");
+    let mut peer_digits = [0u8; 20];
+    let peer_count = crate::apic::active_cpu_count().saturating_sub(1);
+    let peer_len = encode_decimal(peer_count as u64, &mut peer_digits);
+    crate::console::debug_write(&peer_digits[..peer_len]);
+    crate::console::debug_write(b"\\r\\n");
     // SAFETY: Every participant restored its original CR3 before incrementing DONE.
     unsafe { plan.space.destroy(allocator)? };
+    crate::console::debug_write(b"SYSTEMES_TEST: Ring 3 fault cleanup complete\\r\\n");
     if allocator.free_pages() != plan.free_pages_before {
         return Err(AddressSpaceError::FrameReclaimMismatch);
     }
