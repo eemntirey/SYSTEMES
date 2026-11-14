@@ -869,7 +869,7 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     let previous_flags: u64;
     // SAFETY: Each participant switches only its own CR3 and enters Ring 3 with IRQs masked.
     unsafe {
-        core::arch::asm!("pushfq; pop {}; cli", out(reg) previous_flags, options(nomem));
+        core::arch::asm!("pushfq; pop {}; cli", out(reg) previous_flags);
         write_cr3(root);
     }
     let is_bsp = crate::apic::is_bootstrap_cpu();
