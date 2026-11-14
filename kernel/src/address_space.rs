@@ -921,12 +921,25 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     let gs_restored = crate::interrupts::verify_syscall_configuration();
     let user_irq_after = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
     let user_irq_ok = !use_sys_exit || user_irq_after > user_irq_before;
-    let success = exit_ok
-        && observed_api == crate::syscall::API_VERSION
-        && gs_restored
-        && user_irq_ok;
-    RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
+    let failure_bits = (if exit_ok { 0 } else { 1 })
+        | (if observed_api == crate::syscall::API_VERSION { 0 } else { 2 })
+        | (if gs_restored { 0 } else { 4 })
+        | (if user_irq_ok { 0 } else { 8 });
+    let success = failure_bits == 0;
+    RING3_SMP_TEST_RESULTS[cpu_index]
+        .store(if success { 1 } else { 0x100 | failure_bits }, Ordering::Release);
     RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
+}
+
+/// QEMU diagnostic bitmask: bit 0 exit path, bit 1 API result, bit 2 GS restore,
+/// bit 3 Ring 3-origin timer IRQ. Zero means the CPU did not publish a result.
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub(crate) fn qemu_ring3_smp_test_result(cpu_index: usize) -> u64 {
+    if cpu_index < RING3_SMP_MAX_CPUS {
+        RING3_SMP_TEST_RESULTS[cpu_index].load(Ordering::Acquire)
+    } else {
+        0
+    }
 }
 
 /// Start the per-CPU Ring 3 workload, release the user-mode barrier, and reclaim
