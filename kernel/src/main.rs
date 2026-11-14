@@ -840,7 +840,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             debug_write(b"SYSTEMES_TEST: SYSCALL/SYSRET fast path executed\r\n");
             debug_write(b"SYSTEMES_TEST: Syscall return value verified in user stack\r\n");
             debug_write(b"SYSTEMES_TEST: SYS_YIELD returned to user process\r\n");
-            debug_write(b"SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors\r\n");
+            debug_write(b"SYSTEMES_TEST: invalid SYS_READ/SYS_WRITE pointers returned -EFAULT; Ring 3 continued\r\n");
             debug_write(b"SYSTEMES_TEST: user process exited and kernel resumed\r\n");
             debug_write(b"SYSTEMES_TEST: exited process frames reclaimed\r\n");
         },
