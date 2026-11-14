@@ -698,9 +698,7 @@ systemes_exception_common:
     jz .Lsystemes_exception_gs_exit_ready
     /* A validated INT 0x80 exit rewrites CPL3 to CPL0: keep kernel GS. */
     test qword ptr [rsp], 2
-    jz .Lsystemes_exception_swapgs_back
-    test byte ptr [r12 + 144], 3
-    jz .Lsystemes_exception_gs_exit_ready
+    jnz .Lsystemes_exception_gs_exit_ready
 .Lsystemes_exception_swapgs_back:
     swapgs
 .Lsystemes_exception_gs_exit_ready:
