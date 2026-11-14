@@ -69,6 +69,19 @@ fn qemu_debug_exit(code: u32) -> ! {
     halt()
 }
 
+#[cfg(feature = "qemu-ring3-smp-test")]
+fn ring3_smp_failure_name(error: systemes_kernel::address_space::AddressSpaceError) -> &'static [u8] {
+    use systemes_kernel::address_space::AddressSpaceError as Error;
+    match error {
+        Error::Ring3TransitionFailed => b"ring3-transition-failed",
+        Error::SyscallReturnMismatch => b"syscall-return-mismatch",
+        Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",
+        Error::OutOfFrames => b"out-of-frames",
+        Error::OutOfMemory => b"out-of-memory",
+        _ => b"other-address-space-error",
+    }
+}
+
 /// Stable spelling of a bring-up failure so CI can match one marker prefix.
 fn smp_failure_name(error: systemes_kernel::smp::SmpBringUpError) -> &'static [u8] {
     use systemes_kernel::smp::SmpBringUpError as BringUp;
@@ -618,7 +631,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 #[cfg(feature = "qemu-ring3-smp-test")]
                 if error != systemes_kernel::smp::SmpBringUpError::NoApplicationProcessors {
                     unsafe {
-                        debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test requires every AP to reach its rendezvous\r\n");
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP AP bring-up failed, error=");
+                        debug_write(smp_failure_name(error));
+                        debug_write(b"\r\n");
                     }
                     qemu_debug_exit(0x11);
                 }
@@ -752,8 +767,25 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 debug_write(b"SYSTEMES_TEST: Ring 3-origin APIC timer interrupts verified on IF-enabled CPUs\r\n");
                 qemu_debug_exit(0x10);
             },
-            Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: simultaneous Ring 3 SYSCALL test failed\r\n"); }
+            Err(error) => {
+                unsafe {
+                    debug_write(b"SYSTEMES_KERNEL_FAIL: simultaneous Ring 3 SYSCALL test failed, error=");
+                    debug_write(ring3_smp_failure_name(error));
+                    debug_write(b"\r\n");
+                    for cpu_index in 0..systemes_kernel::smp::MAX_CPUS_PER_APIC_ID {
+                        let result = systemes_kernel::address_space::qemu_ring3_smp_test_result(cpu_index);
+                        if result != 0 {
+                            debug_write(b"SYSTEMES_TEST: Ring 3 CPU ");
+                            let mut digits = [0u8; 20];
+                            let length = encode_decimal(cpu_index as u64, &mut digits);
+                            debug_write(&digits[..length]);
+                            debug_write(b" result=");
+                            let length = encode_decimal(result, &mut digits);
+                            debug_write(&digits[..length]);
+                            debug_write(b"\r\n");
+                        }
+                    }
+                }
                 qemu_debug_exit(0x11);
             }
         }
