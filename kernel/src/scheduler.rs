@@ -1086,6 +1086,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn task_exit_reason_defaults_to_none_for_existing_kernel_tasks() {
+        let task = Task::new();
+        assert_eq!(task.exit_reason, None);
+    }
+
+    #[test]
+    fn task_exit_reason_preserves_every_fixed_size_variant() {
+        let cases = [
+            TaskExitReason::VoluntaryExit { code: 23 },
+            TaskExitReason::PageFault { cr2: 0x1234_5000, error_code: 5, rip: 0x4000 },
+            TaskExitReason::GeneralProtection { error_code: 0, rip: 0x5000 },
+        ];
+
+        for reason in cases {
+            let task = Task::new();
+            task.state.store(TaskState::Running as u8, Ordering::Relaxed);
+            assert!(task.try_mark_exited(reason));
+            assert_eq!(task.exit_reason, Some(reason));
+            assert_eq!(TaskState::from_raw(task.state.load(Ordering::Acquire)), TaskState::Exited);
+        }
+    }
+
+    #[test]
+    fn double_termination_does_not_overwrite_the_first_exit_reason() {
+        let task = Task::new();
+        task.state.store(TaskState::Running as u8, Ordering::Relaxed);
+        let first = TaskExitReason::VoluntaryExit { code: 7 };
+        let second = TaskExitReason::PageFault { cr2: 0xdead_0000, error_code: 4, rip: 0x6000 };
+
+        assert!(task.try_mark_exited(first));
+        assert!(!task.try_mark_exited(second));
+        assert_eq!(task.exit_reason, Some(first));
+    }
+
+    #[test]
     fn blocked_task_is_woken_only_at_or_after_its_deadline() {
         let states = [TaskState::Runnable, TaskState::Blocked, TaskState::Runnable];
         assert_eq!(select_next(0, &states), Some(2));
