@@ -132,3 +132,6 @@ Le nettoyage du test d'espace utilisateur partagé est différé jusqu'au retour
 Les scénarios QEMU #PF, #GP, fautes répétées et pointeurs syscall invalides sont ajoutés à scripts/qemu-concurrency-matrix.sh pour 1/2/4 CPU. **Leur résultat n'est pas déclaré validé tant que la CI n'a pas terminé avec succès sur le SHA final.**
 
 Le niveau 2, terminaison d'une tâche Ring 3 ordonnançable et sélection d'une autre tâche, est explicitement hors périmètre. Sa conception est décrite dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md). Aucun fichier scheduler ne doit être modifié dans cette PR.
+
+
+Le test d'une faute CPL0 n'est pas intégré à la matrice 1/2/4 CPU : le chemin fatal `cli; hlt` immobiliserait le CPU de test avant le rendez-vous SMP et `--debug-exit`. Une validation dédiée demanderait un boot QEMU isolé et un point de terminaison réservé au test ; le chemin de production reste fatal.
