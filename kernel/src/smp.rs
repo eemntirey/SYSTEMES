@@ -668,7 +668,7 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
         // Every AP must program its own STAR/LSTAR/SFMASK/EFER state; these
         // MSRs are CPU-local even though the entry point is shared.
         if unsafe { crate::interrupts::initialize_syscalls() }.is_err()
-            || !crate::interrupts::verify_syscall_configuration()
+            || !crate::interrupts::verify_syscall_configuration_for_cpu(slot)
         {
             park_forever();
         }
