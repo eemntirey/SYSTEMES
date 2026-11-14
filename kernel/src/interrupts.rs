@@ -572,6 +572,7 @@ systemes_apic_spurious:
     test byte ptr [rsp + 8], 3
     jz .Lsystemes_spurious_gs_ready
     swapgs
+    swapgs
 .Lsystemes_spurious_gs_ready:
     iretq
 
