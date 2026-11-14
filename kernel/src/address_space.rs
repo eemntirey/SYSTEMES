@@ -953,6 +953,13 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
                 let repeated = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_FAULT_CODE_ADDRESS, user_rsp) };
                 repeated_ok &= repeated == RING3_SMP_FAULT_EXIT_STATUS;
             }
+            let fault_info_ok = crate::interrupts::last_user_fault().is_some_and(|fault| {
+                #[cfg(feature = "qemu-ring3-fault-pf-test")]
+                { fault.vector == 14 && fault.cr2 == USER_BASE + 0x5000 && fault.rip != 0 }
+                #[cfg(feature = "qemu-ring3-fault-gp-test")]
+                { fault.vector == 13 && fault.cr2 == 0 && fault.rip != 0 }
+            });
+            repeated_ok &= fault_info_ok;
             if repeated_ok {
                 unsafe { crate::console::debug_write(b"SYSTEMES_TEST: Ring 3 fault returned to kernel; repeated=10\r\n"); }
             }
