@@ -849,6 +849,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
     }
+    #[cfg(feature = "qemu-syscall-pointer-isolation-test")]
+    qemu_debug_exit(0x10);
+
     #[cfg(feature = "qemu-address-space-test")]
     {
         let interrupt_flag: u64;
