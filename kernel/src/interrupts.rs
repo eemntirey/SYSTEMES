@@ -31,7 +31,7 @@ const USER_CODE_DESCRIPTOR: u64 = 0x00AF_FA00_0000_FFFF;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 const USER_EXIT_VECTOR: u64 = 0x80;
-const USER_FAULT_EXIT_STATUS: u64 = 0xF001_FA017_FA017001;
+const USER_FAULT_EXIT_STATUS: u64 = 0xF001_FA01_7FA0_1701;
 
 /// Maximum number of CPUs supported (matches smp::MAX_CPUS_PER_APIC_ID).
 pub const MAX_CPUS: usize = 64;
