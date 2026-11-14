@@ -749,6 +749,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let length = encode_decimal((ring3_smp_ap_count + 1) as u64, &mut digits);
                 debug_write(&digits[..length]);
                 debug_write(b" CPUs\r\n");
+                debug_write(b"SYSTEMES_TEST: Ring 3-origin APIC timer interrupts verified on IF-enabled CPUs\r\n");
                 qemu_debug_exit(0x10);
             },
             Err(_) => {
