@@ -175,7 +175,7 @@ run_case() {
 for n in "${CPU_LIST[@]}"; do
   if [[ "$n" == 1 ]]; then
     run_case single-core-smoke 1 smoke
-    run_case qemu-syscall-test 1 syscall --features qemu-syscall-test --debug-exit
+    run_case qemu-syscall-pointer-isolation-test 1 syscall --features qemu-syscall-pointer-isolation-test --debug-exit
   fi
   run_case qemu-ring3-smp-test "$n" ring3 --features qemu-ring3-smp-test --debug-exit
   run_case qemu-ring3-fault-pf "$n" ring3-fault-pf --features qemu-ring3-fault-pf-test --debug-exit
