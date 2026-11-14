@@ -1067,6 +1067,7 @@ pub unsafe fn run_qemu_ring3_smp_test(
     if allocator.free_pages() != plan.free_pages_before {
         return Err(AddressSpaceError::FrameReclaimMismatch);
     }
+    crate::console::debug_write(b"SYSTEMES_TEST: frame and stack allocation counters unchanged\\r\\n");
     if !all_success {
         return Err(AddressSpaceError::SyscallReturnMismatch);
     }
