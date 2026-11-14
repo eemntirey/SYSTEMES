@@ -546,27 +546,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
 
     unsafe { debug_write(b"SYSTEMES_KERNEL_OK\r\n") };
     #[cfg(feature = "qemu-ring3-smp-test")]
-    let ring3_smp_plan = {
-        let previous_flags: u64;
-        // SAFETY: Keep the boot CPU out of timer scheduling while the shared
-        // test page tables and user mappings are constructed.
-        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags); }
-        let prepared = unsafe {
-            systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
-        };
-        if previous_flags & (1 << 9) != 0 {
-            // SAFETY: Restore the original boot interrupt state after preparation.
-            unsafe { asm!("sti", options(nomem, nostack)); }
-        }
-        match prepared {
-            Ok(plan) => Some(plan),
-            Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\r\n"); }
-                qemu_debug_exit(0x11);
-            }
-        }
-    };
-    #[cfg(feature = "qemu-ring3-smp-test")]
     let mut ring3_smp_apic_ids = [0u8; systemes_kernel::smp::MAX_CPUS_PER_APIC_ID];
     #[cfg(feature = "qemu-ring3-smp-test")]
     let mut ring3_smp_ap_count = 0usize;
@@ -746,9 +725,34 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         unsafe { debug_write(b"SYSTEMES: SMP unavailable; continuing in BSP mode\r\n"); }
     }
 
+    // AP startup needs its reserved low-memory trampoline page. Allocate the
+    // Ring 3 test address space only after every AP has reached its rendezvous,
+    // so user page-table frames cannot consume that page.
+    #[cfg(feature = "qemu-ring3-smp-test")]
+    let ring3_smp_plan = {
+        let previous_flags: u64;
+        // SAFETY: Keep the BSP out of timer scheduling while shared test mappings
+        // are constructed; APs are parked at the Ring 3 test start gate.
+        unsafe { asm!("pushfq; pop {}; cli", out(reg) previous_flags); }
+        let prepared = unsafe {
+            systemes_kernel::address_space::prepare_qemu_ring3_smp_test(&mut frame_allocator, page_table_root)
+        };
+        if previous_flags & (1 << 9) != 0 {
+            // SAFETY: Restore the original BSP interrupt state after preparation.
+            unsafe { asm!("sti", options(nomem, nostack)); }
+        }
+        match prepared {
+            Ok(plan) => Some(plan),
+            Err(_) => {
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\\r\\n"); }
+                qemu_debug_exit(0x11);
+            }
+        }
+    };
+
     #[cfg(feature = "qemu-ring3-smp-test")]
     {
-        let plan = ring3_smp_plan.expect("Ring 3 SMP test plan was prepared before AP startup");
+        let plan = ring3_smp_plan.expect("Ring 3 SMP test plan prepared after AP startup");
         let apic_ids = &ring3_smp_apic_ids[..ring3_smp_ap_count];
         match unsafe {
             systemes_kernel::address_space::run_qemu_ring3_smp_test(
