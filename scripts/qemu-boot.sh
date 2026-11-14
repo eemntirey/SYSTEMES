@@ -264,7 +264,7 @@ SYSTEMES_TEST: Ring 3 user stack write verified
 SYSTEMES_TEST: SYSCALL/SYSRET fast path executed
 SYSTEMES_TEST: Syscall return value verified in user stack
 SYSTEMES_TEST: SYS_YIELD returned to user process
-SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors
+SYSTEMES_TEST: invalid SYS_READ/SYS_WRITE pointers returned -EFAULT; Ring 3 continued
 SYSTEMES_TEST: user process exited and kernel resumed
 SYSTEMES_TEST: exited process frames reclaimed
 SYSTEMES_TEST: user shell address space activated
