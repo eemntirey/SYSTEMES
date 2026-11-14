@@ -83,20 +83,24 @@ Pour une tâche ordonnançable, **ne pas reprendre la continuation de la tâche 
 
 ## 5. Espace d'adressage : choix et TLB
 
-**Choix : un espace d'adressage privé par tâche Ring 3.** Le root noyau reste partagé via le slot PML4 noyau, comme le fait déjà `AddressSpace::create` ([address_space.rs:90-130](../kernel/src/address_space.rs#L90-L130)) ; mappings utilisateur et pile sont privés.
+**Décision C1 : un espace d'adressage privé par tâche Ring 3 dès la première livraison fonctionnelle Ring 3**, même si ces tâches sont CPU-affines. Le root noyau reste partagé via le slot PML4 noyau, comme le fait déjà `AddressSpace::create` ([address_space.rs:90-130](../kernel/src/address_space.rs#L90-L130)) ; les mappings utilisateur et la pile utilisateur sont privés.
+
+La CPU-affinité limite le processeur qui peut exécuter une tâche ; elle ne constitue pas une isolation mémoire et ne donne pas une propriété indépendante des mappings. Deux tâches affectées au même CPU peuvent s'exécuter successivement avec des images, piles, permissions et durées de vie distinctes. Avec un root utilisateur partagé, le retrait ou la libération des mappings d'une tâche pourrait invalider ou exposer ceux de l'autre. Le fait qu'un seul CPU utilise le root à un instant donné ne résout pas cette propriété logique ni l'isolation entre tâches.
 
 Justification :
 - Un root partagé, comme le test SMP actuel ([address_space.rs:938-980](../kernel/src/address_space.rs#L938-L980)), ne permet pas une isolation correcte entre tâches ayant images, piles ou permissions différentes.
 - Un espace privé rend explicite la propriété des frames et permet la terminaison indépendante sans détruire les mappings d'une autre tâche.
-- Le coût est un CR3 par commutation Ring 3 et un protocole TLB inter-CPU. C'est plus coûteux que le test synchrone, mais nécessaire pour la terminaison indépendante et l'isolation mémoire.
+- La CPU-affinité simplifie le suivi des CPU pouvant activer un root, mais ne remplace pas l'espace privé. Le coût est un CR3 par commutation Ring 3 et, si le root a pu être activé sur plusieurs CPU, un protocole TLB inter-CPU. C'est plus coûteux que le test synchrone, mais nécessaire pour la terminaison indépendante et l'isolation mémoire.
 
 **État actuel :** `write_cr3` charge un root et invalide localement les entrées TLB non globales ([address_space.rs:357-365](../kernel/src/address_space.rs#L357-L365)) ; `AddressSpace::destroy` ne vérifie que le CR3 local ([address_space.rs:208-220](../kernel/src/address_space.rs#L208-L220)). Aucun mécanisme de shootdown TLB SMP ni registre des CPU actifs par address space n'a été trouvé dans le code audité. Il faut le construire avant toute libération concurrente d'un root potentiellement utilisé sur plusieurs CPU.
 
 Protocole cible :
 - Chaque espace maintient un masque atomique des CPU actifs (ou structure équivalente protégée) ; le bit est posé avant activation du CR3 et retiré après désactivation.
 - À la destruction, empêcher toute nouvelle activation, snapshotter les CPU actifs, envoyer un IPI TLB-shootdown, exécuter `invlpg` ou recharger CR3 sur chaque CPU, puis attendre les ACK acquire/release.
-- Le reaper libère les frames seulement après masque vide, ACK de tous les CPU ciblés et absence de références lecteurs.
-- Pour le premier incrément, garder les tâches Ring 3 CPU-affines et interdire le partage de leur root : cela réduit le shootdown à un détachement local vérifiable, mais le protocole SMP reste requis dès qu'un root peut migrer ou être partagé.
+- Le reaper est exécuté par le CPU propriétaire de la tâche, depuis son contexte idle ou un worker noyau local, jamais depuis la pile de la tâche terminée. Avec la règle CPU-affine stricte, aucun autre CPU ne doit activer ce root : après le switch local vers un CR3 sûr, le propriétaire retire le root de sa file de réclamation locale.
+- Le reaper prend le verrou dédié de la file locale uniquement pour retirer un élément, puis le relâche avant toute destruction d'`AddressSpace` ou opération d'allocateur. Il ne prend pas `run_queue_lock` et ne prend jamais un verrou scheduler en attendant un autre CPU. Aucun spin-wait ni attente active n'est autorisé : si le masque CPU actif ou les références ne sont pas à zéro, l'élément est remis en attente et le worker poursuit d'autres tâches ; un mécanisme IPI/ACK asynchrone n'est requis que si une activation distante est constatée ou autorisée.
+- Ordre de synchronisation : publication de la terminaison sous le verrou scheduler ; sélection et bascule hors du CR3 fautif ; transfert vers la file locale après confirmation du détachement ; retrait bref sous le verrou de file de réclamation ; relâchement de ce verrou ; vérification des références/CPU actifs ; destruction des tables et mappings ; libération des frames et piles ; libération finale du descripteur. Aucun verrou de file n'est conservé pendant la destruction.
+- Pour le premier incrément scheduler, ne pas introduire de file de réclamation ni de mécanisme CR3 : ces responsabilités sont hors 4d. La CPU-affinité et l'interdiction de partager le root sont des invariants de la future activation Ring 3. Si un CPU distant peut avoir activé le root, le reaper diffère la libération sans attente active ; le protocole IPI/TLB-shootdown/ACK devra alors être implémenté avant toute réclamation.
 
 Ce mécanisme et le reaper ne font **pas** partie de l'interface scheduler 4d ; ils sont des dépendances ultérieures, pas simulées par `AddressSpace::destroy`.
 
