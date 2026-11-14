@@ -818,7 +818,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 1;
     code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_EXIT as u32).to_le_bytes());
     length += 4;
-    code[length..length + 4].copy_from_slice(&[0x8B, 0x7C, 0x24, 0xF0]); // mov edi, [rsp-16]
+    code[length..length + 4].copy_from_slice(&[0x8B, 0x7C, 0x24, 0xE0]); // mov edi, [rsp-32]
     length += 4;
     code[length..length + 2].copy_from_slice(&[0x0F, 0x05]); // syscall
     length += 2;
