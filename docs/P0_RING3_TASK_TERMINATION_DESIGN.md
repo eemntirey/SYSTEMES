@@ -12,9 +12,9 @@
 
 ## Impact ciblé sur kernel/src/scheduler.rs
 
-- **Autour de schedule / sélection de tâche (environ lignes 470–590) :** ajouter une transition explicite Running -> Exited et exclure la tâche terminée de la sélection. Le chemin courant schedule(saved_rsp, ...) préserve parfois le contexte courant ; il faut un mode de sortie non-retournant distinct.
-- **Autour de on_yield et on_timer (environ lignes 590–625) :** exposer une entrée étroite schedule_after_exit(saved_rsp) ou un paramètre de raison de commutation qui garantit que la tâche courante ne redevient pas Runnable.
-- **Autour de reset_after_all_tasks_exit (environ lignes 700+) :** ne pas réutiliser cette fonction comme mécanisme de terminaison d'un processus ; elle réinitialise l'ordonnanceur seulement lorsque le CPU est revenu sur le contexte boot/idle.
+- **`kernel/src/scheduler.rs:504` (`schedule`) et la sélection locale :** ajouter une transition explicite Running -> Exited et exclure la tâche terminée de la sélection. Le chemin courant schedule(saved_rsp, ...) préserve parfois le contexte courant ; il faut un mode de sortie non-retournant distinct.
+- **`kernel/src/scheduler.rs:577` (`on_yield`) et `:583` (`on_timer`) :** exposer une entrée étroite schedule_after_exit(saved_rsp) ou un paramètre de raison de commutation qui garantit que la tâche courante ne redevient pas Runnable.
+- **`kernel/src/scheduler.rs:745` (`reset_after_all_tasks_exit`) :** ne pas réutiliser cette fonction comme mécanisme de terminaison d'un processus ; elle réinitialise l'ordonnanceur seulement lorsque le CPU est revenu sur le contexte boot/idle.
 - **À ajouter hors du scheduler :** une file de réclamation différée des espaces d'adressage, pilotée après rendez-vous SMP/TLB, afin que le chemin d'exception ne libère jamais la pile ni les tables encore actives.
 
 ## Invariants requis avant implémentation
