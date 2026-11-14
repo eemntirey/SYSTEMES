@@ -817,6 +817,20 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
         length += 8;
         code[length..length + 2].copy_from_slice(&[0xFF, 0xD0]); // call rax
         length += 2;
+        // Non-BSP participants execute a verified syscall burst while the BSP faults.
+        code[length..length + 6].copy_from_slice(&[0x41, 0xBC, 0x10, 0x27, 0x00, 0x00]); // mov r12d, 10,000
+        length += 6;
+        let syscall_burst = [
+            0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, SYS_GET_API_VERSION
+            0x0F, 0x05,                   // syscall
+            0x48, 0x83, 0xF8, 0x01,       // cmp rax, API_VERSION
+            0x74, 0x02,                   // je over ud2
+            0x0F, 0x0B,                   // ud2 on a corrupted syscall result
+            0x49, 0xFF, 0xCC,             // dec r12
+            0x75, 0xEC,                   // jnz syscall_burst
+        ];
+        code[length..length + syscall_burst.len()].copy_from_slice(&syscall_burst);
+        length += syscall_burst.len();
     }
     code[length..length + 5].copy_from_slice(&[0xB9, 0x80, 0x96, 0x98, 0x00]); // mov ecx, 10,000,000
     length += 5;
