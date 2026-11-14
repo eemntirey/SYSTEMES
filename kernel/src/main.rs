@@ -744,7 +744,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         match prepared {
             Ok(plan) => Some(plan),
             Err(_) => {
-                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\\r\\n"); }
+                unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 SMP test preparation failed\r\n"); }
                 qemu_debug_exit(0x11);
             }
         }
