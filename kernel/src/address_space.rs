@@ -609,7 +609,7 @@ pub unsafe fn run_qemu_syscall_test(
 
     // SAFETY: The kernel root is active and the allocator owns free frames.
     let mut space = unsafe { AddressSpace::create(allocator, kernel_root)? };
-    // SAFETY: The virtual addresses and backing frames were validated above.
+    // SAFETY: The mapping addresses and backing frames were validated above.
     unsafe {
         space.map_user_page(
             allocator,
@@ -760,7 +760,8 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     }
     for (cpu_index, frame) in stack_frames.iter().enumerate() {
         // Give every CPU a distinct SYS_EXIT status so a shared exit-status
-        // variable cannot accidentally pass the SMP test.
+        // variable cannot accidentally pass the SMP test. The status lives at
+        // user_rsp - 16, the slot the user code reads for the SYS_EXIT argument.
         let status = (RING3_SMP_EXIT_STATUS + cpu_index as u64) as u32;
         // SAFETY: The stack frame is freshly allocated and identity accessible.
         unsafe {
@@ -818,7 +819,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 1;
     code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_EXIT as u32).to_le_bytes());
     length += 4;
-    code[length..length + 4].copy_from_slice(&[0x8B, 0x7C, 0x24, 0xE0]); // mov edi, [rsp-32]
+    code[length..length + 4].copy_from_slice(&[0x8B, 0x7C, 0x24, 0xF0]); // mov edi, [rsp-16]: status slot
     length += 4;
     code[length..length + 2].copy_from_slice(&[0x0F, 0x05]); // syscall
     length += 2;
