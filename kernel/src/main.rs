@@ -574,6 +574,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     ring3_smp_ap_count = summary.started_count;
                     ring3_smp_apic_ids[..ring3_smp_ap_count]
                         .copy_from_slice(&summary.started_apic_ids[..ring3_smp_ap_count]);
+                    let mut digits = [0u8; 20];
+                    for index in 0..summary.started_count {
+                        debug_write(b"SYSTEMES_TEST: AP ");
+                        let length = encode_decimal(summary.started_apic_ids[index] as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" started in kernel long mode\r\n");
+                    }
                 }
                 #[cfg(feature = "qemu-smp-test")]
                 unsafe {
