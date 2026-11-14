@@ -1266,14 +1266,26 @@ mod tests {
     fn syscall_cpu_local_state_is_independent_between_instances() {
         let first = SyscallCpuLocal::new();
         let second = SyscallCpuLocal::new();
+        first.user_rsp.store(0x1010, Ordering::Release);
+        second.user_rsp.store(0x2020, Ordering::Release);
         first.saved_kernel_rsp.store(0x1111, Ordering::Release);
         second.saved_kernel_rsp.store(0x2222, Ordering::Release);
+        first.ring3_active.store(true, Ordering::Release);
+        second.ring3_active.store(false, Ordering::Release);
+        first.exit_validated.store(false, Ordering::Release);
+        second.exit_validated.store(true, Ordering::Release);
         first.expected_user_rsp.store(0x3333, Ordering::Release);
         second.expected_user_rsp.store(0x4444, Ordering::Release);
         first.exit_status.store(7, Ordering::Release);
         second.exit_status.store(9, Ordering::Release);
+        assert_eq!(first.user_rsp.load(Ordering::Acquire), 0x1010);
+        assert_eq!(second.user_rsp.load(Ordering::Acquire), 0x2020);
         assert_eq!(first.saved_kernel_rsp.load(Ordering::Acquire), 0x1111);
         assert_eq!(second.saved_kernel_rsp.load(Ordering::Acquire), 0x2222);
+        assert!(first.ring3_active.load(Ordering::Acquire));
+        assert!(!second.ring3_active.load(Ordering::Acquire));
+        assert!(!first.exit_validated.load(Ordering::Acquire));
+        assert!(second.exit_validated.load(Ordering::Acquire));
         assert_eq!(first.expected_user_rsp.load(Ordering::Acquire), 0x3333);
         assert_eq!(second.expected_user_rsp.load(Ordering::Acquire), 0x4444);
         assert_eq!(first.exit_status.load(Ordering::Acquire), 7);
