@@ -117,7 +117,7 @@ run_case() {
       has 'SYSTEMES_TEST: frame and stack allocation counters unchanged' || { verdict=FAIL; notes+=" frame-or-stack-leak;"; }
       ;;
     syscall)
-      has 'SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors' || { verdict=FAIL; notes+=" missing-EFAULT-syscall-proof;"; }
+      has 'SYSTEMES_TEST: invalid SYS_READ/SYS_WRITE pointers returned -EFAULT; Ring 3 continued' || { verdict=FAIL; notes+=" missing-EFAULT-syscall-proof;"; }
       has 'SYSTEMES_TEST: user process exited and kernel resumed' || { verdict=FAIL; notes+=" user-context-was-not-resumed;"; }
       ;;
     ring3)
