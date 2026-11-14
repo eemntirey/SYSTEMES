@@ -954,6 +954,16 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
 }
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
+#[cfg(test)]
+fn current_syscall_local() -> *mut SyscallCpuLocal {
+    // Host-side unit tests run at CPL3 and cannot execute RDMSR. Their isolated
+    // test context uses the bootstrap CPU slot instead of the hardware GS base.
+    let cpu_index = current_cpu_index();
+    assert!(cpu_index < MAX_CPUS, "test CPU index exceeds supported slots");
+    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
+}
+
+#[cfg(not(test))]
 fn current_syscall_local() -> *mut SyscallCpuLocal {
     let local = read_msr(MSR_GS_BASE) as *mut SyscallCpuLocal;
     assert!(!local.is_null(), "kernel GS context is not initialized");
