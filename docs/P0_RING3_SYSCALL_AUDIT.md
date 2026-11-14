@@ -35,3 +35,22 @@
 **Aucun BUG CONFIRMÉ dans le protocole actuel SYSCALL/SWAPGS ni dans les validations de pointeurs examinées.** Deux risques d'architecture conditionnels (pile SYSCALL par thread et table de fichiers globale) précèdent l'introduction de threads/processus utilisateurs multiples ; une limite fonctionnelle est confirmée pour les fautes Ring 3 (#PF/#GP), actuellement fatales au CPU fautif.
 
 Aucun correctif noyau n'est justifié dans cette étape d'audit. Les tests complémentaires ci-dessus définissent les critères de validation avant toute évolution. **Aucun fichier d'ordonnanceur n'a été modifié.** Aucun build QEMU n'a été exécuté pendant cet audit statique.
+
+
+## 8. Suivi — récupération synchrone Ring 3 (PR #89)
+
+La phase de récupération synchrone traite uniquement les fautes #PF (14) et #GP (13) dont le CS sauvegardé indique CPL3. Le dispatcher conserve les informations vecteur, code d'erreur, CR2 (#PF) et RIP fautif dans le contexte CPU-local, puis redirige la frame vers la continuation noyau sauvegardée. Les exceptions CPL0 restent sur le chemin fatal ; la valeur ring3_active n'est jamais utilisée seule pour classer le CPL.
+
+Les tests ajoutés dans la branche p0-ring3-fault-handling couvrent :
+- un #PF sur page utilisateur non mappée et un #GP via HLT exécuté en CPL3 ;
+- dix entrées fautives répétées sur la même continuation ;
+- la poursuite du scénario Ring 3/SYSCALL des autres CPU participants ;
+- le rendez-vous avant destruction de l'espace d'adressage partagé et l'égalité du nombre de frames libres avant/après ;
+- un test séparé des pointeurs invalides passés à SYS_READ/SYS_WRITE, qui doivent retourner ERROR_BAD_ADDRESS sans tuer la transition.
+
+**État : implémentation présente sur la branche, validation QEMU/CI en attente.** Ne pas interpréter les marqueurs attendus dans les scripts comme des résultats déjà observés. Le niveau 2 (terminaison d'une tâche Ring 3 ordonnançable) n'est pas traité ; voir [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md).
+
+IST1 (#DF), IST2 (NMI) et IST3 (#MC) ne sont pas modifiées. Une exception imbriquée depuis CPL0 reste fatale. Aucun fichier de scheduler ne doit être modifié dans cette phase.
+
+
+**Test CPL0 non exécuté :** le gestionnaire fatal actuel exécute `cli; hlt` sur le CPU fautif. Injecter volontairement une faute noyau dans la matrice SMP arrêterait ce CPU avant le rendez-vous et le marqueur `--debug-exit` ; cela ne permettrait pas de distinguer proprement le comportement fatal du blocage de la matrice. Une preuve dédiée nécessiterait un démarrage QEMU isolé et un point d'arrêt/debug-exit réservé à cette configuration de test. Le chemin de production reste fatal et n'est pas modifié.

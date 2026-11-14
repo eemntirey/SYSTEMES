@@ -705,6 +705,10 @@ const RING3_SMP_CODE_ADDRESS: u64 = USER_BASE + 0xA000;
 #[cfg(feature = "qemu-ring3-smp-test")]
 const RING3_SMP_BARRIER_ADDRESS: u64 = USER_BASE + 0xB000;
 #[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_FAULT_CODE_ADDRESS: u64 = USER_BASE + 0xC000;
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_FAULT_EXIT_STATUS: u64 = 0xF001_FA01_7FA0_1701;
+#[cfg(feature = "qemu-ring3-smp-test")]
 const RING3_SMP_STACK_BASE: u64 = USER_BASE + 0x1_0000;
 #[cfg(feature = "qemu-ring3-smp-test")]
 const RING3_SMP_EXIT_STATUS: u64 = 42;
@@ -740,6 +744,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     let free_pages_before = allocator.free_pages();
     let code_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
     let barrier_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
+    let fault_code_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
     let mut stack_frames = Vec::new();
     stack_frames.try_reserve(RING3_SMP_MAX_CPUS).map_err(|_| AddressSpaceError::OutOfMemory)?;
     for _ in 0..RING3_SMP_MAX_CPUS {
@@ -747,6 +752,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     }
     for frame in core::iter::once(&code_frame)
         .chain(core::iter::once(&barrier_frame))
+        .chain(core::iter::once(&fault_code_frame))
         .chain(stack_frames.iter())
     {
         if *frame % PAGE_SIZE != 0 {
@@ -774,7 +780,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
 
     // User code: increment ready_count; wait until it equals expected_count;
     // call SYS_GET_API_VERSION; BSP/even APIC IDs use SYS_EXIT, odd APIC IDs use INT 0x80.
-    let mut code = [0u8; 80];
+    let mut code = [0u8; 160];
     let mut length = 0usize;
     let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
     code[length..length + 2].copy_from_slice(&[0x48, 0xBB]); // mov rbx, imm64
@@ -789,6 +795,43 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 4;
     code[length..length + 2].copy_from_slice(&[0x75, 0xF7]); // jne back to ready check
     length += 2;
+
+    #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+    {
+        let bsp_rsp = RING3_SMP_STACK_BASE
+            + crate::interrupts::bootstrap_cpu_index() as u64 * PAGE_SIZE
+            + PAGE_SIZE - 16;
+        code[length..length + 3].copy_from_slice(&[0x48, 0x89, 0xE0]); // mov rax, rsp
+        length += 3;
+        code[length..length + 2].copy_from_slice(&[0x48, 0xBB]); // movabs rbx, BSP RSP
+        length += 2;
+        code[length..length + 8].copy_from_slice(&bsp_rsp.to_le_bytes());
+        length += 8;
+        code[length..length + 3].copy_from_slice(&[0x48, 0x39, 0xD8]); // cmp rax, rbx
+        length += 3;
+        code[length..length + 2].copy_from_slice(&[0x75, 0x0C]); // other CPUs skip the 12-byte call
+        length += 2;
+        code[length..length + 2].copy_from_slice(&[0x48, 0xB8]); // movabs rax, fault stub
+        length += 2;
+        code[length..length + 8].copy_from_slice(&RING3_SMP_FAULT_CODE_ADDRESS.to_le_bytes());
+        length += 8;
+        code[length..length + 2].copy_from_slice(&[0xFF, 0xD0]); // call rax
+        length += 2;
+        // Non-BSP participants execute a verified syscall burst while the BSP faults.
+        code[length..length + 6].copy_from_slice(&[0x41, 0xBC, 0x10, 0x27, 0x00, 0x00]); // mov r12d, 10,000
+        length += 6;
+        let syscall_burst = [
+            0xB8, 0x00, 0x00, 0x00, 0x00, // mov eax, SYS_GET_API_VERSION
+            0x0F, 0x05,                   // syscall
+            0x48, 0x83, 0xF8, 0x01,       // cmp rax, API_VERSION
+            0x74, 0x02,                   // je over ud2
+            0x0F, 0x0B,                   // ud2 on a corrupted syscall result
+            0x49, 0xFF, 0xCC,             // dec r12
+            0x75, 0xEC,                   // jnz syscall_burst
+        ];
+        code[length..length + syscall_burst.len()].copy_from_slice(&syscall_burst);
+        length += syscall_burst.len();
+    }
     code[length..length + 5].copy_from_slice(&[0xB9, 0x80, 0x96, 0x98, 0x00]); // mov ecx, 10,000,000
     length += 5;
     code[length..length + 2].copy_from_slice(&[0xF3, 0x90]); // pause while user IF is enabled
@@ -825,6 +868,19 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     length += 2;
     code[length..length + 2].copy_from_slice(&[0x0F, 0x0B]); // ud2 if SYS_EXIT returns
     length += 2;
+
+    #[cfg(feature = "qemu-ring3-fault-pf-test")]
+    unsafe {
+        core::ptr::write_bytes(fault_code_frame as *mut u8, 0x90, PAGE_SIZE as usize);
+        let mut stub = [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x8B, 0x00];
+        stub[2..10].copy_from_slice(&(USER_BASE + 0x5000).to_le_bytes());
+        core::ptr::copy_nonoverlapping(stub.as_ptr(), fault_code_frame as *mut u8, stub.len());
+    }
+    #[cfg(feature = "qemu-ring3-fault-gp-test")]
+    unsafe {
+        core::ptr::write_bytes(fault_code_frame as *mut u8, 0x90, PAGE_SIZE as usize);
+        core::ptr::write_volatile(fault_code_frame as *mut u8, 0xF4); // HLT at CPL3 -> #GP
+    }
     // SAFETY: The code frame is freshly allocated and identity accessible.
     unsafe { core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, length) };
 
@@ -834,6 +890,7 @@ pub unsafe fn prepare_qemu_ring3_smp_test(
     unsafe {
         space.map_user_page(allocator, RING3_SMP_CODE_ADDRESS, code_frame, UserPagePermissions::ReadOnlyExecute)?;
         space.map_user_page(allocator, RING3_SMP_BARRIER_ADDRESS, barrier_frame, UserPagePermissions::ReadWriteNoExecute)?;
+        space.map_user_page(allocator, RING3_SMP_FAULT_CODE_ADDRESS, fault_code_frame, UserPagePermissions::ReadOnlyExecute)?;
         for (cpu_index, frame) in stack_frames.iter().enumerate() {
             space.map_user_page(
                 allocator,
@@ -892,7 +949,16 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
         write_cr3(root);
     }
     let is_bsp = crate::apic::is_bootstrap_cpu();
-    let use_sys_exit = is_bsp || cpu_index & 1 == 0;
+    // Fault-recovery matrix: keep non-faulting peers on the INT 0x80 exit
+    // path after their syscall burst. SYS_EXIT remains covered by the regular
+    // Ring 3 SMP matrix; mixing its independent exit-status assertion into the
+    // fault rendezvous obscures whether peer syscalls survived the BSP fault.
+    let use_sys_exit = {
+        #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+        { is_bsp }
+        #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+        { is_bsp || cpu_index & 1 == 0 }
+    };
     let user_irq_before = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
     {
         let _smap_guard = crate::uaccess::UserAccessGuard::new();
@@ -903,15 +969,48 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     }
     let exit_ok = if use_sys_exit {
         let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
-        exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64
+        #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+        if cpu_index == crate::interrupts::bootstrap_cpu_index() {
+            let mut repeated_ok = exit_status == RING3_SMP_FAULT_EXIT_STATUS;
+            for _ in 1..10 {
+                let repeated = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_FAULT_CODE_ADDRESS, user_rsp) };
+                repeated_ok &= repeated == RING3_SMP_FAULT_EXIT_STATUS;
+            }
+            let fault_info_ok = crate::interrupts::last_user_fault().is_some_and(|fault| {
+                (cfg!(feature = "qemu-ring3-fault-pf-test")
+                    && fault.vector == 14
+                    && fault.error_code == 0x4
+                    && fault.cr2 == USER_BASE + 0x5000
+                    && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS + 10)
+                    || (cfg!(feature = "qemu-ring3-fault-gp-test")
+                        && fault.vector == 13
+                        && fault.error_code == 0
+                        && fault.cr2 == 0
+                        && fault.rip == RING3_SMP_FAULT_CODE_ADDRESS)
+            });
+            repeated_ok &= fault_info_ok;
+            if repeated_ok {
+                unsafe { crate::console::debug_write(b"SYSTEMES_TEST: Ring 3 fault returned to kernel; repeated=10\r\n"); }
+            }
+            repeated_ok
+        } else { exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64 }
+        #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+        { exit_status == RING3_SMP_EXIT_STATUS + cpu_index as u64 }
     } else {
         // Odd APs exercise the DPL3 INT 0x80 exit path concurrently.
         unsafe { crate::interrupts::enter_ring3_test_context(RING3_SMP_CODE_ADDRESS, user_rsp) }
     };
     let observed_api = {
-        let _smap_guard = crate::uaccess::UserAccessGuard::new();
-        // SAFETY: The shared user address space remains active until all CPUs finish.
-        unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+        #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+        if cpu_index == crate::interrupts::bootstrap_cpu_index() { crate::syscall::API_VERSION } else {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+        }
+        #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+        {
+            let _smap_guard = crate::uaccess::UserAccessGuard::new();
+            unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+        }
     };
     // SAFETY: Restore this CPU's previous root before publishing completion.
     unsafe { write_cr3(previous_root) };
@@ -921,7 +1020,13 @@ fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
     }
     let gs_restored = crate::interrupts::verify_syscall_configuration();
     let user_irq_after = RING3_SMP_TEST_IRQS[cpu_index].load(Ordering::Acquire);
-    let user_irq_ok = !use_sys_exit || user_irq_after > user_irq_before;
+    let user_irq_ok = !use_sys_exit
+        || {
+            #[cfg(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test"))]
+            if cpu_index == crate::interrupts::bootstrap_cpu_index() { true } else { user_irq_after > user_irq_before }
+            #[cfg(not(any(feature = "qemu-ring3-fault-pf-test", feature = "qemu-ring3-fault-gp-test")))]
+            { user_irq_after > user_irq_before }
+        };
     let failure_bits = (if exit_ok { 0 } else { 1 })
         | (if observed_api == crate::syscall::API_VERSION { 0 } else { 2 })
         | (if gs_restored { 0 } else { 4 })
@@ -986,11 +1091,19 @@ pub unsafe fn run_qemu_ring3_smp_test(
         all_success &= RING3_SMP_TEST_RESULTS[*apic_id as usize].load(Ordering::Acquire) == 1;
     }
     RING3_SMP_TEST_ROOT.store(0, Ordering::Release);
+    unsafe { crate::console::debug_write(b"SYSTEMES_TEST: non-faulting CPU participants completed 10000-call syscall burst; count="); }
+    let mut peer_digits = [0u8; 20];
+    let peer_count = apic_ids.len();
+    let peer_len = crate::console::encode_decimal(peer_count as u64, &mut peer_digits);
+    unsafe { crate::console::debug_write(&peer_digits[..peer_len]); }
+    unsafe { crate::console::debug_write(b"\r\n"); }
     // SAFETY: Every participant restored its original CR3 before incrementing DONE.
     unsafe { plan.space.destroy(allocator)? };
+    unsafe { crate::console::debug_write(b"SYSTEMES_TEST: Ring 3 fault cleanup complete\r\n"); }
     if allocator.free_pages() != plan.free_pages_before {
         return Err(AddressSpaceError::FrameReclaimMismatch);
     }
+    unsafe { crate::console::debug_write(b"SYSTEMES_TEST: frame allocator count restored; user stacks included\r\n"); }
     if !all_success {
         return Err(AddressSpaceError::SyscallReturnMismatch);
     }

@@ -31,6 +31,7 @@ const USER_CODE_DESCRIPTOR: u64 = 0x00AF_FA00_0000_FFFF;
 const EXCEPTION_VECTOR_COUNT: usize = 32;
 const INTERRUPT_STACK_SIZE: usize = 16 * 1024;
 const USER_EXIT_VECTOR: u64 = 0x80;
+const USER_FAULT_EXIT_STATUS: u64 = 0xF001_FA01_7FA0_1701;
 
 /// Maximum number of CPUs supported (matches smp::MAX_CPUS_PER_APIC_ID).
 pub const MAX_CPUS: usize = 64;
@@ -73,7 +74,19 @@ struct SyscallCpuLocal {
     exit_validated: AtomicBool,
     expected_user_rsp: AtomicU64,
     exit_status: AtomicU64,
+    fault_vector: AtomicU64,
+    fault_error: AtomicU64,
+    fault_cr2: AtomicU64,
+    fault_rip: AtomicU64,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UserFaultInfo {
+    pub vector: u64,
+    pub error_code: u64,
+    pub cr2: u64,
+    pub rip: u64,
+}
+
 impl SyscallCpuLocal {
     const fn new() -> Self {
         Self {
@@ -85,6 +98,10 @@ impl SyscallCpuLocal {
             exit_validated: AtomicBool::new(false),
             expected_user_rsp: AtomicU64::new(0),
             exit_status: AtomicU64::new(0),
+            fault_vector: AtomicU64::new(0),
+            fault_error: AtomicU64::new(0),
+            fault_cr2: AtomicU64::new(0),
+            fault_rip: AtomicU64::new(0),
         }
     }
 }
@@ -681,9 +698,7 @@ systemes_exception_common:
     jz .Lsystemes_exception_gs_exit_ready
     /* A validated INT 0x80 exit rewrites CPL3 to CPL0: keep kernel GS. */
     test qword ptr [rsp], 2
-    jz .Lsystemes_exception_swapgs_back
-    test byte ptr [r12 + 144], 3
-    jz .Lsystemes_exception_gs_exit_ready
+    jnz .Lsystemes_exception_gs_exit_ready
 .Lsystemes_exception_swapgs_back:
     swapgs
 .Lsystemes_exception_gs_exit_ready:
@@ -940,17 +955,35 @@ pub(crate) unsafe fn enter_ring3_test_context(user_rip: u64, user_rsp: u64) -> b
 }
 
 /// Enter ring 3 at `rip` with `rsp` as the user stack. Returns the status passed
-/// to `SYS_EXIT`; a user process that does not exit or faults remains non-returning.
+/// to `SYS_EXIT`; a recoverable CPL3 #PF/#GP returns USER_FAULT_EXIT_STATUS.
 ///
 /// # Safety
 ///
 /// The caller must have installed the GDT/IDT/TSS, mapped `rip` executable
 /// and `rsp` writable in the active address space, and disabled interrupts.
 pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
-    crate::interrupts::set_user_exit_status(0);
+    let kernel_rflags: u64;
+    // Preserve the caller's IF state; exception and SYSCALL exit frames resume
+    // with IF clear so the kernel stack is restored before interrupts re-open.
+    unsafe { asm!("pushfq; pop {}", out(reg) kernel_rflags, options(preserves_flags)); }
+    let local = current_syscall_local();
+    unsafe {
+        (*local).exit_status.store(0, Ordering::Release);
+        (*local).ring3_active.store(true, Ordering::Release);
+        (*local).fault_vector.store(0, Ordering::Release);
+        (*local).fault_error.store(0, Ordering::Release);
+        (*local).fault_cr2.store(0, Ordering::Release);
+        (*local).fault_rip.store(0, Ordering::Release);
+    }
     // SAFETY: The caller guarantees valid user mappings and a configured TSS.
     unsafe { systemes_enter_ring3(rip, rsp, USER_MODE_RFLAGS) };
-    crate::interrupts::user_exit_status()
+    unsafe { (*local).ring3_active.store(false, Ordering::Release); }
+    let status = crate::interrupts::user_exit_status();
+    if kernel_rflags & (1 << 9) != 0 {
+        // SAFETY: The original kernel continuation and its stack are restored.
+        unsafe { asm!("sti", options(nomem, nostack)); }
+    }
+    status
 }
 
 /// Per-CPU syscall exit status (for ring-3 test compatibility).
@@ -980,6 +1013,25 @@ pub(crate) fn set_user_exit_status(status: u64) {
 pub(crate) fn user_exit_status() -> u64 {
     // SAFETY: The current CPU exclusively owns its local syscall context.
     unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
+}
+
+/// Return the most recent recoverable CPL3 fault on this CPU, if any.
+pub fn last_user_fault() -> Option<UserFaultInfo> {
+    let local = current_syscall_local();
+    // SAFETY: The current CPU owns its GS-local fault record.
+    let vector = unsafe { (*local).fault_vector.load(Ordering::Acquire) };
+    if vector == 0 {
+        return None;
+    }
+    // SAFETY: The record is published before the continuation is resumed.
+    Some(unsafe {
+        UserFaultInfo {
+            vector,
+            error_code: (*local).fault_error.load(Ordering::Acquire),
+            cr2: (*local).fault_cr2.load(Ordering::Acquire),
+            rip: (*local).fault_rip.load(Ordering::Acquire),
+        }
+    })
 }
 
 /// Return the bootstrap CPU's Local APIC ID from CPUID before MMIO APIC setup.
@@ -1177,7 +1229,51 @@ pub extern "C" fn systemes_exception_dispatch(
     }
 
     let syscall_local = current_syscall_local();
-    // SAFETY: Exception dispatch executes on the CPU whose local context is addressed.
+    // CPL is read from the processor-saved CS. ring3_active is only an
+    // additional guard for the known synchronous enter_user_mode continuation.
+    if let Some(frame_ref) = unsafe { frame.as_mut() } {
+        if frame_ref.cs & 3 == 3 && matches!(vector, 13 | 14)
+            && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) }
+        {
+            let privilege_frame = frame.cast::<u64>();
+            let user_ss = unsafe { privilege_frame.add(21).read() };
+            if user_ss == USER_DATA_RPL3 as u64 {
+                let cr2 = if vector == 14 {
+                    let value: u64;
+                    unsafe { asm!("mov {}, cr2", out(reg) value, options(nomem, nostack, preserves_flags)); }
+                    value
+                } else { 0 };
+                unsafe {
+                    (*syscall_local).fault_error.store(error_code, Ordering::Relaxed);
+                    (*syscall_local).fault_cr2.store(cr2, Ordering::Relaxed);
+                    (*syscall_local).fault_rip.store(frame_ref.rip, Ordering::Relaxed);
+                    // Publish the complete record last; readers acquire fault_vector.
+                    (*syscall_local).fault_vector.store(vector, Ordering::Release);
+                    (*syscall_local).exit_status.store(USER_FAULT_EXIT_STATUS, Ordering::Release);
+                    (*syscall_local).ring3_active.store(false, Ordering::Release);
+                }
+                frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+                frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
+                frame_ref.rflags = 0x02;
+                let kernel_rsp = unsafe { (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire) };
+                unsafe {
+                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
+                    debug_write(b"SYSTEMES_TEST: Ring 3 fault detected vector=0x");
+                    debug_hex(vector);
+                    debug_write(b" error=0x");
+                    debug_hex(error_code);
+                    debug_write(b" cr2=0x");
+                    debug_hex(cr2);
+                    debug_write(b" rip=0x");
+                    debug_hex((*syscall_local).fault_rip.load(Ordering::Acquire));
+                    debug_write(b"\r\n");
+                }
+                return;
+            }
+        }
+    }
+    // CPL0 faults (including syscall/UACCESS faults) remain fatal.
     if vector == USER_EXIT_VECTOR && unsafe { (*syscall_local).ring3_active.load(Ordering::Acquire) } {
         if let Some(frame_ref) = unsafe { frame.as_mut() } {
             let privilege_frame = frame.cast::<u64>();

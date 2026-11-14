@@ -2,9 +2,9 @@
 
 **Actualisation :** 2026-11-14  
 **Branche de référence :** `main`  
-**Commit de référence :** `484c01e82568994bd9244e519839367f1ddc09cd` (squash de la PR #86)
+**Commit de référence :** `d3e7c090a585b0b9dbf5c6dfef17519a38948d82` (squash de la PR #88)
 
-Ce document décrit l'état intégré dans `main` après la PR #86. Les constats de l'audit du 13 novembre qui qualifiaient les états Ring 3/SYSCALL de globaux ne décrivent plus le code courant lorsqu'ils concernent les champs remplacés par le contexte CPU-local. La fermeture complète de P0 n'est toutefois pas acquise : la stabilisation complémentaire des transitions reste à auditer (section 6).
+Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8 ; la section 6 est un historique de la feuille de route antérieure.
 
 ## 1. État global P0
 
@@ -121,3 +121,17 @@ Aucun bug n'est présumé dans cette liste : chaque constat doit être établi �
 ## 7. Historique de l'actualisation
 
 L'audit initial du 13 novembre décrivait notamment la pile SYSCALL et plusieurs états Ring 3 comme globaux, car il portait sur une base antérieure à la PR #86. Ces constats restent utiles comme historique, mais ne doivent plus être présentés comme l'état du code après le commit squash ci-dessus lorsque les champs concernés ont été déplacés dans `SyscallCpuLocal`.
+
+
+## 8. P0 — récupération des fautes Ring 3 synchrones (PR #89)
+
+**Périmètre : niveau 1 uniquement.** La branche p0-ring3-fault-handling ajoute le retour de #PF/#GP CPL3 vers la continuation noyau enregistrée par systemes_enter_ring3. Le CS sauvegardé par le processeur est la source de vérité pour le CPL ; les fautes CPL0 restent fatales, y compris pendant un syscall. Les informations de faute sont conservées dans SyscallCpuLocal (vecteur, code d'erreur, CR2 et RIP).
+
+Le nettoyage du test d'espace utilisateur partagé est différé jusqu'au retour de tous les participants et à leur restauration du CR3 noyau. Les frames sont ensuite libérées une seule fois et le compteur de frames libres est comparé à sa valeur initiale. Les IST existantes restent inchangées : #DF=IST1, NMI=IST2, #MC=IST3.
+
+Les scénarios QEMU #PF, #GP, fautes répétées et pointeurs syscall invalides sont ajoutés à scripts/qemu-concurrency-matrix.sh pour 1/2/4 CPU. **Leur résultat n'est pas déclaré validé tant que la CI n'a pas terminé avec succès sur le SHA final.**
+
+Le niveau 2, terminaison d'une tâche Ring 3 ordonnançable et sélection d'une autre tâche, est explicitement hors périmètre. Sa conception est décrite dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md). Aucun fichier scheduler ne doit être modifié dans cette PR.
+
+
+Le test d'une faute CPL0 n'est pas intégré à la matrice 1/2/4 CPU : le chemin fatal `cli; hlt` immobiliserait le CPU de test avant le rendez-vous SMP et `--debug-exit`. Une validation dédiée demanderait un boot QEMU isolé et un point de terminaison réservé au test ; le chemin de production reste fatal.

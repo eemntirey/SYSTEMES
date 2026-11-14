@@ -58,7 +58,7 @@ fn halt() -> ! {
     }
 }
 
-#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test"))]
+#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test", feature = "qemu-syscall-pointer-isolation-test"))]
 fn qemu_debug_exit(code: u32) -> ! {
     // Do not let a local APIC tick preempt the final test/exit sequence.
     unsafe { asm!("cli", options(nomem, nostack)); }
@@ -841,6 +841,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             debug_write(b"SYSTEMES_TEST: Syscall return value verified in user stack\r\n");
             debug_write(b"SYSTEMES_TEST: SYS_YIELD returned to user process\r\n");
             debug_write(b"SYSTEMES_TEST: invalid syscall numbers and user pointers returned errors\r\n");
+            debug_write(b"SYSTEMES_TEST: invalid SYS_READ/SYS_WRITE pointers returned -EFAULT; Ring 3 continued\r\n");
             debug_write(b"SYSTEMES_TEST: user process exited and kernel resumed\r\n");
             debug_write(b"SYSTEMES_TEST: exited process frames reclaimed\r\n");
         },
@@ -849,6 +850,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             halt();
         }
     }
+    #[cfg(feature = "qemu-syscall-pointer-isolation-test")]
+    qemu_debug_exit(0x10);
+
     #[cfg(feature = "qemu-address-space-test")]
     {
         let interrupt_flag: u64;
