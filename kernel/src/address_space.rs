@@ -10,6 +10,8 @@ use crate::interrupts::RING3_TEST_MAGIC;
 use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
 use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
 use alloc::vec::Vec;
+#[cfg(feature = "qemu-ring3-smp-test")]
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 const PRESENT: u64 = 1;
 const WRITABLE: u64 = 1 << 1;
@@ -694,6 +696,226 @@ pub unsafe fn run_qemu_syscall_test(
         return Err(AddressSpaceError::FrameReclaimMismatch);
     }
     transition_result
+}
+
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_MAX_CPUS: usize = 64;
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_CODE_ADDRESS: u64 = USER_BASE + 0xA000;
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_BARRIER_ADDRESS: u64 = USER_BASE + 0xB000;
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_STACK_BASE: u64 = USER_BASE + 0x1_0000;
+#[cfg(feature = "qemu-ring3-smp-test")]
+const RING3_SMP_EXIT_STATUS: u64 = 42;
+
+#[cfg(feature = "qemu-ring3-smp-test")]
+static RING3_SMP_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "qemu-ring3-smp-test")]
+static RING3_SMP_TEST_START: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "qemu-ring3-smp-test")]
+static RING3_SMP_TEST_DONE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qemu-ring3-smp-test")]
+static RING3_SMP_TEST_RESULTS: [AtomicU64; RING3_SMP_MAX_CPUS] =
+    [const { AtomicU64::new(0) }; RING3_SMP_MAX_CPUS];
+
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub struct Ring3SmpTestPlan {
+    space: AddressSpace,
+    free_pages_before: usize,
+    barrier_frame: u64,
+}
+
+/// Allocate one shared user address space with a private user stack for every
+/// supported APIC-ID slot. All CPUs execute the same syscall sequence while a
+/// shared user-mode barrier guarantees their SYSCALL instructions overlap.
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub unsafe fn prepare_qemu_ring3_smp_test(
+    allocator: &mut PhysicalFrameAllocator,
+    kernel_root: u64,
+) -> Result<Ring3SmpTestPlan, AddressSpaceError> {
+    let free_pages_before = allocator.free_pages();
+    let code_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
+    let barrier_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
+    let mut stack_frames = Vec::new();
+    stack_frames.try_reserve(RING3_SMP_MAX_CPUS).map_err(|_| AddressSpaceError::OutOfMemory)?;
+    for _ in 0..RING3_SMP_MAX_CPUS {
+        stack_frames.push(allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?);
+    }
+    for frame in core::iter::once(&code_frame)
+        .chain(core::iter::once(&barrier_frame))
+        .chain(stack_frames.iter())
+    {
+        if *frame % PAGE_SIZE != 0 {
+            return Err(AddressSpaceError::InvalidFrameAlignment);
+        }
+        if *frame >= IDENTITY_MAP_BYTES {
+            return Err(AddressSpaceError::FrameOutsideIdentityWindow);
+        }
+        // SAFETY: Every frame was just allocated and is identity accessible.
+        unsafe { core::ptr::write_bytes(*frame as *mut u8, 0, PAGE_SIZE as usize) };
+    }
+
+    // User code: increment ready_count; wait until it equals expected_count;
+    // call SYS_GET_API_VERSION; save RAX; then exit through SYS_EXIT.
+    let mut code = [0u8; 64];
+    let mut length = 0usize;
+    let barrier = RING3_SMP_BARRIER_ADDRESS.to_le_bytes();
+    code[length..length + 2].copy_from_slice(&[0x48, 0xBB]); // mov rbx, imm64
+    length += 2;
+    code[length..length + 8].copy_from_slice(&barrier);
+    length += 8;
+    code[length..length + 4].copy_from_slice(&[0xF0, 0x48, 0xFF, 0x03]); // lock inc [rbx]
+    length += 4;
+    code[length..length + 3].copy_from_slice(&[0x48, 0x8B, 0x03]); // mov rax, [rbx]
+    length += 3;
+    code[length..length + 4].copy_from_slice(&[0x48, 0x3B, 0x43, 0x08]); // cmp rax, [rbx+8]
+    length += 4;
+    code[length..length + 2].copy_from_slice(&[0x75, 0xF7]); // jne back to ready check
+    length += 2;
+    code[length] = 0xB8; // mov eax, SYS_GET_API_VERSION
+    length += 1;
+    code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_GET_API_VERSION as u32).to_le_bytes());
+    length += 4;
+    code[length..length + 2].copy_from_slice(&[0x0F, 0x05]); // syscall
+    length += 2;
+    code[length..length + 5].copy_from_slice(&[0x48, 0x89, 0x44, 0x24, 0xF8]); // mov [rsp-8], rax
+    length += 5;
+    code[length] = 0xB8; // mov eax, SYS_EXIT
+    length += 1;
+    code[length..length + 4].copy_from_slice(&(crate::syscall::SYS_EXIT as u32).to_le_bytes());
+    length += 4;
+    code[length..length + 5].copy_from_slice(&[0xBF, RING3_SMP_EXIT_STATUS as u8, 0, 0, 0]); // mov edi, 42
+    length += 5;
+    code[length..length + 2].copy_from_slice(&[0x0F, 0x05]); // syscall
+    length += 2;
+    code[length..length + 2].copy_from_slice(&[0x0F, 0x0B]); // ud2 if SYS_EXIT returns
+    length += 2;
+    // SAFETY: The code frame is freshly allocated and identity accessible.
+    unsafe { core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, length) };
+
+    // SAFETY: The kernel root is active and the allocator owns every frame.
+    let mut space = unsafe { AddressSpace::create(allocator, kernel_root)? };
+    // SAFETY: The mapping addresses and backing frames are page-aligned and validated.
+    unsafe {
+        space.map_user_page(allocator, RING3_SMP_CODE_ADDRESS, code_frame, UserPagePermissions::ReadOnlyExecute)?;
+        space.map_user_page(allocator, RING3_SMP_BARRIER_ADDRESS, barrier_frame, UserPagePermissions::ReadWriteNoExecute)?;
+        for (cpu_index, frame) in stack_frames.iter().enumerate() {
+            space.map_user_page(
+                allocator,
+                RING3_SMP_STACK_BASE + cpu_index as u64 * PAGE_SIZE,
+                *frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )?;
+        }
+        space.verify_user_mapping(RING3_SMP_CODE_ADDRESS, code_frame, UserPagePermissions::ReadOnlyExecute)?;
+        space.verify_user_mapping(RING3_SMP_BARRIER_ADDRESS, barrier_frame, UserPagePermissions::ReadWriteNoExecute)?;
+    }
+
+    for result in &RING3_SMP_TEST_RESULTS {
+        result.store(0, Ordering::Release);
+    }
+    RING3_SMP_TEST_DONE.store(0, Ordering::Release);
+    RING3_SMP_TEST_START.store(false, Ordering::Release);
+    RING3_SMP_TEST_ROOT.store(space.root(), Ordering::Release);
+
+    Ok(Ring3SmpTestPlan { space, free_pages_before, barrier_frame })
+}
+
+/// AP-side rendezvous. APs publish their parked state before waiting here so
+/// the BSP can finish SMP bring-up and release every participant together.
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub(crate) fn wait_and_run_qemu_ring3_smp_test(cpu_index: usize) {
+    while !RING3_SMP_TEST_START.load(Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
+    run_qemu_ring3_smp_test_cpu(cpu_index);
+}
+
+#[cfg(feature = "qemu-ring3-smp-test")]
+fn run_qemu_ring3_smp_test_cpu(cpu_index: usize) {
+    if cpu_index >= RING3_SMP_MAX_CPUS {
+        return;
+    }
+    let root = RING3_SMP_TEST_ROOT.load(Ordering::Acquire);
+    let user_rsp = RING3_SMP_STACK_BASE + cpu_index as u64 * PAGE_SIZE + PAGE_SIZE - 16;
+    let previous_root = unsafe { read_cr3() };
+    let previous_flags: u64;
+    // SAFETY: Each participant switches only its own CR3 and enters Ring 3 with IRQs masked.
+    unsafe {
+        core::arch::asm!("pushfq; pop {}; cli", out(reg) previous_flags, options(nomem));
+        write_cr3(root);
+    }
+    let exit_status = unsafe { crate::interrupts::enter_user_mode(RING3_SMP_CODE_ADDRESS, user_rsp) };
+    let observed_api = {
+        let _smap_guard = crate::uaccess::UserAccessGuard::new();
+        // SAFETY: The shared user address space remains active until all CPUs finish.
+        unsafe { core::ptr::read_volatile((user_rsp - 8) as *const u64) }
+    };
+    // SAFETY: Restore this CPU's previous root before publishing completion.
+    unsafe { write_cr3(previous_root) };
+    if previous_flags & (1 << 9) != 0 {
+        // SAFETY: Restore the caller's original interrupt state after leaving the shared test root.
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    }
+    let success = exit_status == RING3_SMP_EXIT_STATUS
+        && observed_api == crate::syscall::API_VERSION;
+    RING3_SMP_TEST_RESULTS[cpu_index].store(if success { 1 } else { 2 }, Ordering::Release);
+    RING3_SMP_TEST_DONE.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Start the per-CPU Ring 3 workload, release the user-mode barrier, and reclaim
+/// the shared test address space only after every participant has returned.
+#[cfg(feature = "qemu-ring3-smp-test")]
+pub unsafe fn run_qemu_ring3_smp_test(
+    plan: Ring3SmpTestPlan,
+    allocator: &mut PhysicalFrameAllocator,
+    bsp_cpu_index: usize,
+    apic_ids: &[u8],
+) -> Result<(), AddressSpaceError> {
+    if bsp_cpu_index >= RING3_SMP_MAX_CPUS || apic_ids.len() + 1 > RING3_SMP_MAX_CPUS {
+        return Err(AddressSpaceError::InvalidUserAddress);
+    }
+    // The second barrier word is the expected participant count.
+    unsafe {
+        core::ptr::write_volatile(
+            (plan.barrier_frame + 8) as *mut u64,
+            (apic_ids.len() + 1) as u64,
+        );
+    }
+    RING3_SMP_TEST_START.store(true, Ordering::Release);
+    run_qemu_ring3_smp_test_cpu(bsp_cpu_index);
+
+    let expected = apic_ids.len() + 1;
+    let mut completed = false;
+    for _ in 0..1_000_000_000usize {
+        if RING3_SMP_TEST_DONE.load(Ordering::Acquire) == expected {
+            completed = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    RING3_SMP_TEST_START.store(false, Ordering::Release);
+    if !completed {
+        // A CPU may still be executing in the shared page tables: do not reclaim them.
+        core::mem::forget(plan.space);
+        return Err(AddressSpaceError::Ring3TransitionFailed);
+    }
+
+    let mut all_success = RING3_SMP_TEST_RESULTS[bsp_cpu_index].load(Ordering::Acquire) == 1;
+    for apic_id in apic_ids {
+        all_success &= RING3_SMP_TEST_RESULTS[*apic_id as usize].load(Ordering::Acquire) == 1;
+    }
+    RING3_SMP_TEST_ROOT.store(0, Ordering::Release);
+    // SAFETY: Every participant restored its original CR3 before incrementing DONE.
+    unsafe { plan.space.destroy(allocator)? };
+    if allocator.free_pages() != plan.free_pages_before {
+        return Err(AddressSpaceError::FrameReclaimMismatch);
+    }
+    if !all_success {
+        return Err(AddressSpaceError::SyscallReturnMismatch);
+    }
+    Ok(())
 }
 
 #[cfg(feature = "qemu-address-space-test")]
