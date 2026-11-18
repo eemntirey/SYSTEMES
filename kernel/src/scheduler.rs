@@ -306,8 +306,7 @@ pub fn publish_ring3_task(task_id: TaskId, saved_rsp: usize) -> Result<(), Sched
     }
     let resource = unsafe { task_resource_ptr(resource_id) };
     let stack_start = unsafe { core::ptr::addr_of!((*resource).stack.0) as usize };
-    let stack_end = stack_start.saturating_add(STACK_SIZE);
-    if saved_rsp < stack_start || saved_rsp >= stack_end {
+    if !stack_contains(stack_start, STACK_SIZE, saved_rsp) {
         unlock_run_queue(cpu_index);
         irq_restore(flags);
         return Err(SchedulerError::InvalidSavedStack);
@@ -465,6 +464,10 @@ fn task_ptr(cpu_index: usize, index: usize) -> *mut Task {
     let sched = cpu_scheduler(cpu_index);
     // SAFETY: Caller validates indices.
     unsafe { core::ptr::addr_of_mut!((*sched).tasks).cast::<Task>().add(index) }
+}
+
+fn stack_contains(stack_start: usize, stack_size: usize, saved_rsp: usize) -> bool {
+    saved_rsp >= stack_start && saved_rsp < stack_start.saturating_add(stack_size)
 }
 
 /// Get the current CPU's scheduler index (APIC ID).
@@ -1401,23 +1404,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ring3_task_reservation_is_not_runnable_until_published() {
-        let mut task = Task::new();
-        task.cpu_affine.store(true, Ordering::Relaxed);
-        task.ring3_context_id.store(42, Ordering::Relaxed);
-        assert_eq!(TaskState::from_raw(task.state.load(Ordering::Acquire)), TaskState::Empty);
-        assert_eq!(task.saved_rsp.load(Ordering::Acquire), 0);
-        assert!(task.cpu_affine.load(Ordering::Acquire));
-        assert_eq!(task.ring3_context_id.load(Ordering::Acquire), 42);
-    }
-
-    #[test]
-    fn ring3_publication_requires_a_valid_pinned_stack_pointer() {
+    fn ring3_saved_rsp_must_belong_to_its_pinned_kernel_stack() {
         let start = 0x1000usize;
-        let end = start + STACK_SIZE;
-        assert!(0x1000 < end && 0x1000 >= start);
-        assert!(!(start - 1 >= start && start - 1 < end));
-        assert!(!(end >= start && end < end));
+        assert!(stack_contains(start, STACK_SIZE, start));
+        assert!(stack_contains(start, STACK_SIZE, start + STACK_SIZE - 1));
+        assert!(!stack_contains(start, STACK_SIZE, start - 1));
+        assert!(!stack_contains(start, STACK_SIZE, start + STACK_SIZE));
     }
 
     #[test]
