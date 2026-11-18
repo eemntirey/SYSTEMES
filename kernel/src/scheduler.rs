@@ -46,6 +46,33 @@ impl TaskState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TaskId(pub usize);
 
+/// Opaque stable identifier for the owner-managed Ring 3 context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ring3TaskContextRef(usize);
+
+impl Ring3TaskContextRef {
+    pub const fn new(id: usize) -> Self { Self(id) }
+}
+
+/// Fixed-size diagnostic captured once when a Ring 3 task exits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskExitReason {
+    VoluntaryExit { code: i32 },
+    PageFault { cr2: usize, error_code: usize, rip: usize },
+    GeneralProtection { error_code: usize, rip: usize },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SchedulerError {
+    NotInitialized,
+    InvalidTask,
+    BootTask,
+    CurrentTask,
+    ContextAlreadyAttached,
+    InvalidTaskState,
+    AlreadyExited,
+}
+
 pub type TaskEntry = extern "C" fn();
 
 #[repr(C, align(16))]
@@ -63,6 +90,10 @@ struct Task {
     entry: AtomicUsize,
     wake_at: AtomicU64,
     migrations: AtomicUsize,
+    ring3_context_id: AtomicUsize,
+    cpu_affine: AtomicBool,
+    /// Written under run_queue_lock before Exited is published; immutable afterwards.
+    exit_reason: Option<TaskExitReason>,
 }
 
 impl Task {
@@ -75,7 +106,25 @@ impl Task {
             entry: AtomicUsize::new(0),
             wake_at: AtomicU64::new(0),
             migrations: AtomicUsize::new(0),
+            ring3_context_id: AtomicUsize::new(usize::MAX),
+            cpu_affine: AtomicBool::new(false),
+            exit_reason: None,
         }
+    }
+
+    /// Caller holds this CPU's run_queue_lock. The first caller stores the reason
+    /// before publishing Exited; later callers cannot overwrite it.
+    fn try_mark_exited(&mut self, reason: TaskExitReason) -> bool {
+        let state = self.state.load(Ordering::Acquire);
+        if state != TaskState::Running as u8
+            && state != TaskState::Runnable as u8
+            && state != TaskState::Blocked as u8
+        {
+            return false;
+        }
+        self.exit_reason = Some(reason);
+        self.state.store(TaskState::Exited as u8, Ordering::Release);
+        true
     }
 }
 
@@ -220,6 +269,8 @@ fn steal_task(receiver: usize) -> bool {
                 if src_index == donor_current { continue; }
                 let src = task_ptr(donor, src_index);
                 if unsafe { (*src).state.load(Ordering::Acquire) } != TaskState::Runnable as u8 { continue; }
+                // Ring 3 contexts are CPU-affine until CR3/TSS/GS state is migratable.
+                if unsafe { (*src).cpu_affine.load(Ordering::Acquire) } { continue; }
                 let resource_id = unsafe { (*src).resource_id.load(Ordering::Acquire) };
                 let src_rsp = unsafe { (*src).saved_rsp.load(Ordering::Acquire) };
                 if resource_id >= MAX_CPUS * MAX_TASKS || src_rsp == 0 { continue; }
@@ -457,6 +508,9 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
             (*task).entry.store(0, Ordering::Relaxed);
             (*task).wake_at.store(0, Ordering::Relaxed);
             (*task).migrations.store(0, Ordering::Relaxed);
+            (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
+            (*task).cpu_affine.store(false, Ordering::Relaxed);
+            (*task).exit_reason = None;
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
         }
     }
@@ -801,6 +855,126 @@ pub fn current_task() -> TaskId {
     TaskId(unsafe { (*sched).current_task.load(Ordering::Acquire) })
 }
 
+/// Return the current task only when the local scheduler and slot are valid.
+pub fn current_task_id() -> Option<TaskId> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return None; }
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return None; }
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    if current >= unsafe { (*sched).task_count.load(Ordering::Acquire) } { return None; }
+    Some(TaskId(current))
+}
+
+/// Attach an owner-managed Ring 3 context to an initialized, non-current task slot.
+pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Result<(), SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    if task_id.0 == 0 {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::BootTask);
+    }
+    if task_id.0 >= count {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidTask);
+    }
+    if task_id.0 == current {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::CurrentTask);
+    }
+    let task = task_ptr(cpu_index, task_id.0);
+    if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Runnable as u8
+        || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } != usize::MAX
+    {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::ContextAlreadyAttached);
+    }
+    // Affinity is published before the opaque context ID, while thief and attach
+    // serialize on the same run-queue lock.
+    unsafe {
+        (*task).cpu_affine.store(true, Ordering::Release);
+        (*task).ring3_context_id.store(context.0, Ordering::Release);
+    }
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    Ok(())
+}
+
+/// Record the first exit reason for the currently running task.
+pub fn mark_current_exited(reason: TaskExitReason) -> Result<(), SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if current == 0 || current >= count {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidTask);
+    }
+    let task = task_ptr(cpu_index, current);
+    // SAFETY: The queue lock serializes the sole write and state publication.
+    let marked = unsafe { (*task).try_mark_exited(reason) };
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    if marked { Ok(()) } else { Err(SchedulerError::AlreadyExited) }
+}
+
+/// Select another runnable task after the caller has already published Exited.
+/// This path never saves or reactivates the terminating task and frees no resources.
+pub fn schedule_after_exit(saved_rsp: usize) -> usize {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return saved_rsp; }
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } { return saved_rsp; }
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    let current = unsafe { (*sched).current_task.load(Ordering::Acquire) };
+    if current >= count
+        || unsafe { (*task_ptr(cpu_index, current)).state.load(Ordering::Acquire) } != TaskState::Exited as u8
+    {
+        unlock_run_queue(cpu_index);
+        return saved_rsp;
+    }
+    let mut states = [TaskState::Empty; MAX_TASKS];
+    for index in 0..count {
+        states[index] = TaskState::from_raw(unsafe { (*task_ptr(cpu_index, index)).state.load(Ordering::Acquire) });
+    }
+    let next = select_next(current, &states[..count]);
+    if let Some(next_index) = next {
+        let next_task = task_ptr(cpu_index, next_index);
+        let next_rsp = unsafe { (*next_task).saved_rsp.load(Ordering::Acquire) };
+        if next_rsp != 0
+            && unsafe { (*next_task).state.compare_exchange(TaskState::Runnable as u8, TaskState::Running as u8, Ordering::AcqRel, Ordering::Acquire) }.is_ok()
+        {
+            unsafe { (*sched).current_task.store(next_index, Ordering::Release); }
+            unlock_run_queue(cpu_index);
+            return next_rsp;
+        }
+    }
+    unlock_run_queue(cpu_index);
+    saved_rsp
+}
+
 pub fn task_state(id: TaskId) -> Option<TaskState> {
     let cpu_index = current_cpu_index();
     let sched = unsafe { cpu_scheduler(cpu_index) };
@@ -1084,6 +1258,41 @@ pub fn run_preemptive_qemu_test() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_exit_reason_defaults_to_none_for_existing_kernel_tasks() {
+        let task = Task::new();
+        assert_eq!(task.exit_reason, None);
+    }
+
+    #[test]
+    fn task_exit_reason_preserves_every_fixed_size_variant() {
+        let cases = [
+            TaskExitReason::VoluntaryExit { code: 23 },
+            TaskExitReason::PageFault { cr2: 0x1234_5000, error_code: 5, rip: 0x4000 },
+            TaskExitReason::GeneralProtection { error_code: 0, rip: 0x5000 },
+        ];
+
+        for reason in cases {
+            let mut task = Task::new();
+            task.state.store(TaskState::Running as u8, Ordering::Relaxed);
+            assert!(task.try_mark_exited(reason));
+            assert_eq!(task.exit_reason, Some(reason));
+            assert_eq!(TaskState::from_raw(task.state.load(Ordering::Acquire)), TaskState::Exited);
+        }
+    }
+
+    #[test]
+    fn double_termination_does_not_overwrite_the_first_exit_reason() {
+        let mut task = Task::new();
+        task.state.store(TaskState::Running as u8, Ordering::Relaxed);
+        let first = TaskExitReason::VoluntaryExit { code: 7 };
+        let second = TaskExitReason::PageFault { cr2: 0xdead_0000, error_code: 4, rip: 0x6000 };
+
+        assert!(task.try_mark_exited(first));
+        assert!(!task.try_mark_exited(second));
+        assert_eq!(task.exit_reason, Some(first));
+    }
 
     #[test]
     fn blocked_task_is_woken_only_at_or_after_its_deadline() {

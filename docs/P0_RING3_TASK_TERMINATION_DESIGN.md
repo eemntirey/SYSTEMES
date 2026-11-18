@@ -83,20 +83,24 @@ Pour une tâche ordonnançable, **ne pas reprendre la continuation de la tâche 
 
 ## 5. Espace d'adressage : choix et TLB
 
-**Choix : un espace d'adressage privé par tâche Ring 3.** Le root noyau reste partagé via le slot PML4 noyau, comme le fait déjà `AddressSpace::create` ([address_space.rs:90-130](../kernel/src/address_space.rs#L90-L130)) ; mappings utilisateur et pile sont privés.
+**Décision C1 : un espace d'adressage privé par tâche Ring 3 dès la première livraison fonctionnelle Ring 3**, même si ces tâches sont CPU-affines. Le root noyau reste partagé via le slot PML4 noyau, comme le fait déjà `AddressSpace::create` ([address_space.rs:90-130](../kernel/src/address_space.rs#L90-L130)) ; les mappings utilisateur et la pile utilisateur sont privés.
+
+La CPU-affinité limite le processeur qui peut exécuter une tâche ; elle ne constitue pas une isolation mémoire et ne donne pas une propriété indépendante des mappings. Deux tâches affectées au même CPU peuvent s'exécuter successivement avec des images, piles, permissions et durées de vie distinctes. Avec un root utilisateur partagé, le retrait ou la libération des mappings d'une tâche pourrait invalider ou exposer ceux de l'autre. Le fait qu'un seul CPU utilise le root à un instant donné ne résout pas cette propriété logique ni l'isolation entre tâches.
 
 Justification :
 - Un root partagé, comme le test SMP actuel ([address_space.rs:938-980](../kernel/src/address_space.rs#L938-L980)), ne permet pas une isolation correcte entre tâches ayant images, piles ou permissions différentes.
 - Un espace privé rend explicite la propriété des frames et permet la terminaison indépendante sans détruire les mappings d'une autre tâche.
-- Le coût est un CR3 par commutation Ring 3 et un protocole TLB inter-CPU. C'est plus coûteux que le test synchrone, mais nécessaire pour la terminaison indépendante et l'isolation mémoire.
+- La CPU-affinité simplifie le suivi des CPU pouvant activer un root, mais ne remplace pas l'espace privé. Le coût est un CR3 par commutation Ring 3 et, si le root a pu être activé sur plusieurs CPU, un protocole TLB inter-CPU. C'est plus coûteux que le test synchrone, mais nécessaire pour la terminaison indépendante et l'isolation mémoire.
 
 **État actuel :** `write_cr3` charge un root et invalide localement les entrées TLB non globales ([address_space.rs:357-365](../kernel/src/address_space.rs#L357-L365)) ; `AddressSpace::destroy` ne vérifie que le CR3 local ([address_space.rs:208-220](../kernel/src/address_space.rs#L208-L220)). Aucun mécanisme de shootdown TLB SMP ni registre des CPU actifs par address space n'a été trouvé dans le code audité. Il faut le construire avant toute libération concurrente d'un root potentiellement utilisé sur plusieurs CPU.
 
 Protocole cible :
 - Chaque espace maintient un masque atomique des CPU actifs (ou structure équivalente protégée) ; le bit est posé avant activation du CR3 et retiré après désactivation.
 - À la destruction, empêcher toute nouvelle activation, snapshotter les CPU actifs, envoyer un IPI TLB-shootdown, exécuter `invlpg` ou recharger CR3 sur chaque CPU, puis attendre les ACK acquire/release.
-- Le reaper libère les frames seulement après masque vide, ACK de tous les CPU ciblés et absence de références lecteurs.
-- Pour le premier incrément, garder les tâches Ring 3 CPU-affines et interdire le partage de leur root : cela réduit le shootdown à un détachement local vérifiable, mais le protocole SMP reste requis dès qu'un root peut migrer ou être partagé.
+- Le reaper est exécuté par le CPU propriétaire de la tâche, depuis son contexte idle ou un worker noyau local, jamais depuis la pile de la tâche terminée. Avec la règle CPU-affine stricte, aucun autre CPU ne doit activer ce root : après le switch local vers un CR3 sûr, le propriétaire retire le root de sa file de réclamation locale.
+- Le reaper prend le verrou dédié de la file locale uniquement pour retirer un élément, puis le relâche avant toute destruction d'`AddressSpace` ou opération d'allocateur. Il ne prend pas `run_queue_lock` et ne prend jamais un verrou scheduler en attendant un autre CPU. Aucun spin-wait ni attente active n'est autorisé : si le masque CPU actif ou les références ne sont pas à zéro, l'élément est remis en attente et le worker poursuit d'autres tâches ; un mécanisme IPI/ACK asynchrone n'est requis que si une activation distante est constatée ou autorisée.
+- Ordre de synchronisation : publication de la terminaison sous le verrou scheduler ; sélection et bascule hors du CR3 fautif ; transfert vers la file locale après confirmation du détachement ; retrait bref sous le verrou de file de réclamation ; relâchement de ce verrou ; vérification des références/CPU actifs ; destruction des tables et mappings ; libération des frames et piles ; libération finale du descripteur. Aucun verrou de file n'est conservé pendant la destruction.
+- Pour le premier incrément scheduler, ne pas introduire de file de réclamation ni de mécanisme CR3 : ces responsabilités sont hors 4d. La CPU-affinité et l'interdiction de partager le root sont des invariants de la future activation Ring 3. Si un CPU distant peut avoir activé le root, le reaper diffère la libération sans attente active ; le protocole IPI/TLB-shootdown/ACK devra alors être implémenté avant toute réclamation.
 
 Ce mécanisme et le reaper ne font **pas** partie de l'interface scheduler 4d ; ils sont des dépendances ultérieures, pas simulées par `AddressSpace::destroy`.
 
@@ -122,7 +126,7 @@ Ce mécanisme et le reaper ne font **pas** partie de l'interface scheduler 4d ; 
 |---|---|
 | Faute pendant un changement de contexte | Utiliser le frame et la pile valides du CPU. Si l'identité de tâche n'est pas stable ou si le switch est critique, marquer une terminaison différée ; ne jamais libérer dans le handler. |
 | Un autre CPU lit la tâche pendant sa terminaison | Le lecteur prend une référence/pin avant de déréférencer le contexte. Le reaper attend références à zéro et shootdown ACK. |
-| Double terminaison (SYS_EXIT puis faute ou double événement) | CAS unique `Running/Runnable -> Exited`; un seul gagnant enregistre la raison et publie la réclamation. Les suivants observent Exited/Reaping/Reaped et ne libèrent rien. |
+| Double terminaison (SYS_EXIT puis faute ou double événement) | Sous `run_queue_lock`, un seul gagnant écrit `exit_reason` puis publie `Exited` en Release. Les suivants observent Exited/Reaping/Reaped et ne modifient jamais la première raison ni ne publient une seconde réclamation. |
 | Timer après Exited | Le chemin de sauvegarde reconnaît Exited et ne sauvegarde pas le RSP comme Runnable. |
 | Tâche Ring 3 trouvée par work-stealing | Refuser le transfert tant que registres CPU-locaux, TSS et CR3 ne sont pas migrables. |
 | Aucun autre Runnable | Revenir à idle/boot ; le reaper travaille ensuite depuis une pile distincte. |
@@ -136,8 +140,11 @@ Ne pas changer sélection round-robin, timer, priorités ou politique des tâche
 ### Types et champs
 
 - `Ring3TaskContextRef` : identifiant opaque stable du contexte propriétaire ; pas un pointeur non protégé.
-- `TaskExitReason` : code volontaire ou diagnostic faute { vector, error_code, cr2, rip }.
-- Dans `Task`, ajouter `ring3_context_id: AtomicUsize`, initialisé à `usize::MAX`, et `cpu_affine: AtomicBool` pour exclure les tâches Ring 3 de `steal_task`.
+- `TaskExitReason` : enum `Copy`, sans allocation et à payload de taille fixe : `VoluntaryExit { code: i32 }`, `PageFault { cr2: usize, error_code: usize, rip: usize }` et `GeneralProtection { error_code: usize, rip: usize }`. L'option `None` signifie qu'aucune raison n'a été publiée.
+- Dans `Task`, ajouter `ring3_context_id: AtomicUsize`, initialisé à `usize::MAX`, `cpu_affine: AtomicBool` initialisé à `false`, et `exit_reason: Option<TaskExitReason>` initialisé à `None`.
+- Le champ `exit_reason` est écrit une seule fois sous `run_queue_lock`, avant la publication `Exited` avec ordre `Release`. Le gagnant vérifie l'état source puis écrit la raison et publie `Exited`; tout appel ultérieur qui observe `Exited`/`Reaping`/`Reaped` retourne sans toucher au champ. La raison n'est donc jamais remplacée.
+- Le reaper observe d'abord `Exited` avec un chargement `Acquire`, puis lit `exit_reason` sans reprendre de verrou : la publication `Release` rend l'écriture visible et l'état terminal garantit qu'aucun écrivain ultérieur ne peut modifier le champ. L'ordre d'acquisition est donc uniquement `run_queue_lock` pour l'écriture ; le lecteur ne prend ni `run_queue_lock` ni verrou de reaper pour lire la raison. Le reaper acquiert séparément son verrou de file locale uniquement après le détachement CR3, conformément à C3 ; il ne garde jamais ce verrou pendant la lecture/ destruction du contexte.
+- Les tâches noyau existantes conservent `exit_reason == None` tant qu'elles n'utilisent pas explicitement cette API ; leur initialisation et leur chemin de terminaison historiques ne sont pas modifiés.
 - Ne pas placer `AddressSpace` ni des allocations dans `Task` : le scheduler conserve une référence/ID ; le propriétaire mémoire reste hors scheduler.
 
 ### Signatures exactes
@@ -160,7 +167,7 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize;
 Contrat :
 - `attach_ring3_context` n'accepte qu'un slot initialisé non-boot, non courant, vide de contexte et dans l'état attendu ; il le rend CPU-affine avant de publier le contexte.
 - `current_task_id` retourne le slot courant seulement si l'ordonnanceur est initialisé et l'index valide.
-- `mark_current_exited` effectue une transition idempotente atomique sous le verrou de queue ; un seul appelant gagne et le contexte reste référencé pour le reaper.
+- `mark_current_exited` effectue sous `run_queue_lock` la transition idempotente : vérifier l'état, écrire `exit_reason` une seule fois, puis publier `Exited` en `Release`. Un seul appelant gagne ; une seconde terminaison ne peut ni remplacer la raison ni publier une nouvelle réclamation. Le contexte reste référencé pour le reaper.
 - `schedule_after_exit` exige que la tâche courante soit déjà Exited ; il appelle la sélection existante sans sauver ni réactiver la tâche terminée. Il ne libère aucune ressource et retourne uniquement le RSP du prochain contexte.
 - Le chemin timer/yield ordinaire garde son comportement actuel. Le scheduler ne fait ni switch CR3, ni manipulation TSS/GS, ni libération mémoire.
 
