@@ -148,3 +148,17 @@ La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans racco
 - `current_task_id`, `mark_current_exited` et `schedule_after_exit` constituent l'interface additive. Aucun chemin de faute ou syscall existant n'est encore branché sur ces API.
 
 **Validation :** les tests dédiés sont présents dans la branche, mais leur résultat, les builds de production et la matrice QEMU 1/2/4 CPU restent en attente de la CI du SHA final de la PR. Ne pas considérer l'incrément comme validé avant le rapport CI.
+
+
+## 10. P0-B — réservation scheduler des contextes Ring 3 (en cours)
+
+La branche `p0-b-ring3-task-reservation` introduit une réservation en deux phases dans `kernel/src/scheduler.rs` :
+
+- `reserve_ring3_task` choisit un slot non-boot libre sur le CPU courant, le marque CPU-affine et associe l'identifiant opaque du contexte ; le slot reste `Empty` et n'est donc pas sélectionnable.
+- `publish_ring3_task` n'autorise la transition vers `Runnable` qu'après validation d'un RSP non nul situé dans la pile noyau fixe appartenant au slot.
+- `cancel_ring3_reservation` libère uniquement une réservation encore non publiée.
+- Le compteur de slots couvre les indices réservés, y compris les trous ; les sélecteurs existants ignorent les slots `Empty`. Le work-stealing ne peut donc pas prendre une réservation Ring 3.
+
+**Limite actuelle :** ces API ne construisent pas encore la continuation noyau qui entre en Ring 3, ne relient pas encore `ProcessTable` à `TaskId`, et ne modifient ni CR3, ni TSS.RSP0, ni GS/SYSCALL. Elles constituent une primitive P0-B, pas l'achèvement de P0-B. Aucun processus n'est rendu exécutable par ce seul changement.
+
+**Validation :** en attente de la CI sur le SHA final de la branche. Aucun résultat de compilation locale ni de QEMU n'est revendiqué.
