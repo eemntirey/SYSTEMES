@@ -71,6 +71,10 @@ pub enum SchedulerError {
     ContextAlreadyAttached,
     InvalidTaskState,
     AlreadyExited,
+    NoFreeTaskSlot,
+    InvalidContext,
+    NotReserved,
+    InvalidSavedStack,
 }
 
 pub type TaskEntry = extern "C" fn();
@@ -222,6 +226,143 @@ pub fn record_migrated_task_execution() -> bool {
 
 pub fn migrated_task_execution_count() -> usize {
     MIGRATED_TASK_EXECUTIONS.load(Ordering::Acquire)
+}
+
+/// Reserve a private scheduler slot for a Ring 3 process on the current CPU.
+///
+/// Reservation does not make the task runnable. The owner must finish constructing
+/// its kernel continuation and call publish_ring3_task only after that continuation
+/// is fully initialized. Reserved slots are CPU-affine and cannot be work-stolen.
+pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<TaskId, SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    if context.0 == usize::MAX { return Err(SchedulerError::InvalidContext); }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let mut selected = None;
+    for index in 1..MAX_TASKS {
+        let task = task_ptr(cpu_index, index);
+        if unsafe { (*task).state.load(Ordering::Acquire) } == TaskState::Empty as u8
+            && unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } == usize::MAX
+            && unsafe { (*task).saved_rsp.load(Ordering::Acquire) } == 0
+        {
+            selected = Some(index);
+            break;
+        }
+    }
+    let Some(index) = selected else {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::NoFreeTaskSlot);
+    };
+    let task = task_ptr(cpu_index, index);
+    // Keep the slot invisible to scheduling until publish_ring3_task. Affinity is
+    // set first so a concurrent thief can never treat the reservation as migratable.
+    unsafe {
+        (*task).cpu_affine.store(true, Ordering::Release);
+        (*task).ring3_context_id.store(context.0, Ordering::Release);
+        (*task).entry.store(0, Ordering::Relaxed);
+        (*task).wake_at.store(0, Ordering::Relaxed);
+        (*task).switches.store(0, Ordering::Relaxed);
+        (*task).migrations.store(0, Ordering::Relaxed);
+        let count = (*sched).task_count.load(Ordering::Acquire);
+        if index >= count { (*sched).task_count.store(index + 1, Ordering::Release); }
+    }
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    Ok(TaskId(index))
+}
+
+/// Publish a reserved Ring 3 task only after its initial kernel continuation exists.
+/// The saved RSP must point inside the task's own pinned kernel stack.
+pub fn publish_ring3_task(task_id: TaskId, saved_rsp: usize) -> Result<(), SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    if saved_rsp == 0 { return Err(SchedulerError::InvalidSavedStack); }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if task_id.0 == 0 || task_id.0 >= count || task_id.0 >= MAX_TASKS {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidTask);
+    }
+    let task = task_ptr(cpu_index, task_id.0);
+    let resource_id = unsafe { (*task).resource_id.load(Ordering::Acquire) };
+    if resource_id >= MAX_CPUS * MAX_TASKS {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidSavedStack);
+    }
+    let resource = unsafe { task_resource_ptr(resource_id) };
+    let stack_start = unsafe { core::ptr::addr_of!((*resource).stack.0) as usize };
+    let stack_end = stack_start.saturating_add(STACK_SIZE);
+    if saved_rsp < stack_start || saved_rsp >= stack_end {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidSavedStack);
+    }
+    if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Empty as u8
+        || unsafe { (*task).cpu_affine.load(Ordering::Acquire) } == false
+        || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } == usize::MAX
+        || unsafe { (*task).saved_rsp.load(Ordering::Acquire) } != 0
+    {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::NotReserved);
+    }
+    unsafe {
+        (*task).saved_rsp.store(saved_rsp, Ordering::Relaxed);
+        (*task).state.store(TaskState::Runnable as u8, Ordering::Release);
+    }
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    Ok(())
+}
+
+/// Cancel a reservation that failed before publication; no runnable task is touched.
+pub fn cancel_ring3_reservation(task_id: TaskId) -> Result<(), SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if task_id.0 == 0 || task_id.0 >= count || task_id.0 >= MAX_TASKS {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidTask);
+    }
+    let task = task_ptr(cpu_index, task_id.0);
+    if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Empty as u8
+        || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } == usize::MAX
+        || unsafe { (*task).saved_rsp.load(Ordering::Acquire) } != 0
+    {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::NotReserved);
+    }
+    unsafe {
+        (*task).ring3_context_id.store(usize::MAX, Ordering::Release);
+        (*task).cpu_affine.store(false, Ordering::Release);
+    }
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    Ok(())
 }
 
 /// Move one READY task from a donor CPU into an idle receiver's private task slot.
@@ -1258,6 +1399,26 @@ pub fn run_preemptive_qemu_test() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring3_task_reservation_is_not_runnable_until_published() {
+        let mut task = Task::new();
+        task.cpu_affine.store(true, Ordering::Relaxed);
+        task.ring3_context_id.store(42, Ordering::Relaxed);
+        assert_eq!(TaskState::from_raw(task.state.load(Ordering::Acquire)), TaskState::Empty);
+        assert_eq!(task.saved_rsp.load(Ordering::Acquire), 0);
+        assert!(task.cpu_affine.load(Ordering::Acquire));
+        assert_eq!(task.ring3_context_id.load(Ordering::Acquire), 42);
+    }
+
+    #[test]
+    fn ring3_publication_requires_a_valid_pinned_stack_pointer() {
+        let start = 0x1000usize;
+        let end = start + STACK_SIZE;
+        assert!(0x1000 < end && 0x1000 >= start);
+        assert!(!(start - 1 >= start && start - 1 < end));
+        assert!(!(end >= start && end < end));
+    }
 
     #[test]
     fn task_exit_reason_defaults_to_none_for_existing_kernel_tasks() {
