@@ -306,7 +306,12 @@ pub fn publish_ring3_task(task_id: TaskId, saved_rsp: usize) -> Result<(), Sched
     }
     let resource = unsafe { task_resource_ptr(resource_id) };
     let stack_start = unsafe { core::ptr::addr_of!((*resource).stack.0) as usize };
-    if !stack_contains(stack_start, STACK_SIZE, saved_rsp) {
+    if !stack_contains(
+        stack_start,
+        STACK_SIZE,
+        saved_rsp,
+        INTERRUPT_FRAME_WORDS * core::mem::size_of::<usize>(),
+    ) {
         unlock_run_queue(cpu_index);
         irq_restore(flags);
         return Err(SchedulerError::InvalidSavedStack);
@@ -466,8 +471,12 @@ fn task_ptr(cpu_index: usize, index: usize) -> *mut Task {
     unsafe { core::ptr::addr_of_mut!((*sched).tasks).cast::<Task>().add(index) }
 }
 
-fn stack_contains(stack_start: usize, stack_size: usize, saved_rsp: usize) -> bool {
-    saved_rsp >= stack_start && saved_rsp < stack_start.saturating_add(stack_size)
+fn stack_contains(stack_start: usize, stack_size: usize, saved_rsp: usize, required_bytes: usize) -> bool {
+    if required_bytes == 0 || stack_size < required_bytes || saved_rsp % core::mem::align_of::<usize>() != 0 {
+        return false;
+    }
+    let last_valid_start = stack_start.saturating_add(stack_size).saturating_sub(required_bytes);
+    saved_rsp >= stack_start && saved_rsp <= last_valid_start
 }
 
 /// Get the current CPU's scheduler index (APIC ID).
@@ -1406,10 +1415,12 @@ mod tests {
     #[test]
     fn ring3_saved_rsp_must_belong_to_its_pinned_kernel_stack() {
         let start = 0x1000usize;
-        assert!(stack_contains(start, STACK_SIZE, start));
-        assert!(stack_contains(start, STACK_SIZE, start + STACK_SIZE - 1));
-        assert!(!stack_contains(start, STACK_SIZE, start - 1));
-        assert!(!stack_contains(start, STACK_SIZE, start + STACK_SIZE));
+        let frame_bytes = INTERRUPT_FRAME_WORDS * core::mem::size_of::<usize>();
+        assert!(stack_contains(start, STACK_SIZE, start, frame_bytes));
+        assert!(stack_contains(start, STACK_SIZE, start + STACK_SIZE - frame_bytes, frame_bytes));
+        assert!(!stack_contains(start, STACK_SIZE, start + STACK_SIZE - frame_bytes + 8, frame_bytes));
+        assert!(!stack_contains(start, STACK_SIZE, start - 8, frame_bytes));
+        assert!(!stack_contains(start, STACK_SIZE, start + 1, frame_bytes));
     }
 
     #[test]
