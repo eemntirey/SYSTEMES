@@ -155,7 +155,7 @@ La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans racco
 La branche `p0-b-ring3-task-reservation` introduit une réservation en deux phases dans `kernel/src/scheduler.rs` :
 
 - `reserve_ring3_task` choisit un slot non-boot libre sur le CPU courant, le marque CPU-affine et associe l'identifiant opaque du contexte ; le slot reste `Empty` et n'est donc pas sélectionnable.
-- `publish_ring3_task` n'autorise la transition vers `Runnable` qu'après validation d'un RSP non nul situé dans la pile noyau fixe appartenant au slot.
+- `publish_ring3_task` n'autorise la transition vers `Runnable` qu'après validation d'un RSP aligné et d'un cadre complet de restauration situé dans la pile noyau fixe appartenant au slot.
 - `cancel_ring3_reservation` libère uniquement une réservation encore non publiée.
 - Le compteur de slots couvre les indices réservés, y compris les trous ; les sélecteurs existants ignorent les slots `Empty`. Le work-stealing ne peut donc pas prendre une réservation Ring 3.
 
