@@ -9,7 +9,7 @@ Ce document conserve l'historique de l'intégration #86 et du durcissement #88. 
 ## 1. État global P0
 
 **Étape 1 — isolation Ring 3 / SYSCALL par CPU : intégrée et validée par la CI de la PR #86.**  
-**P0 complet : non déclaré terminé.** L'audit de durcissement décrit en section 6 reste à réaliser avant toute correction supplémentaire.
+**P0 complet : non déclaré terminé.** L'audit de durcissement décrit en section 6 a été réalisé (PR #88, [P0_RING3_SYSCALL_AUDIT.md](P0_RING3_SYSCALL_AUDIT.md)) : aucun BUG CONFIRMÉ, deux risques conditionnels (b, e) et une limite fonctionnelle (h) traitée au niveau 1 par la PR #89. Le niveau 2 (terminaison de tâche) reste en cours (PR #92).
 
 La PR [#86](https://github.com/eemntirey/SYSTEMES/pull/86) a été fusionnée le 14 novembre 2026. Son commit source est `0ff021dc42cc3593cbcddf382a25aaf6e3704450`, et son commit squash est `484c01e82568994bd9244e519839367f1ddc09cd`.
 
@@ -94,7 +94,7 @@ Les fonctionnalités de processus, PID, tables de fichiers par processus, `fork`
 
 ## 6. Travail restant — durcissement P0
 
-La phase suivante est un audit du chemin d'entrée/sortie Ring 3 et SYSCALL sur le code courant, avant toute modification. Elle doit classer chaque point BUG CONFIRMÉ / RISQUE / OK et ne retenir que les deux premières catégories lorsqu'elles sont justifiées par le code.
+La liste ci-dessous est celle confiée à l'audit PR #88, réalisé et publié dans [P0_RING3_SYSCALL_AUDIT.md](P0_RING3_SYSCALL_AUDIT.md). Elle est conservée comme grille de référence ; les statuts individuels (a–h) figurent dans ce document.
 
 Points à vérifier :
 
@@ -121,6 +121,18 @@ Aucun bug n'est présumé dans cette liste : chaque constat doit être établi �
 ## 7. Historique de l'actualisation
 
 L'audit initial du 13 novembre décrivait notamment la pile SYSCALL et plusieurs états Ring 3 comme globaux, car il portait sur une base antérieure à la PR #86. Ces constats restent utiles comme historique, mais ne doivent plus être présentés comme l'état du code après le commit squash ci-dessus lorsque les champs concernés ont été déplacés dans `SyscallCpuLocal`.
+
+### 7.1 Nettoyage du code hors graphe de compilation (branche `chore/remove-uncompiled-sources`)
+
+Le commit `a5c89e5` avait ajouté trois fichiers jamais déclarés dans `lib.rs` ni `main.rs`, donc jamais compilés : `process.rs` (368 lignes), `keyboard.rs` (22 lignes) et `rtc.rs` (540 lignes). Son message annonçait SYS_SPAWN / SYS_FORK / SYS_GETPID / SYS_WAITPID / SYS_READKEY, une initialisation PIC/IRQ1 et l'IDT 0x21 : **aucune de ces entrées n'existe dans le code** (`syscall.rs` ne définit que SYS 0–8). Ces faits sont documentés ici pour ne pas repartir sur des bases fausses.
+
+Décision fichier par fichier (règle : brancher ce qui sert la feuille de route immédiate et est testable sous QEMU, supprimer le reste — l'historique Git conserve le contenu) :
+
+- `process.rs` → **supprimé** : table `static mut` exposée sans verrou (l'anti-pattern même du verdict P0 §1), `fork_current` non implémenté, jamais appelé. Le modèle réel fera l'objet de `K3_PROCESS_MODEL_DESIGN.md` après la fusion du niveau 2.
+- `keyboard.rs` → **supprimé** : stub dont `poll()` renvoie toujours 0, sans décodage scancode. Le pilote PS/2 réel est la Phase 2 de la feuille de route (IRQ1, IDT 0x21, scancode set 2).
+- `rtc.rs` → **supprimé** : implémentation complète et testée (10 tests) mais RTC = K5, pas la feuille de route immédiate ; le brancher ici mélangerait suppression et fonctionnalité. Il sera récupéré via `git show a5c89e5:kernel/src/rtc.rs` dans `K5_SERVICES_DESIGN.md`.
+
+Après ce nettoyage, tout fichier `.rs` sous `kernel/src/` appartient au graphe de compilation.
 
 
 ## 8. P0 — récupération des fautes Ring 3 synchrones (PR #89)
