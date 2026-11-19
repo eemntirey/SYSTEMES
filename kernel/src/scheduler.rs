@@ -46,6 +46,19 @@ impl TaskState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TaskId(pub usize);
 
+/// CPU-qualified identity for a reserved Ring 3 scheduler slot.
+/// TaskId is local to one CPU queue; this handle prevents cross-CPU slot confusion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ring3TaskHandle {
+    cpu_index: usize,
+    task_id: TaskId,
+}
+
+impl Ring3TaskHandle {
+    pub const fn cpu_index(self) -> usize { self.cpu_index }
+    pub const fn task_id(self) -> TaskId { self.task_id }
+}
+
 /// Opaque stable identifier for the owner-managed Ring 3 context.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Ring3TaskContextRef(usize);
@@ -233,7 +246,7 @@ pub fn migrated_task_execution_count() -> usize {
 /// Reservation does not make the task runnable. The owner must finish constructing
 /// its kernel continuation and call publish_ring3_task only after that continuation
 /// is fully initialized. Reserved slots are CPU-affine and cannot be work-stolen.
-pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<TaskId, SchedulerError> {
+pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandle, SchedulerError> {
     let cpu_index = current_cpu_index();
     if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
     if context.0 == usize::MAX { return Err(SchedulerError::InvalidContext); }
@@ -285,14 +298,15 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<TaskId, Schedu
     }
     unlock_run_queue(cpu_index);
     irq_restore(flags);
-    Ok(TaskId(index))
+    Ok(Ring3TaskHandle { cpu_index, task_id: TaskId(index) })
 }
 
 /// Publish a reserved Ring 3 task only after its initial kernel continuation exists.
 /// The saved RSP must point inside the task's own pinned kernel stack.
-pub fn publish_ring3_task(task_id: TaskId, saved_rsp: usize) -> Result<(), SchedulerError> {
+pub fn publish_ring3_task(handle: Ring3TaskHandle, saved_rsp: usize) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
-    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    if cpu_index >= MAX_CPUS || handle.cpu_index != cpu_index { return Err(SchedulerError::InvalidTask); }
+    let task_id = handle.task_id;
     if saved_rsp == 0 { return Err(SchedulerError::InvalidSavedStack); }
     let flags = irq_save_disable();
     let sched = cpu_scheduler(cpu_index);
@@ -345,9 +359,10 @@ pub fn publish_ring3_task(task_id: TaskId, saved_rsp: usize) -> Result<(), Sched
 }
 
 /// Cancel a reservation that failed before publication; no runnable task is touched.
-pub fn cancel_ring3_reservation(task_id: TaskId) -> Result<(), SchedulerError> {
+pub fn cancel_ring3_reservation(handle: Ring3TaskHandle) -> Result<(), SchedulerError> {
     let cpu_index = current_cpu_index();
-    if cpu_index >= MAX_CPUS { return Err(SchedulerError::InvalidTask); }
+    if cpu_index >= MAX_CPUS || handle.cpu_index != cpu_index { return Err(SchedulerError::InvalidTask); }
+    let task_id = handle.task_id;
     let flags = irq_save_disable();
     let sched = cpu_scheduler(cpu_index);
     if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
