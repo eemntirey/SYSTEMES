@@ -159,8 +159,8 @@ La branche `p0-b-ring3-task-reservation` introduit une réservation en deux phas
 - `cancel_ring3_reservation` libère uniquement une réservation encore non publiée.
 - Le compteur de slots couvre les indices réservés, y compris les trous ; les sélecteurs existants ignorent les slots `Empty`. Le work-stealing ne peut donc pas prendre une réservation Ring 3.
 
-Le module `process` est maintenant déclaré dans `kernel/src/lib.rs`, ce qui le fait entrer dans le graphe de compilation du noyau.
+Le module `process.rs` reste volontairement hors du graphe de compilation (`pub mod process` n'est pas déclaré dans `kernel/src/lib.rs`). Son activation prématurée a révélé des appels obsolètes (`set_yield_requested` et `set_syscall_user_rsp`) ainsi qu'une gestion globale mutable non synchronisée (`PROCESS_TABLE` et `FRAME_ALLOCATOR`). Ces interfaces ne doivent pas être remplacées par des stubs : le module sera réintégré après refonte cohérente de son contrat avec le scheduler et les interruptions.
 
-**Limite actuelle :** le module activé conserve encore ses états globaux mutables (`PROCESS_TABLE` et `FRAME_ALLOCATOR`) et n'associe pas encore chaque `Process` à un `TaskId`. Ces API ne construisent pas encore la continuation noyau qui entre en Ring 3 et ne modifient ni CR3, ni TSS.RSP0, ni GS/SYSCALL. Elles constituent une primitive P0-B, pas l'achèvement de P0-B. Aucun processus n'est rendu exécutable par ce seul changement.
+**Limite actuelle :** la réservation scheduler ne relie pas encore chaque `Process` à un `TaskId` et ne construit pas encore la continuation noyau qui entre en Ring 3 ; CR3, TSS.RSP0 et GS/SYSCALL restent à intégrer. Cette PR fournit une primitive P0-B, pas l'achèvement de P0-B. Aucun processus n'est rendu exécutable par ce seul changement.
 
 **Validation :** en attente de la CI sur le SHA final de la branche. Aucun résultat de compilation locale ni de QEMU n'est revendiqué.
