@@ -244,6 +244,16 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<TaskId, Schedu
         return Err(SchedulerError::NotInitialized);
     }
     lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    let mut attached_ids = [usize::MAX; MAX_TASKS];
+    for (index, id) in attached_ids.iter_mut().enumerate().take(count) {
+        *id = unsafe { (*task_ptr(cpu_index, index)).ring3_context_id.load(Ordering::Acquire) };
+    }
+    if context_id_is_attached(&attached_ids[..count], context.0) {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::ContextAlreadyAttached);
+    }
     let mut selected = None;
     for index in 1..MAX_TASKS {
         let task = task_ptr(cpu_index, index);
@@ -477,6 +487,11 @@ fn stack_contains(stack_start: usize, stack_size: usize, saved_rsp: usize, requi
     }
     let last_valid_start = stack_start.saturating_add(stack_size).saturating_sub(required_bytes);
     saved_rsp >= stack_start && saved_rsp <= last_valid_start
+}
+
+/// Return true when an opaque Ring 3 context identifier is already owned by a slot.
+fn context_id_is_attached(existing: &[usize], context_id: usize) -> bool {
+    context_id != usize::MAX && existing.iter().any(|id| *id == context_id)
 }
 
 /// Get the current CPU's scheduler index (APIC ID).
@@ -1047,6 +1062,20 @@ pub fn attach_ring3_context(task_id: TaskId, context: Ring3TaskContextRef) -> Re
         irq_restore(flags);
         return Err(SchedulerError::CurrentTask);
     }
+    if context.0 == usize::MAX {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidContext);
+    }
+    let mut attached_ids = [usize::MAX; MAX_TASKS];
+    for (index, id) in attached_ids.iter_mut().enumerate().take(count) {
+        *id = unsafe { (*task_ptr(cpu_index, index)).ring3_context_id.load(Ordering::Acquire) };
+    }
+    if context_id_is_attached(&attached_ids[..count], context.0) {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::ContextAlreadyAttached);
+    }
     let task = task_ptr(cpu_index, task_id.0);
     if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Runnable as u8
         || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } != usize::MAX
@@ -1411,6 +1440,19 @@ pub fn run_preemptive_qemu_test() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring3_context_identifiers_cannot_be_attached_twice() {
+        let existing = [usize::MAX, 17, 29, usize::MAX];
+        assert!(context_id_is_attached(&existing, 17));
+        assert!(!context_id_is_attached(&existing, 31));
+        assert!(!context_id_is_attached(&existing, usize::MAX));
+    }
+
+    #[test]
+    fn ring3_context_identifier_sentinel_is_not_a_valid_attachment() {
+        assert!(!context_id_is_attached(&[], usize::MAX));
+    }
 
     #[test]
     fn ring3_saved_rsp_must_belong_to_its_pinned_kernel_stack() {
