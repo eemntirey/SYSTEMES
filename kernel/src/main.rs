@@ -38,6 +38,7 @@ const LAUNCH_USER_SHELL: bool = cfg!(feature = "qemu-user-shell-test")
         feature = "qemu-smp-test",
         feature = "qemu-smp-scheduler-test",
         feature = "qemu-ring3-smp-test",
+        feature = "qemu-ring3-task-test",
     ));
 
 unsafe extern "C" {
@@ -58,7 +59,7 @@ fn halt() -> ! {
     }
 }
 
-#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test", feature = "qemu-syscall-pointer-isolation-test"))]
+#[cfg(any(feature = "qemu-smp-scheduler-test", feature = "qemu-ring3-smp-test", feature = "qemu-ring3-task-test", feature = "qemu-syscall-pointer-isolation-test"))]
 fn qemu_debug_exit(code: u32) -> ! {
     // Do not let a local APIC tick preempt the final test/exit sequence.
     unsafe { asm!("cli", options(nomem, nostack)); }
@@ -67,6 +68,22 @@ fn qemu_debug_exit(code: u32) -> ! {
     // diagnostic code after it: park the CPU until the host terminates the VM.
     unsafe { asm!("out dx, eax", in("dx") 0xf4u16, in("eax") code, options(nomem, nostack)); }
     halt()
+}
+
+#[cfg(feature = "qemu-ring3-task-test")]
+fn ring3_task_failure_name(error: systemes_kernel::address_space::AddressSpaceError) -> &'static [u8] {
+    use systemes_kernel::address_space::AddressSpaceError as Error;
+    match error {
+        Error::Ring3TaskStateMismatch => b"task-state-mismatch",
+        Error::Ring3TaskExitReasonMismatch => b"exit-reason-mismatch",
+        Error::Ring3TaskCr3Mismatch => b"per-task-cr3-mismatch",
+        Error::Ring3TaskResumedInUserMode => b"user-mode-resumed-after-exit",
+        Error::Ring3TaskObserverMissing => b"observer-not-scheduled",
+        Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",
+        Error::OutOfFrames => b"out-of-frames",
+        Error::OutOfMemory => b"out-of-memory",
+        _ => b"other-address-space-error",
+    }
 }
 
 #[cfg(feature = "qemu-ring3-smp-test")]
@@ -852,6 +869,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         not(feature = "qemu-preemptive-scheduler-test"),
         not(feature = "qemu-fpu-context-test"),
         not(feature = "qemu-task-sleep-test"),
+        not(feature = "qemu-ring3-task-test"),
     ))]
     if apic_timer_ready {
         if systemes_kernel::scheduler::initialize_cpu(bsp_cpu_index, &[]).is_ok() {
@@ -860,6 +878,29 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         } else {
             unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: BSP scheduler initialization failed\r\n"); }
             halt();
+        }
+    }
+
+    #[cfg(feature = "qemu-ring3-task-test")]
+    {
+        // SAFETY: The test owns the BSP, prepares private user spaces, and enters
+        // Ring 3 with interrupts masked.
+        unsafe { asm!("cli", options(nomem, nostack)); }
+        match unsafe {
+            systemes_kernel::address_space::run_qemu_ring3_task_exit_test(
+                &mut frame_allocator,
+                page_table_root,
+            )
+        } {
+            Ok(()) => qemu_debug_exit(0x10),
+            Err(error) => {
+                unsafe {
+                    debug_write(b"SYSTEMES_KERNEL_FAIL: Ring 3 schedulable task exit test failed, error=");
+                    debug_write(ring3_task_failure_name(error));
+                    debug_write(b"\r\n");
+                }
+                qemu_debug_exit(0x11);
+            }
         }
     }
 
