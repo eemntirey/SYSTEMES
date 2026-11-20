@@ -65,3 +65,15 @@ La branche `p0-ring3-task-termination` introduit une interface scheduler additiv
 Les slots associés à un contexte Ring 3 sont CPU-affines et exclus du work-stealing. Le scénario SMP ajouté doit démontrer ce comportement sur 2 et 4 CPU pendant que les AP inactifs tentent de voler les tâches ; il n'est pas encore considéré comme réussi avant CI.
 
 **Limite :** aucune entrée #PF/#GP, aucun SYS_EXIT, aucun switch CR3/TSS/GS et aucune libération/reaper ne sont raccordés par cet incrément. Le constat de l'audit selon lequel les fautes Ring 3 ne terminent pas encore une tâche ordonnançable reste donc vrai jusqu'aux incréments ultérieurs.
+
+## 10. Suivi — terminaison Ring 3 ordonnançable (niveau 2, BSP)
+
+La feature `qemu-ring3-task-test` raccorde enfin `SYS_EXIT`, #PF et #GP au contrat scheduler. Trois tâches Ring 3 possèdent chacune un espace d'adressage privé et une pile utilisateur ; chacune publie une raison de sortie unique (`VoluntaryExit`, `PageFault`, `GeneralProtection`), passe `Exited` et laisse le CPU exécuter une tâche noyau indépendante, qui n'est déclarée réussie qu'après avoir observé les trois slots terminaux.
+
+Points prouvés sous QEMU/OVMF en 1, 2 et 4 CPU :
+- CR3 privé observé par tâche lors de l'exécution utilisateur ;
+- absence de reprise utilisateur après la sortie (canari post-instruction et `UD2` jamais atteints) ;
+- reprise effective d'une autre tâche après chaque terminaison ;
+- destruction des espaces et restauration du compteur de frames.
+
+**Limites maintenues :** une seule tâche Ring 3 à la fois par CPU (la continuation noyau reste CPU-local via `gs_saved_kernel_rsp`), aucun reaper/IPI TLB-shootdown de production, tables de fichiers globales, pas de processus multiples. Le chemin CPL0 reste fatal. Voir [STATE.md](STATE.md) section 10. Ces résultats ne sont pas une validation matérielle.

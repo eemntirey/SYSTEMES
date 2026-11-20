@@ -981,7 +981,7 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize {
 /// Release after the reason is written, and no later writer can replace it.
 pub fn task_exit_reason(id: TaskId) -> Option<TaskExitReason> {
     let cpu_index = current_cpu_index();
-    let sched = unsafe { cpu_scheduler(cpu_index) };
+    let sched = cpu_scheduler(cpu_index);
     if id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
         return None;
     }

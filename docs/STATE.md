@@ -148,3 +148,29 @@ La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans racco
 - `current_task_id`, `mark_current_exited` et `schedule_after_exit` constituent l'interface additive. Aucun chemin de faute ou syscall existant n'est encore branché sur ces API.
 
 **Validation :** les tests dédiés sont présents dans la branche, mais leur résultat, les builds de production et la matrice QEMU 1/2/4 CPU restent en attente de la CI du SHA final de la PR. Ne pas considérer l'incrément comme validé avant le rapport CI.
+
+## 10. P0 — terminaison d'une tâche Ring 3 ordonnançable (niveau 2, BSP)
+
+**Date :** 2026-11-20  
+**Feature :** `qemu-ring3-task-test`  
+**Preuve locale :** QEMU/OVMF, `-smp 1`, `-smp 2` et `-smp 4`, sortie `isa-debug-exit` 0x10, `BOOT_PROOF_OK` ; 148 tests hôte et `cargo check --target x86_64-unknown-none` sans feature.
+
+L'exécution Ring 3 est maintenant portée par une tâche de l'ordonnanceur. Le scénario crée trois tâches Ring 3, chacune avec son propre espace d'adressage, sa page de code et sa pile utilisateur :
+
+| Tâche | Sortie | Raison publiée |
+|---|---|---|
+| 2 | `SYS_EXIT(42)` | `VoluntaryExit { code: 42 }` |
+| 3 | lecture d'une page utilisateur non mappée | `PageFault { cr2, error_code=4, rip }` |
+| 4 | `HLT` en CPL3 | `GeneralProtection { error_code=0, rip }` |
+
+Une tâche noyau indépendante (slot 1) n'est déclarée réussie qu'après avoir observé les trois slots `Exited`. Cela prouve que le CPU a sélectionné une autre tâche après chaque terminaison. Chaque entrée écrit le CR3 privé observé dans un registre de test, et un canari utilisateur placé après l'instruction de sortie reste à zéro : le noyau n'a pas repris l'exécution utilisateur après `SYS_EXIT`, #PF ou #GP. Les espaces et leurs frames sont ensuite détruits et le compteur d'allocateur revient à sa valeur initiale.
+
+Le chemin noyau enregistré par `enter_user_mode` est la frame de la fonction d'entrée de la tâche sur sa propre pile noyau. Après la sortie ou la faute, cette fonction publie la raison puis retourne à `task_bootstrap`, qui marque le slot `Exited` et cède le CPU. Aucune continuation utilisateur n'est reprise.
+
+### Limites explicites (non acquises)
+
+- Une seule tâche Ring 3 s'exécute à la fois par CPU : `gs_saved_kernel_rsp` reste CPU-local, donc deux tâches Ring 3 préemptées simultanément sur le même CPU écraseraient leur continuation. Le scénario désactive la préemption et chaque tâche Ring 3 termine avant la suivante. La pile d'entrée SYSCALL par tâche reste à introduire.
+- Aucun reaper de production, aucun IPI TLB-shootdown ni masque de CPU actifs : la libération est faite par le harnais de test après retour au root noyau sur un seul CPU. Le protocole de réclamation SMP de la conception (PR D) n'est pas implémenté.
+- Les tables de fichiers restent globales ; il n'y a ni processus multiples, ni `fork`, ni IPC.
+- Le chemin fatal CPL0, les IST et le matériel physique restent inchangés et non validés sur machine réelle.
+- Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés ; la CI du workflow `ring3-task-exit` doit confirmer la matrice 1/2/4 CPU sur le SHA final.
