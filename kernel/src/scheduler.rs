@@ -975,6 +975,24 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize {
     saved_rsp
 }
 
+/// Return the single exit reason published for an Exited task.
+///
+/// The state is acquired before the reason is read: `Exited` is published with
+/// Release after the reason is written, and no later writer can replace it.
+pub fn task_exit_reason(id: TaskId) -> Option<TaskExitReason> {
+    let cpu_index = current_cpu_index();
+    let sched = cpu_scheduler(cpu_index);
+    if id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
+        return None;
+    }
+    // SAFETY: The task table is static and index is bounded.
+    let task = task_ptr(cpu_index, id.0);
+    if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Exited as u8 {
+        return None;
+    }
+    unsafe { (*task).exit_reason }
+}
+
 pub fn task_state(id: TaskId) -> Option<TaskState> {
     let cpu_index = current_cpu_index();
     let sched = unsafe { cpu_scheduler(cpu_index) };

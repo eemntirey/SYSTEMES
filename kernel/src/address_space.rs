@@ -10,7 +10,7 @@ use crate::interrupts::RING3_TEST_MAGIC;
 use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
 use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
 use alloc::vec::Vec;
-#[cfg(feature = "qemu-ring3-smp-test")]
+#[cfg(any(feature = "qemu-ring3-smp-test", feature = "qemu-ring3-task-test"))]
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 const PRESENT: u64 = 1;
@@ -56,6 +56,11 @@ pub enum AddressSpaceError {
     SyscallNegativeTestFailed,
     UserProcessExitFailed,
     FrameReclaimMismatch,
+    Ring3TaskStateMismatch,
+    Ring3TaskExitReasonMismatch,
+    Ring3TaskCr3Mismatch,
+    Ring3TaskResumedInUserMode,
+    Ring3TaskObserverMissing,
 }
 
 #[cfg(feature = "qemu-ring3-test")]
@@ -1244,6 +1249,365 @@ pub unsafe fn run_qemu_address_space_test(
         return Err(AddressSpaceError::FrameReclaimMismatch);
     }
     result
+}
+
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_COUNT: usize = 3;
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_EXIT_STATUS: u32 = 42;
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_CODE_ADDRESSES: [u64; RING3_TASK_COUNT] =
+    [USER_BASE + 0x2_0000, USER_BASE + 0x2_2000, USER_BASE + 0x2_4000];
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_STACK_ADDRESSES: [u64; RING3_TASK_COUNT] =
+    [USER_BASE + 0x2_1000, USER_BASE + 0x2_3000, USER_BASE + 0x2_5000];
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_PAGE_FAULT_ADDRESS: u64 = USER_BASE + 0x9_0000;
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_USER_CANARY: u8 = 0xAA;
+
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_ROOTS: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_RIPS: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_RSPS: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVED_CR3: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_EXECUTIONS: [AtomicUsize; RING3_TASK_COUNT] =
+    [const { AtomicUsize::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVER_RAN: AtomicBool = AtomicBool::new(false);
+
+/// Entry of a schedulable Ring 3 task. The kernel continuation recorded by
+/// `enter_user_mode` is this function's caller frame on the task's own kernel
+/// stack, so a voluntary exit or a recoverable CPL3 fault returns here instead
+/// of resuming user code. The task then publishes its exit reason and returns
+/// to `task_bootstrap`, which marks it Exited and yields to another task.
+#[cfg(feature = "qemu-ring3-task-test")]
+fn run_scheduled_ring3_task(index: usize) {
+    use crate::scheduler::{mark_current_exited, TaskExitReason};
+
+    RING3_TASK_EXECUTIONS[index].fetch_add(1, Ordering::AcqRel);
+    let root = RING3_TASK_ROOTS[index].load(Ordering::Acquire);
+    let user_rip = RING3_TASK_RIPS[index].load(Ordering::Acquire);
+    let user_rsp = RING3_TASK_RSPS[index].load(Ordering::Acquire);
+
+    // SAFETY: The scheduler yields with interrupts enabled; user-mode entry
+    // requires them masked, and this CPU owns the transition state.
+    unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
+    let previous_root = unsafe { read_cr3() };
+    // SAFETY: This Ring 3 task owns the private address space in `root`.
+    unsafe { write_cr3(root) };
+    RING3_TASK_OBSERVED_CR3[index]
+        .store(cr3_root(unsafe { read_cr3() }), Ordering::Release);
+
+    // SAFETY: The private address space maps `user_rip` executable and
+    // `user_rsp` writable, and the CPU descriptor tables are initialized.
+    let status = unsafe { crate::interrupts::enter_user_mode(user_rip, user_rsp) };
+
+    // SAFETY: Returning to the task kernel stack and the kernel address space
+    // is valid because every context shares the kernel PML4 slot.
+    unsafe { write_cr3(previous_root) };
+
+    let reason = match crate::interrupts::last_user_fault() {
+        Some(fault) if fault.vector == 14 => TaskExitReason::PageFault {
+            cr2: fault.cr2 as usize,
+            error_code: fault.error_code as usize,
+            rip: fault.rip as usize,
+        },
+        Some(fault) if fault.vector == 13 => TaskExitReason::GeneralProtection {
+            error_code: fault.error_code as usize,
+            rip: fault.rip as usize,
+        },
+        _ => TaskExitReason::VoluntaryExit {
+            code: status as u32 as i32,
+        },
+    };
+    let _ = mark_current_exited(reason);
+}
+
+#[cfg(feature = "qemu-ring3-task-test")]
+extern "C" fn ring3_task_entry_voluntary() {
+    run_scheduled_ring3_task(0);
+}
+
+#[cfg(feature = "qemu-ring3-task-test")]
+extern "C" fn ring3_task_entry_page_fault() {
+    run_scheduled_ring3_task(1);
+}
+
+#[cfg(feature = "qemu-ring3-task-test")]
+extern "C" fn ring3_task_entry_general_protection() {
+    run_scheduled_ring3_task(2);
+}
+
+/// Independent kernel task that only succeeds once it observes every Ring 3
+/// task in the terminal Exited state. Because it is scheduled after each Ring 3
+/// termination, its completion is the proof that the CPU resumed another task.
+#[cfg(feature = "qemu-ring3-task-test")]
+extern "C" fn ring3_task_observer() {
+    use crate::scheduler::{task_state, yield_now, TaskId, TaskState};
+
+    for _ in 0..1_000_000usize {
+        let all_exited = (0..RING3_TASK_COUNT).all(|index| {
+            task_state(TaskId(index + 2)) == Some(TaskState::Exited)
+        });
+        if all_exited {
+            RING3_TASK_OBSERVER_RAN.store(true, Ordering::Release);
+            return;
+        }
+        yield_now();
+    }
+}
+
+/// Boot-time proof: Ring 3 execution is a scheduler task. Three private address
+/// spaces exit voluntarily, on #PF and on #GP; each termination publishes one
+/// exit reason and the CPU schedules the observer or the next Ring 3 task.
+///
+/// # Safety
+///
+/// Must run once during boot with the kernel page tables active, the CPU
+/// descriptor tables initialized, and no other CPU executing test tasks.
+#[cfg(feature = "qemu-ring3-task-test")]
+pub unsafe fn run_qemu_ring3_task_exit_test(
+    allocator: &mut PhysicalFrameAllocator,
+    kernel_root: u64,
+) -> Result<(), AddressSpaceError> {
+    use crate::scheduler::{
+        self, attach_ring3_context, TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
+    };
+
+    let free_pages_before = allocator.free_pages();
+    for index in 0..RING3_TASK_COUNT {
+        RING3_TASK_ROOTS[index].store(0, Ordering::Release);
+        RING3_TASK_RIPS[index].store(0, Ordering::Release);
+        RING3_TASK_RSPS[index].store(0, Ordering::Release);
+        RING3_TASK_OBSERVED_CR3[index].store(0, Ordering::Release);
+        RING3_TASK_EXECUTIONS[index].store(0, Ordering::Release);
+    }
+    RING3_TASK_OBSERVER_RAN.store(false, Ordering::Release);
+
+    let mut spaces: [Option<AddressSpace>; RING3_TASK_COUNT] = [None, None, None];
+    let mut stack_frames = [0u64; RING3_TASK_COUNT];
+
+    for index in 0..RING3_TASK_COUNT {
+        let code_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
+        let stack_frame = allocator.allocate_frame().ok_or(AddressSpaceError::OutOfFrames)?;
+        for frame in [code_frame, stack_frame] {
+            if frame % PAGE_SIZE != 0 {
+                return Err(AddressSpaceError::InvalidFrameAlignment);
+            }
+            if frame >= IDENTITY_MAP_BYTES {
+                return Err(AddressSpaceError::FrameOutsideIdentityWindow);
+            }
+            // SAFETY: Both frames were just allocated and are identity accessible.
+            unsafe { core::ptr::write_bytes(frame as *mut u8, 0, PAGE_SIZE as usize) };
+        }
+        stack_frames[index] = stack_frame;
+
+        let mut code = [0u8; 32];
+        let code_len = match index {
+            0 => {
+                // SYS_EXIT(42), then a canary write and UD2 that must never run.
+                code[..12].copy_from_slice(&[
+                    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, SYS_EXIT
+                    0xBF, RING3_TASK_EXIT_STATUS as u8, 0x00, 0x00, 0x00, // mov edi, 42
+                    0x0F, 0x05, // syscall
+                ]);
+                code[12..17].copy_from_slice(&[
+                    0xC6, 0x44, 0x24, 0xF8, RING3_TASK_USER_CANARY, // mov [rsp-8], canary
+                ]);
+                code[17..19].copy_from_slice(&[0x0F, 0x0B]); // ud2
+                19
+            }
+            1 => {
+                // Read an unmapped user page: recoverable CPL3 #PF.
+                code[..2].copy_from_slice(&[0x48, 0xB8]); // movabs rax, address
+                code[2..10].copy_from_slice(&RING3_TASK_PAGE_FAULT_ADDRESS.to_le_bytes());
+                code[10..13].copy_from_slice(&[0x48, 0x8B, 0x00]); // mov rax, [rax]
+                code[13..18].copy_from_slice(&[
+                    0xC6, 0x44, 0x24, 0xF8, RING3_TASK_USER_CANARY, // mov [rsp-8], canary
+                ]);
+                code[18..20].copy_from_slice(&[0x0F, 0x0B]); // ud2
+                20
+            }
+            _ => {
+                // HLT at CPL3 is a recoverable #GP.
+                code[0] = 0xF4;
+                code[1..6].copy_from_slice(&[
+                    0xC6, 0x44, 0x24, 0xF8, RING3_TASK_USER_CANARY, // mov [rsp-8], canary
+                ]);
+                code[6..8].copy_from_slice(&[0x0F, 0x0B]); // ud2
+                8
+            }
+        };
+        // SAFETY: The code frame is freshly allocated and identity accessible.
+        unsafe { core::ptr::copy_nonoverlapping(code.as_ptr(), code_frame as *mut u8, code_len) };
+
+        // SAFETY: The kernel root is active and the allocator owns every frame.
+        let mut space = unsafe { AddressSpace::create(allocator, kernel_root)? };
+        // SAFETY: Addresses are page-aligned inside the user window and frames
+        // are identity accessible.
+        unsafe {
+            space.map_user_page(
+                allocator,
+                RING3_TASK_CODE_ADDRESSES[index],
+                code_frame,
+                UserPagePermissions::ReadOnlyExecute,
+            )?;
+            space.map_user_page(
+                allocator,
+                RING3_TASK_STACK_ADDRESSES[index],
+                stack_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )?;
+            space.verify_user_mapping(
+                RING3_TASK_CODE_ADDRESSES[index],
+                code_frame,
+                UserPagePermissions::ReadOnlyExecute,
+            )?;
+            space.verify_user_mapping(
+                RING3_TASK_STACK_ADDRESSES[index],
+                stack_frame,
+                UserPagePermissions::ReadWriteNoExecute,
+            )?;
+        }
+        RING3_TASK_ROOTS[index].store(space.root(), Ordering::Release);
+        RING3_TASK_RIPS[index]
+            .store(RING3_TASK_CODE_ADDRESSES[index], Ordering::Release);
+        RING3_TASK_RSPS[index].store(
+            RING3_TASK_STACK_ADDRESSES[index] + PAGE_SIZE - 16,
+            Ordering::Release,
+        );
+        spaces[index] = Some(space);
+    }
+
+    // Task slots: 0 boot, 1 observer, 2 voluntary exit, 3 #PF, 4 #GP.
+    scheduler::initialize_cpu(
+        crate::interrupts::bootstrap_cpu_index(),
+        &[
+            ring3_task_observer,
+            ring3_task_entry_voluntary,
+            ring3_task_entry_page_fault,
+            ring3_task_entry_general_protection,
+        ],
+    )
+    .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+    for index in 0..RING3_TASK_COUNT {
+        attach_ring3_context(
+            TaskId(index + 2),
+            Ring3TaskContextRef::new(0xB000 + index),
+        )
+        .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+    }
+
+    // Boot task drives the round-robin scheduler; no timer preemption is enabled,
+    // so each Ring 3 task runs to its termination path before the next switch.
+    for _ in 0..1_000_000usize {
+        let ring3_exited = (0..RING3_TASK_COUNT).all(|index| {
+            scheduler::task_state(TaskId(index + 2)) == Some(TaskState::Exited)
+        });
+        // The observer must itself be scheduled and reach Exited: that proves the
+        // CPU resumed an independent task after the last Ring 3 termination.
+        let observer_exited =
+            scheduler::task_state(TaskId(1)) == Some(TaskState::Exited);
+        if ring3_exited && observer_exited {
+            break;
+        }
+        scheduler::yield_now();
+    }
+
+    let mut failure = Ok(());
+    let expected_reasons = [
+        TaskExitReason::VoluntaryExit {
+            code: RING3_TASK_EXIT_STATUS as i32,
+        },
+        TaskExitReason::PageFault {
+            cr2: RING3_TASK_PAGE_FAULT_ADDRESS as usize,
+            error_code: 0x4,
+            rip: (RING3_TASK_CODE_ADDRESSES[1] + 10) as usize,
+        },
+        TaskExitReason::GeneralProtection {
+            error_code: 0,
+            rip: RING3_TASK_CODE_ADDRESSES[2] as usize,
+        },
+    ];
+    for index in 0..RING3_TASK_COUNT {
+        let id = TaskId(index + 2);
+        if scheduler::task_state(id) != Some(TaskState::Exited) {
+            failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+            break;
+        }
+        if scheduler::task_exit_reason(id) != Some(expected_reasons[index]) {
+            failure = Err(AddressSpaceError::Ring3TaskExitReasonMismatch);
+            break;
+        }
+        if RING3_TASK_EXECUTIONS[index].load(Ordering::Acquire) != 1 {
+            failure = Err(AddressSpaceError::Ring3TaskResumedInUserMode);
+            break;
+        }
+        let expected_root = RING3_TASK_ROOTS[index].load(Ordering::Acquire);
+        if RING3_TASK_OBSERVED_CR3[index].load(Ordering::Acquire) != expected_root {
+            failure = Err(AddressSpaceError::Ring3TaskCr3Mismatch);
+            break;
+        }
+        // The user canary is only written by instructions after the exit path;
+        // a non-zero value means kernel code resumed user mode.
+        let canary = unsafe {
+            let _guard = crate::uaccess::UserAccessGuard::new();
+            core::ptr::read_volatile(
+                (stack_frames[index] as *const u8).add(PAGE_SIZE as usize - 24),
+            )
+        };
+        if canary != 0 {
+            failure = Err(AddressSpaceError::Ring3TaskResumedInUserMode);
+            break;
+        }
+    }
+    if failure.is_ok() && !RING3_TASK_OBSERVER_RAN.load(Ordering::Acquire) {
+        failure = Err(AddressSpaceError::Ring3TaskObserverMissing);
+    }
+    if failure.is_ok() && scheduler::current_task() != TaskId(0) {
+        failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+    }
+
+    for space in spaces.into_iter().flatten() {
+        // SAFETY: Every Ring 3 task returned to the kernel root before this point.
+        unsafe { space.destroy(allocator)? };
+    }
+    if allocator.free_pages() != free_pages_before {
+        return Err(AddressSpaceError::FrameReclaimMismatch);
+    }
+
+    failure?;
+
+    unsafe {
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: Ring 3 task exited voluntarily and published code=42\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: Ring 3 task terminated on page fault with CR2 and RIP\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: Ring 3 task terminated on general protection fault\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: Ring 3 observer resumed after every task reached Exited\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: per-task CR3 and non-returning exit verified count=3\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: Ring 3 task exit matrix complete\r\n",
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
