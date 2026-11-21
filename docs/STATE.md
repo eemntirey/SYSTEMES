@@ -147,7 +147,7 @@ La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans racco
 - `steal_task` ignore les slots CPU-affines. Le scénario QEMU SMP ajoute deux tâches marquées Ring 3 au test work-stealing ; les tâches noyau ordinaires restent éligibles au vol.
 - `current_task_id`, `mark_current_exited` et `schedule_after_exit` constituent l'interface additive. Aucun chemin de faute ou syscall existant n'est encore branché sur ces API.
 
-**Validation :** les tests dédiés sont présents dans la branche, mais leur résultat, les builds de production et la matrice QEMU 1/2/4 CPU restent en attente de la CI du SHA final de la PR. Ne pas considérer l'incrément comme validé avant le rapport CI.
+**Validation :** le contrat scheduler de terminaison Ring 3 a été fusionné dans `main` via la PR [#92](https://github.com/eemntirey/SYSTEMES/pull/92) (`6a77a50`). L'accesseur post-`Exited` `task_exit_reason` et la preuve QEMU de niveau 2 ont été fusionnés via la PR [#95](https://github.com/eemntirey/SYSTEMES/pull/95) (`2a720b8`). Sur le SHA final `97f8c48`, les 14 check-runs obligatoires étaient `success`, y compris `Ring 3 schedulable task termination` (QEMU/OVMF 1/2/4 CPU). Seul `Kilo Code Review` reste en `action_required`, ce qui n'est pas une condition de fusion selon les règles du dépôt.
 
 ## 10. P0 — terminaison d'une tâche Ring 3 ordonnançable (niveau 2, BSP)
 
@@ -173,4 +173,18 @@ Le chemin noyau enregistré par `enter_user_mode` est la frame de la fonction d'
 - Aucun reaper de production, aucun IPI TLB-shootdown ni masque de CPU actifs : la libération est faite par le harnais de test après retour au root noyau sur un seul CPU. Le protocole de réclamation SMP de la conception (PR D) n'est pas implémenté.
 - Les tables de fichiers restent globales ; il n'y a ni processus multiples, ni `fork`, ni IPC.
 - Le chemin fatal CPL0, les IST et le matériel physique restent inchangés et non validés sur machine réelle.
-- Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés ; la CI du workflow `ring3-task-exit` doit confirmer la matrice 1/2/4 CPU sur le SHA final.
+- Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés. Le job `ring3-task-exit` a confirmé la matrice 1/2/4 CPU sur le SHA final `97f8c48` (sortie `isa-debug-exit` 0x10, `BOOT_PROOF_OK`) ; la fusion est enregistrée sous `2a720b8`. Aucune validation sur matériel physique n'est revendiquée.
+
+## 11. Clôture du jalon livré et suite du programme
+
+**État au 21 novembre 2026 :** les niveaux 1 et 2 (BSP) de P0 sont intégrés dans `main` :
+- PR #88/#89 : audit et récupération synchrone `#PF`/`#GP` CPL3 ;
+- PR #91/#92/#95 : conception, contrat scheduler de terminaison et preuve QEMU de niveau 2.
+
+Les limitations de la section 10 restent vraies : continuation noyau CPU-locale, absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal. Le programme complet défini dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) se poursuit donc avec :
+- **PR B** — propriété des tâches Ring 3, réservation/publication et activation (CR3, TSS.RSP0, GS/SYSCALL) ;
+- **PR C** — trampoline de sortie non-retournant sur pile distincte, raccordement `SYS_EXIT` puis `#PF`/`#GP` ;
+- **PR D** — reaper SMP, références, masque CPU actifs, IPI TLB-shootdown/ACK ;
+- **PR E** — rafales, double terminaison, préemption, work-stealing noyau et build production.
+
+Chaque incrément reste conditionné à une CI entièrement verte sur son SHA final et à un examen explicite avant fusion.
