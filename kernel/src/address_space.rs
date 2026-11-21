@@ -1380,7 +1380,8 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
     kernel_root: u64,
 ) -> Result<(), AddressSpaceError> {
     use crate::scheduler::{
-        self, attach_ring3_context, TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
+        self, prepare_ring3_task, publish_ring3_task, reserve_ring3_task,
+        TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
     };
 
     let free_pages_before = allocator.free_pages();
@@ -1488,23 +1489,26 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         spaces[index] = Some(space);
     }
 
-    // Task slots: 0 boot, 1 observer, 2 voluntary exit, 3 #PF, 4 #GP.
+    // Slot 0 stays boot, slot 1 is the kernel observer. Ring 3 slots are
+    // reserved first, then published only after their initial kernel frame
+    // exists. This exercises the same reservation path future processes use.
     scheduler::initialize_cpu(
         crate::interrupts::bootstrap_cpu_index(),
-        &[
-            ring3_task_observer,
-            ring3_task_entry_voluntary,
-            ring3_task_entry_page_fault,
-            ring3_task_entry_general_protection,
-        ],
+        &[ring3_task_observer],
     )
     .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
-    for index in 0..RING3_TASK_COUNT {
-        attach_ring3_context(
-            TaskId(index + 2),
-            Ring3TaskContextRef::new(0xB000 + index),
-        )
-        .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+    let ring3_entries = [
+        ring3_task_entry_voluntary as crate::scheduler::TaskEntry,
+        ring3_task_entry_page_fault as crate::scheduler::TaskEntry,
+        ring3_task_entry_general_protection as crate::scheduler::TaskEntry,
+    ];
+    for (index, entry) in ring3_entries.into_iter().enumerate() {
+        let handle = reserve_ring3_task(Ring3TaskContextRef::new(0xB000 + index))
+            .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+        let saved_rsp = prepare_ring3_task(handle, entry)
+            .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+        publish_ring3_task(handle, saved_rsp)
+            .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
     }
 
     // Boot task drives the round-robin scheduler; no timer preemption is enabled,

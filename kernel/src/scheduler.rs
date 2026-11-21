@@ -304,6 +304,59 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandl
     Ok(Ring3TaskHandle { cpu_index, task_id: TaskId(index), context })
 }
 
+/// Build the initial kernel continuation for a reserved Ring 3 slot.
+///
+/// The returned RSP points at a complete synthetic IRETQ frame inside the slot's
+/// pinned kernel stack. The slot stays non-runnable until `publish_ring3_task`
+/// validates and installs that RSP, so a partially built task is never selected.
+pub fn prepare_ring3_task(
+    handle: Ring3TaskHandle,
+    entry: TaskEntry,
+) -> Result<usize, SchedulerError> {
+    let cpu_index = current_cpu_index();
+    if cpu_index >= MAX_CPUS || handle.cpu_index != cpu_index {
+        return Err(SchedulerError::InvalidTask);
+    }
+    if handle.task_id.0 == 0 || handle.task_id.0 >= MAX_TASKS {
+        return Err(SchedulerError::InvalidTask);
+    }
+    let flags = irq_save_disable();
+    let sched = cpu_scheduler(cpu_index);
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        irq_restore(flags);
+        return Err(SchedulerError::NotInitialized);
+    }
+    lock_run_queue(cpu_index);
+    let count = unsafe { (*sched).task_count.load(Ordering::Acquire) };
+    if handle.task_id.0 >= count {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidTask);
+    }
+    let task = task_ptr(cpu_index, handle.task_id.0);
+    if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Empty as u8
+        || !handle_matches_reservation(unsafe { (*task).ring3_context_id.load(Ordering::Acquire) }, handle)
+        || unsafe { (*task).saved_rsp.load(Ordering::Acquire) } != 0
+    {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::NotReserved);
+    }
+    let resource_id = unsafe { (*task).resource_id.load(Ordering::Acquire) };
+    if resource_id >= MAX_CPUS * MAX_TASKS {
+        unlock_run_queue(cpu_index);
+        irq_restore(flags);
+        return Err(SchedulerError::InvalidSavedStack);
+    }
+    let saved_rsp = unsafe { build_initial_context(cpu_index, task) };
+    unsafe {
+        (*task).entry.store(entry as *const () as usize, Ordering::Relaxed);
+    }
+    unlock_run_queue(cpu_index);
+    irq_restore(flags);
+    Ok(saved_rsp)
+}
+
 /// Publish a reserved Ring 3 task only after its initial kernel continuation exists.
 /// The saved RSP must point inside the task's own pinned kernel stack.
 pub fn publish_ring3_task(handle: Ring3TaskHandle, saved_rsp: usize) -> Result<(), SchedulerError> {
