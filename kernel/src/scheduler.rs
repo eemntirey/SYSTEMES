@@ -52,6 +52,9 @@ pub struct TaskId(pub usize);
 pub struct Ring3TaskHandle {
     cpu_index: usize,
     task_id: TaskId,
+    /// Context identity captured at reservation time. A stale handle cannot
+    /// publish or cancel a slot that was released and reused for another owner.
+    context: Ring3TaskContextRef,
 }
 
 impl Ring3TaskHandle {
@@ -298,7 +301,7 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandl
     }
     unlock_run_queue(cpu_index);
     irq_restore(flags);
-    Ok(Ring3TaskHandle { cpu_index, task_id: TaskId(index) })
+    Ok(Ring3TaskHandle { cpu_index, task_id: TaskId(index), context })
 }
 
 /// Publish a reserved Ring 3 task only after its initial kernel continuation exists.
@@ -342,7 +345,7 @@ pub fn publish_ring3_task(handle: Ring3TaskHandle, saved_rsp: usize) -> Result<(
     }
     if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Empty as u8
         || unsafe { (*task).cpu_affine.load(Ordering::Acquire) } == false
-        || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } == usize::MAX
+        || !handle_matches_reservation(unsafe { (*task).ring3_context_id.load(Ordering::Acquire) }, handle)
         || unsafe { (*task).saved_rsp.load(Ordering::Acquire) } != 0
     {
         unlock_run_queue(cpu_index);
@@ -378,7 +381,7 @@ pub fn cancel_ring3_reservation(handle: Ring3TaskHandle) -> Result<(), Scheduler
     }
     let task = task_ptr(cpu_index, task_id.0);
     if unsafe { (*task).state.load(Ordering::Acquire) } != TaskState::Empty as u8
-        || unsafe { (*task).ring3_context_id.load(Ordering::Acquire) } == usize::MAX
+        || !handle_matches_reservation(unsafe { (*task).ring3_context_id.load(Ordering::Acquire) }, handle)
         || unsafe { (*task).saved_rsp.load(Ordering::Acquire) } != 0
     {
         unlock_run_queue(cpu_index);
@@ -507,6 +510,10 @@ fn stack_contains(stack_start: usize, stack_size: usize, saved_rsp: usize, requi
 /// Return true when an opaque Ring 3 context identifier is already owned by a slot.
 fn context_id_is_attached(existing: &[usize], context_id: usize) -> bool {
     context_id != usize::MAX && existing.iter().any(|id| *id == context_id)
+}
+
+fn handle_matches_reservation(context_id: usize, handle: Ring3TaskHandle) -> bool {
+    context_id != usize::MAX && context_id == handle.context.0
 }
 
 /// Get the current CPU's scheduler index (APIC ID).
@@ -1485,6 +1492,18 @@ mod tests {
     #[test]
     fn ring3_context_identifier_sentinel_is_not_a_valid_attachment() {
         assert!(!context_id_is_attached(&[], usize::MAX));
+    }
+
+    #[test]
+    fn stale_ring3_handle_cannot_match_a_reused_slot() {
+        let handle = Ring3TaskHandle {
+            cpu_index: 0,
+            task_id: TaskId(3),
+            context: Ring3TaskContextRef::new(91),
+        };
+        assert!(handle_matches_reservation(91, handle));
+        assert!(!handle_matches_reservation(92, handle));
+        assert!(!handle_matches_reservation(usize::MAX, handle));
     }
 
     #[test]
