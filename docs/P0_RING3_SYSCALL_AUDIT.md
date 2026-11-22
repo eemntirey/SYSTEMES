@@ -48,7 +48,7 @@ Les tests ajoutés dans la branche p0-ring3-fault-handling couvrent :
 - le rendez-vous avant destruction de l'espace d'adressage partagé et l'égalité du nombre de frames libres avant/après ;
 - un test séparé des pointeurs invalides passés à SYS_READ/SYS_WRITE, qui doivent retourner ERROR_BAD_ADDRESS sans tuer la transition.
 
-**État : implémentation présente sur la branche, validation QEMU/CI en attente.** Ne pas interpréter les marqueurs attendus dans les scripts comme des résultats déjà observés. Le niveau 2 (terminaison d'une tâche Ring 3 ordonnançable) n'est pas traité ; voir [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md).
+**État : implémentation fusionnée et validée.** La récupération synchrone a été intégrée via la PR #89 (`a35c7ae`), puis le niveau 2 (terminaison d'une tâche Ring 3 ordonnançable sur BSP) via la PR #95 (`2a720b8`). Le job CI `ring3-task-exit` a validé la sortie `SYS_EXIT`/`#PF`/`#GP` et la reprise d'une autre tâche sur 1, 2 et 4 CPU. Les limites de la section 10 de [STATE.md](STATE.md) restent applicables ; la suite du programme est décrite dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md).
 
 IST1 (#DF), IST2 (NMI) et IST3 (#MC) ne sont pas modifiées. Une exception imbriquée depuis CPL0 reste fatale. Aucun fichier de scheduler ne doit être modifié dans cette phase.
 

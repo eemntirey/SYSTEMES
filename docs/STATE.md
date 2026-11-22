@@ -147,7 +147,7 @@ La branche `p0-ring3-task-termination` ajoute le contrat scheduler 4d sans racco
 - `steal_task` ignore les slots CPU-affines. Le scénario QEMU SMP ajoute deux tâches marquées Ring 3 au test work-stealing ; les tâches noyau ordinaires restent éligibles au vol.
 - `current_task_id`, `mark_current_exited` et `schedule_after_exit` constituent l'interface additive. Aucun chemin de faute ou syscall existant n'est encore branché sur ces API.
 
-**Validation :** les tests dédiés sont présents dans la branche, mais leur résultat, les builds de production et la matrice QEMU 1/2/4 CPU restent en attente de la CI du SHA final de la PR. Ne pas considérer l'incrément comme validé avant le rapport CI.
+**Validation :** le contrat scheduler de terminaison Ring 3 a été fusionné dans `main` via la PR [#92](https://github.com/eemntirey/SYSTEMES/pull/92) (`6a77a50`). L'accesseur post-`Exited` `task_exit_reason` et la preuve QEMU de niveau 2 ont été fusionnés via la PR [#95](https://github.com/eemntirey/SYSTEMES/pull/95) (`2a720b8`). Sur le SHA final `97f8c48`, les 14 check-runs obligatoires étaient `success`, y compris `Ring 3 schedulable task termination` (QEMU/OVMF 1/2/4 CPU). Seul `Kilo Code Review` reste en `action_required`, ce qui n'est pas une condition de fusion selon les règles du dépôt.
 
 ## 10. P0 — terminaison d'une tâche Ring 3 ordonnançable (niveau 2, BSP)
 
@@ -173,4 +173,38 @@ Le chemin noyau enregistré par `enter_user_mode` est la frame de la fonction d'
 - Aucun reaper de production, aucun IPI TLB-shootdown ni masque de CPU actifs : la libération est faite par le harnais de test après retour au root noyau sur un seul CPU. Le protocole de réclamation SMP de la conception (PR D) n'est pas implémenté.
 - Les tables de fichiers restent globales ; il n'y a ni processus multiples, ni `fork`, ni IPC.
 - Le chemin fatal CPL0, les IST et le matériel physique restent inchangés et non validés sur machine réelle.
-- Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés ; la CI du workflow `ring3-task-exit` doit confirmer la matrice 1/2/4 CPU sur le SHA final.
+- Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés. Le job `ring3-task-exit` a confirmé la matrice 1/2/4 CPU sur le SHA final `97f8c48` (sortie `isa-debug-exit` 0x10, `BOOT_PROOF_OK`) ; la fusion est enregistrée sous `2a720b8`. Aucune validation sur matériel physique n'est revendiquée.
+
+## 11. Clôture du jalon livré et suite du programme
+
+**État au 21 novembre 2026 :** les niveaux 1 et 2 (BSP) de P0 sont intégrés dans `main` :
+- PR #88/#89 : audit et récupération synchrone `#PF`/`#GP` CPL3 ;
+- PR #91/#92/#95 : conception, contrat scheduler de terminaison et preuve QEMU de niveau 2.
+
+Les limitations de la section 10 restent vraies : continuation noyau CPU-locale, absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal. Le programme complet défini dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) se poursuit donc avec :
+- **PR B** — propriété des tâches Ring 3, réservation/publication et activation (CR3, TSS.RSP0, GS/SYSCALL) ;
+- **PR C** — trampoline de sortie non-retournant sur pile distincte, raccordement `SYS_EXIT` puis `#PF`/`#GP` ;
+- **PR D** — reaper SMP, références, masque CPU actifs, IPI TLB-shootdown/ACK ;
+- **PR E** — rafales, double terminaison, préemption, work-stealing noyau et build production.
+
+Chaque incrément reste conditionné à une CI entièrement verte sur son SHA final et à un examen explicite avant fusion.
+
+## 12. P0-B — réservation scheduler des contextes Ring 3 (en cours)
+
+La branche `p0-b-ring3-task-reservation` introduit une réservation en deux phases dans `kernel/src/scheduler.rs` :
+
+- `reserve_ring3_task` choisit un slot non-boot libre sur le CPU courant, le marque CPU-affine et associe l'identifiant opaque du contexte ; le slot reste `Empty` et n'est donc pas sélectionnable.
+- `prepare_ring3_task` construit le cadre IRETQ initial sur la pile noyau épinglée du slot réservé et retourne le RSP à publier ; le slot reste `Empty` jusqu'à `publish_ring3_task`.
+- `publish_ring3_task` n'autorise la transition vers `Runnable` qu'après validation d'un RSP aligné et d'un cadre complet de restauration situé dans la pile noyau fixe appartenant au slot.
+- `cancel_ring3_reservation` libère uniquement une réservation encore non publiée.
+- Les identifiants opaques de contexte sont uniques dans la runqueue CPU : une réservation ou une association avec un contexte déjà attaché est refusée (`ContextAlreadyAttached`), et `usize::MAX` reste invalide.
+- La réservation retourne un `Ring3TaskHandle` qualifié par l'index CPU **et par l'identité du contexte** ; publication et annulation rejettent un handle présenté depuis un autre CPU ou devenu périmé après annulation/réutilisation du slot. `TaskId` reste un index local à une runqueue.
+- Le compteur de slots couvre les indices réservés, y compris les trous ; les sélecteurs existants ignorent les slots `Empty`. Le work-stealing ne peut donc pas prendre une réservation Ring 3.
+
+Le module `process.rs` reste volontairement hors du graphe de compilation (`pub mod process` n'est pas déclaré dans `kernel/src/lib.rs`). Son activation prématurée a révélé des appels obsolètes (`set_yield_requested` et `set_syscall_user_rsp`) ainsi qu'une gestion globale mutable non synchronisée (`PROCESS_TABLE` et `FRAME_ALLOCATOR`). Ces interfaces ne doivent pas être remplacées par des stubs : le module sera réintégré après refonte cohérente de son contrat avec le scheduler et les interruptions.
+
+Le harnais `qemu-ring3-task-test` utilise désormais ce chemin : le CPU initialise uniquement la tâche observateur, puis chaque tâche Ring 3 est réservée, préparée et publiée avant d'être sélectionnée. Les trois causes de sortie et le CR3 privé restent vérifiés.
+
+**Limite actuelle :** la réservation scheduler ne relie pas encore chaque `Process` à un `TaskId` ; CR3, TSS.RSP0 et GS/SYSCALL ne sont pas encore pilotés par le scheduler, et la continuation Ring 3 reste CPU-locale. Cette incrément fournit la propriété de slot et la publication sûre, pas l'achèvement de P0-B.
+
+**Validation locale :** 152/152 tests hôte, `cargo check --all-features --target x86_64-unknown-none` et `cargo check --target x86_64-unknown-none` réussis. La CI complète et la matrice QEMU 1/2/4 CPU doivent confirmer le SHA final avant fusion.
