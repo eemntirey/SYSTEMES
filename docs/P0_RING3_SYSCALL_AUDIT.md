@@ -1,9 +1,13 @@
 # Audit P0 — durcissement Ring 3 / SYSCALL par CPU
 
-**Date :** 2026-11-14  
-**Base vérifiée :** `main` — `98dfe4db12ab9817d48d4e7c83e0848477afe2da`  
-**Branche :** `p0-ring3-syscall-hardening` (fast-forwardée sur cette base ; arbre identique à `main`)  
+**Date :** 2026-11-14 (audit initial)  
+**Actualisation :** 2026-11-23 (suivi des correctifs livrés)  
+**Base vérifiée :** `main` — `98dfe4db12ab9817d48d4e7c83e0848477afe2da` (audit initial)  
+**Base de suivi :** `main` — `7874617ad5a4b111f7fe3b41e7a8e13c1627145d` (PR #96)  
+**Branche :** `p0-ring3-syscall-hardening` (fast-forwardée sur la base initiale ; arbre identique à `main`)  
 **Périmètre :** audit statique uniquement ; aucun code noyau modifié, aucun test désactivé.
+
+> Les sections 8 à 10 enregistrent l'état après les PR #89, #95 et #96. Elles prévalent sur les constats initiaux des sections 1 à 7 lorsque ceux-ci ont été traités. La clôture du jalon livré est récapitulée dans [STATE.md](STATE.md) section 11.
 
 | Point | Statut | Constat et preuve |
 |---|---|---|
@@ -34,7 +38,9 @@
 
 **Aucun BUG CONFIRMÉ dans le protocole actuel SYSCALL/SWAPGS ni dans les validations de pointeurs examinées.** Deux risques d'architecture conditionnels (pile SYSCALL par thread et table de fichiers globale) précèdent l'introduction de threads/processus utilisateurs multiples ; une limite fonctionnelle est confirmée pour les fautes Ring 3 (#PF/#GP), actuellement fatales au CPU fautif.
 
-Aucun correctif noyau n'est justifié dans cette étape d'audit. Les tests complémentaires ci-dessus définissent les critères de validation avant toute évolution. **Aucun fichier d'ordonnanceur n'a été modifié.** Aucun build QEMU n'a été exécuté pendant cet audit statique.
+Aucun correctif noyau n'était justifié dans cette étape d'audit. Les tests complémentaires ci-dessus définissaient les critères de validation avant évolution. **Aucun fichier d'ordonnanceur n'a été modifié par cet audit.** Aucun build QEMU n'a été exécuté pendant cet audit statique.
+
+Ce constat est l'état de l'audit initial du 14 novembre. Les sections 8 à 10 ci-après enregistrent les livraisons ultérieures : récupération synchrone `#PF`/`#GP`, terminaison Ring 3 ordonnançable puis réservation sûre des tâches Ring 3 dans le scheduler.
 
 
 ## 8. Suivi — récupération synchrone Ring 3 (PR #89)
@@ -64,7 +70,7 @@ La branche `p0-ring3-task-termination` introduit une interface scheduler additiv
 
 Les slots associés à un contexte Ring 3 sont CPU-affines et exclus du work-stealing. Le scénario SMP ajouté doit démontrer ce comportement sur 2 et 4 CPU pendant que les AP inactifs tentent de voler les tâches ; il n'est pas encore considéré comme réussi avant CI.
 
-**Limite :** aucune entrée #PF/#GP, aucun SYS_EXIT, aucun switch CR3/TSS/GS et aucune libération/reaper ne sont raccordés par cet incrément. Le constat de l'audit selon lequel les fautes Ring 3 ne terminent pas encore une tâche ordonnançable reste donc vrai jusqu'aux incréments ultérieurs.
+**Limite de cet incrément :** aucune entrée #PF/#GP, aucun SYS_EXIT, aucun switch CR3/TSS/GS et aucune libération/reaper n'étaient raccordés par cette étape. Ce constat a été levé par la suite : la PR #95 raccorde `SYS_EXIT`/`#PF`/`#GP` à la terminaison d'une tâche ordonnançable (section 10).
 
 ## 10. Suivi — terminaison Ring 3 ordonnançable (niveau 2, BSP)
 
@@ -77,3 +83,5 @@ Points prouvés sous QEMU/OVMF en 1, 2 et 4 CPU :
 - destruction des espaces et restauration du compteur de frames.
 
 **Limites maintenues :** une seule tâche Ring 3 à la fois par CPU (la continuation noyau reste CPU-local via `gs_saved_kernel_rsp`), aucun reaper/IPI TLB-shootdown de production, tables de fichiers globales, pas de processus multiples. Le chemin CPL0 reste fatal. Voir [STATE.md](STATE.md) section 10. Ces résultats ne sont pas une validation matérielle.
+
+La PR #96 (`7874617a`) ajoute ensuite la réservation, la préparation et la publication sûres des tâches Ring 3 dans le scheduler, sans modifier les chemins CPL0/CR3/TSS/GS/SYSCALL. Le jalon P0 livré est clos (STATE.md section 11) ; P0 complet reste ouvert jusqu'à la fin des PR B (suite), C, D et E.

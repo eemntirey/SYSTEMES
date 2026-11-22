@@ -1,15 +1,16 @@
 # État du noyau — suivi P0
 
-**Actualisation :** 2026-11-14  
+**Actualisation :** 2026-11-23  
 **Branche de référence :** `main`  
-**Commit de référence :** `d3e7c090a585b0b9dbf5c6dfef17519a38948d82` (squash de la PR #88)
+**Commit de référence :** `7874617ad5a4b111f7fe3b41e7a8e13c1627145d` (squash de la PR #96)
 
-Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8 ; la section 6 est un historique de la feuille de route antérieure.
+Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8, la clôture du jalon livré en section 11 et l'état de P0-B en section 12. La section 6 est un historique de la feuille de route antérieure.
 
 ## 1. État global P0
 
-**Étape 1 — isolation Ring 3 / SYSCALL par CPU : intégrée et validée par la CI de la PR #86.**  
-**P0 complet : non déclaré terminé.** L'audit de durcissement décrit en section 6 reste à réaliser avant toute correction supplémentaire.
+**Jalon P0 livré — clos.** L'isolation Ring 3/SYSCALL par CPU, la récupération synchrone `#PF`/`#GP` CPL3, la terminaison ordonnancable de niveau 2 (BSP) et la primitive de réservation P0-B sont intégrées dans `main` et validées par CI sur les SHA précisés aux sections 4, 9, 10 et 12.
+
+**P0 complet : non déclaré terminé.** La suite de PR B (couplage `Process`↔`TaskId`, pilotage de CR3/TSS.RSP0/GS/SYSCALL), puis les PR C, D et E définies dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) restent à livrer. Aucune validation sur matériel physique n'est revendiquée.
 
 La PR [#86](https://github.com/eemntirey/SYSTEMES/pull/86) a été fusionnée le 14 novembre 2026. Son commit source est `0ff021dc42cc3593cbcddf382a25aaf6e3704450`, et son commit squash est `484c01e82568994bd9244e519839367f1ddc09cd`.
 
@@ -92,9 +93,11 @@ La PR #86 n'a pas modifié le code de l'ordonnanceur. La matrice continue de lan
 
 Les fonctionnalités de processus, PID, tables de fichiers par processus, `fork`, VFS et ELF n'ont pas été livrées par la PR #86 et ne doivent pas être considérées comme acquises sur la seule base de cette fusion.
 
-## 6. Travail restant — durcissement P0
+## 6. Historique — durcissement P0 (audit réalisé)
 
-La phase suivante est un audit du chemin d'entrée/sortie Ring 3 et SYSCALL sur le code courant, avant toute modification. Elle doit classer chaque point BUG CONFIRMÉ / RISQUE / OK et ne retenir que les deux premières catégories lorsqu'elles sont justifiées par le code.
+L'audit demandé ici a été réalisé et publié par la PR [#88](https://github.com/eemntirey/SYSTEMES/pull/88) (`d3e7c090`) : [P0_RING3_SYSCALL_AUDIT.md](P0_RING3_SYSCALL_AUDIT.md). Cette section conserve la liste des points vérifiés à titre historique ; elle ne décrit plus un travail à réaliser. Les suites sont enregistrées aux sections 8 à 12.
+
+L'audit a classé chaque point BUG CONFIRMÉ / RISQUE / OK et n'a retenu que les catégories justifiées par le code.
 
 Points à vérifier :
 
@@ -109,7 +112,7 @@ Points à vérifier :
 
 Aucun bug n'est présumé dans cette liste : chaque constat doit être établi à partir du code actuel et, pour être corrigé, reproduit par un test QEMU qui échoue avant la correction. Les cas de test à ajouter si l'audit les justifie comprennent les syscalls concurrents sur 1/2/4 CPU, les pointeurs invalides/non canoniques, les transitions répétées sous timer/IPI et une faute Ring 3 simultanée à des syscalls sur un autre CPU.
 
-### Critères de clôture
+### Critères de clôture appliqués aux incréments suivants
 
 - Les correctifs doivent rester limités aux fichiers nécessaires ; aucun changement de scheduler sans nécessité démontrée et signalée.
 - Les tests doivent prouver le défaut avant correction et le comportement corrigé après.
@@ -175,21 +178,29 @@ Le chemin noyau enregistré par `enter_user_mode` est la frame de la fonction d'
 - Le chemin fatal CPL0, les IST et le matériel physique restent inchangés et non validés sur machine réelle.
 - Ces preuves ne valent que pour les SHA et configurations CI effectivement exécutés. Le job `ring3-task-exit` a confirmé la matrice 1/2/4 CPU sur le SHA final `97f8c48` (sortie `isa-debug-exit` 0x10, `BOOT_PROOF_OK`) ; la fusion est enregistrée sous `2a720b8`. Aucune validation sur matériel physique n'est revendiquée.
 
-## 11. Clôture du jalon livré et suite du programme
+## 11. Clôture formelle du jalon P0 livré et suite du programme
 
-**État au 21 novembre 2026 :** les niveaux 1 et 2 (BSP) de P0 sont intégrés dans `main` :
-- PR #88/#89 : audit et récupération synchrone `#PF`/`#GP` CPL3 ;
-- PR #91/#92/#95 : conception, contrat scheduler de terminaison et preuve QEMU de niveau 2.
+**État au 23 novembre 2026 :** le jalon P0 livré est clos sur `main` (`7874617a`). Les preuves de CI ci-dessous portent sur le SHA exact de chaque fusion ; `Kilo Code Review`, lorsqu'il est présent, reste exclu des conditions de fusion selon les règles du dépôt.
 
-Les limitations de la section 10 restent vraies : continuation noyau CPU-locale, absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal. Le programme complet défini dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) se poursuit donc avec :
-- **PR B** — propriété des tâches Ring 3, réservation/publication et activation (CR3, TSS.RSP0, GS/SYSCALL) ;
+| Incrément livré | Fusion | Preuve retenue |
+|---|---|---|
+| Isolation Ring 3 / SYSCALL par CPU | PR [#86](https://github.com/eemntirey/SYSTEMES/pull/86) (`484c01e8`) | 13/13 jobs verts, run [#43593078770](https://github.com/eemntirey/SYSTEMES/actions/runs/43593078770) (section 4) |
+| Audit de durcissement | PR [#88](https://github.com/eemntirey/SYSTEMES/pull/88) (`d3e7c090`) | [P0_RING3_SYSCALL_AUDIT.md](P0_RING3_SYSCALL_AUDIT.md), aucun correctif spéculatif |
+| Récupération synchrone `#PF`/`#GP` CPL3 | PR [#89](https://github.com/eemntirey/SYSTEMES/pull/89) (`a35c7ae`) | Scénarios QEMU de la matrice 1/2/4 CPU (section 8) |
+| Contrat scheduler + terminaison Ring 3 ordonnançable (niveau 2, BSP) | PR [#92](https://github.com/eemntirey/SYSTEMES/pull/92) (`6a77a50`), PR [#95](https://github.com/eemntirey/SYSTEMES/pull/95) (`2a720b8`) | 14/14 check-runs obligatoires `success` sur `97f8c48`, dont `Ring 3 schedulable task termination` (section 9) |
+| Réservation/préparation/publication sûre des tâches Ring 3 | PR [#96](https://github.com/eemntirey/SYSTEMES/pull/96) (`7874617a`) | 14/14 check-runs obligatoires `success` sur `e0f3fcac`, dont `Ring 3 schedulable task termination` et `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)` (section 12) |
+
+Les limitations des sections 10 et 12 restent vraies : continuation noyau CPU-locale, absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal, aucun couplage `Process`↔`TaskId` ni pilotage CR3/TSS.RSP0/GS/SYSCALL par le scheduler. Cette clôture ne constitue donc pas la fin du programme P0.
+
+Le programme complet défini dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) se poursuit avec :
+- **PR B (suite)** — propriété stable des tâches Ring 3, couplage au `Process`, activation CR3/TSS.RSP0/GS/SYSCALL ;
 - **PR C** — trampoline de sortie non-retournant sur pile distincte, raccordement `SYS_EXIT` puis `#PF`/`#GP` ;
 - **PR D** — reaper SMP, références, masque CPU actifs, IPI TLB-shootdown/ACK ;
 - **PR E** — rafales, double terminaison, préemption, work-stealing noyau et build production.
 
 Chaque incrément reste conditionné à une CI entièrement verte sur son SHA final et à un examen explicite avant fusion.
 
-## 12. P0-B — réservation scheduler des contextes Ring 3 (en cours)
+## 12. P0-B — réservation scheduler des contextes Ring 3 (primitive livrée, P0-B non achevé)
 
 La branche `p0-b-ring3-task-reservation` introduit une réservation en deux phases dans `kernel/src/scheduler.rs` :
 
@@ -205,6 +216,6 @@ Le module `process.rs` reste volontairement hors du graphe de compilation (`pub 
 
 Le harnais `qemu-ring3-task-test` utilise désormais ce chemin : le CPU initialise uniquement la tâche observateur, puis chaque tâche Ring 3 est réservée, préparée et publiée avant d'être sélectionnée. Les trois causes de sortie et le CR3 privé restent vérifiés.
 
-**Limite actuelle :** la réservation scheduler ne relie pas encore chaque `Process` à un `TaskId` ; CR3, TSS.RSP0 et GS/SYSCALL ne sont pas encore pilotés par le scheduler, et la continuation Ring 3 reste CPU-locale. Cette incrément fournit la propriété de slot et la publication sûre, pas l'achèvement de P0-B.
+**Limite actuelle :** la réservation scheduler ne relie pas encore chaque `Process` à un `TaskId` ; CR3, TSS.RSP0 et GS/SYSCALL ne sont pas encore pilotés par le scheduler, et la continuation Ring 3 reste CPU-locale. Cet incrément fournit la propriété de slot et la publication sûre, pas l'achèvement de P0-B.
 
-**Validation locale :** 152/152 tests hôte, `cargo check --all-features --target x86_64-unknown-none` et `cargo check --target x86_64-unknown-none` réussis. La CI complète et la matrice QEMU 1/2/4 CPU doivent confirmer le SHA final avant fusion.
+**Validation :** la PR [#96](https://github.com/eemntirey/SYSTEMES/pull/96) est fusionnée sous `7874617a`. Son compte rendu annonce 152/152 tests hôte et deux `cargo check` cible réussis. Sur le SHA final `e0f3fcac`, les 14 check-runs obligatoires étaient `success`, dont `Ring 3 schedulable task termination` et `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)` ; `Kilo Code Review` était en `action_required` et n'est pas une condition de fusion. La primitive est livrée, mais P0-B n'est pas achevé pour autant.
