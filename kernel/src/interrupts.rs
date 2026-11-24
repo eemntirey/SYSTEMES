@@ -101,6 +101,10 @@ pub struct Ring3CpuState {
     pub expected_user_rsp: u64,
     pub exit_status: u64,
     pub fault: Option<UserFaultInfo>,
+    /// Top of the kernel stack installed in GS for SYSCALL entry.
+    pub syscall_stack_top: u64,
+    /// Privilege-stack top installed in the CPU's TSS.RSP0 for CPL3 interrupts.
+    pub tss_rsp0: u64,
 }
 
 impl Ring3CpuState {
@@ -112,6 +116,8 @@ impl Ring3CpuState {
             expected_user_rsp: 0,
             exit_status: 0,
             fault: None,
+            syscall_stack_top: 0,
+            tss_rsp0: 0,
         }
     }
 }
@@ -1015,14 +1021,17 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     status
 }
 
-/// Per-CPU syscall exit status (for ring-3 test compatibility).
+#[cfg(test)]
+std::thread_local! {
+    /// Host tests run in parallel at CPL3. Each thread gets its own syscall
+    /// context so exit status and Ring 3 continuation checks cannot interfere.
+    static TEST_SYSCALL_LOCAL: core::cell::UnsafeCell<SyscallCpuLocal> =
+        core::cell::UnsafeCell::new(SyscallCpuLocal::new());
+}
+
 #[cfg(test)]
 fn current_syscall_local() -> *mut SyscallCpuLocal {
-    // Host-side unit tests run at CPL3 and cannot execute RDMSR. Their isolated
-    // test context uses the bootstrap CPU slot instead of the hardware GS base.
-    let cpu_index = current_cpu_index();
-    assert!(cpu_index < MAX_CPUS, "test CPU index exceeds supported slots");
-    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
+    TEST_SYSCALL_LOCAL.with(|cell| cell.get())
 }
 
 #[cfg(not(test))]
@@ -1045,8 +1054,11 @@ pub(crate) fn user_exit_status() -> u64 {
 }
 
 /// Snapshot a syscall-local context's Ring 3 continuation state.
-unsafe fn snapshot_ring3_cpu_state(local: *mut SyscallCpuLocal) -> Ring3CpuState {
-    // SAFETY: The caller owns the syscall-local context.
+unsafe fn snapshot_ring3_cpu_state(
+    local: *mut SyscallCpuLocal,
+    tss: *mut TaskStateSegment,
+) -> Ring3CpuState {
+    // SAFETY: The caller owns the syscall-local context and TSS.
     unsafe {
         let vector = (*local).fault_vector.load(Ordering::Acquire);
         Ring3CpuState {
@@ -1061,13 +1073,19 @@ unsafe fn snapshot_ring3_cpu_state(local: *mut SyscallCpuLocal) -> Ring3CpuState
                 cr2: (*local).fault_cr2.load(Ordering::Acquire),
                 rip: (*local).fault_rip.load(Ordering::Acquire),
             }),
+            syscall_stack_top: (*local).syscall_stack_top,
+            tss_rsp0: core::ptr::addr_of!((*tss).rsp0).read_unaligned(),
         }
     }
 }
 
 /// Install a Ring 3 continuation state into a syscall-local context.
-unsafe fn write_ring3_cpu_state(local: *mut SyscallCpuLocal, state: Ring3CpuState) {
-    // SAFETY: The caller owns the syscall-local context.
+unsafe fn write_ring3_cpu_state(
+    local: *mut SyscallCpuLocal,
+    tss: *mut TaskStateSegment,
+    state: Ring3CpuState,
+) {
+    // SAFETY: The caller owns the syscall-local context and TSS.
     unsafe {
         (*local).saved_kernel_rsp.store(state.saved_kernel_rsp, Ordering::Release);
         (*local).ring3_active.store(state.ring3_active, Ordering::Release);
@@ -1085,19 +1103,43 @@ unsafe fn write_ring3_cpu_state(local: *mut SyscallCpuLocal, state: Ring3CpuStat
         (*local).fault_rip.store(fault.rip, Ordering::Release);
         // Publish the record last; `fault_vector` is the valid bit.
         (*local).fault_vector.store(fault.vector, Ordering::Release);
+        addr_of_mut!((*local).syscall_stack_top).write_unaligned(state.syscall_stack_top);
+        core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(state.tss_rsp0);
+    }
+}
+
+/// Pointer to the current CPU's TSS inside its private context.
+fn current_tss_ptr() -> *mut TaskStateSegment {
+    let cpu_index = current_cpu_index();
+    // SAFETY: CPU_CONTEXTS is static and the index is produced by APIC/CPUID.
+    unsafe {
+        let ctx = (addr_of_mut!(CPU_CONTEXTS) as *mut CpuContext).add(cpu_index);
+        addr_of_mut!((*ctx).tss)
     }
 }
 
 /// Snapshot the current CPU's Ring 3 continuation state for task ownership.
 pub fn ring3_cpu_state() -> Ring3CpuState {
-    // SAFETY: The current CPU owns its GS-local syscall context.
-    unsafe { snapshot_ring3_cpu_state(current_syscall_local()) }
+    // SAFETY: The current CPU owns its GS-local syscall context and TSS.
+    unsafe { snapshot_ring3_cpu_state(current_syscall_local(), current_tss_ptr()) }
 }
 
 /// Install a task's Ring 3 continuation state into the current CPU.
 pub fn install_ring3_cpu_state(state: Ring3CpuState) {
+    // SAFETY: The current CPU owns its GS-local syscall context and TSS.
+    unsafe { write_ring3_cpu_state(current_syscall_local(), current_tss_ptr(), state) };
+}
+
+/// Kernel stack top currently installed for SYSCALL entry on this CPU.
+pub fn syscall_stack_top() -> u64 {
     // SAFETY: The current CPU owns its GS-local syscall context.
-    unsafe { write_ring3_cpu_state(current_syscall_local(), state) };
+    unsafe { (*current_syscall_local()).syscall_stack_top }
+}
+
+/// Privilege stack top currently installed in this CPU's TSS.RSP0.
+pub fn tss_rsp0() -> u64 {
+    // SAFETY: This CPU owns its context slot and the TSS is published during boot.
+    unsafe { core::ptr::addr_of!((*current_tss_ptr()).rsp0).read_unaligned() }
 }
 
 /// Return the most recent recoverable CPL3 fault on this CPU, if any.
@@ -1474,13 +1516,17 @@ mod tests {
                 cr2: 0x8000_9000,
                 rip: 0x8000_200A,
             }),
+            syscall_stack_top: 0x1000,
+            tss_rsp0: 0x2000,
         };
         let mut a = SyscallCpuLocal::new();
         let mut b = SyscallCpuLocal::new();
+        let mut tss: TaskStateSegment = unsafe { core::mem::zeroed() };
+        let mut other_tss: TaskStateSegment = unsafe { core::mem::zeroed() };
         // SAFETY: These are freshly allocated test-local contexts.
-        unsafe { write_ring3_cpu_state(&mut a, state) };
-        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut a) }, state);
-        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut b) }, Ring3CpuState::none());
+        unsafe { write_ring3_cpu_state(&mut a, &mut tss, state) };
+        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut a, &mut tss) }, state);
+        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut b, &mut other_tss) }, Ring3CpuState::none());
     }
 
     #[test]

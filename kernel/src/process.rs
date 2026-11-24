@@ -1,368 +1,532 @@
-//! Multi-process management for Ring 3 user processes.
+//! SMP-safe ownership of Ring 3 processes and their scheduler reservations.
+//!
+//! A `Process` owns one private `AddressSpace`, one per-process file table and
+//! at most one CPU-qualified `Ring3TaskHandle`. The process-table lock is never
+//! held while taking a scheduler run-queue lock, so there is no lock-order
+//! inversion. Reservation and publication are separate steps: a task is never
+//! runnable until its full Ring 3 context has been built.
+
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use crate::{
-    address_space::{AddressSpace, UserPagePermissions, USER_BASE, cr3_root, read_cr3, write_cr3},
-    elf_loader::load_elf,
+    address_space::{AddressSpace, AddressSpaceError, cr3_root, read_cr3},
     file_descriptors::ProcessFileTable,
-    interrupts::{self, set_yield_requested},
-    memory::{PhysicalFrameAllocator, PAGE_SIZE},
-    paging::IDENTITY_MAP_BYTES,
     rootfs,
-    syscall::SyscallFrame,
+    scheduler::{self, Ring3TaskContextRef, Ring3TaskHandle, SchedulerError, TaskId},
+    sync::SpinLock,
 };
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
-use core::ptr;
 
 pub const MAX_PROCESSES: usize = 8;
-const USER_STACK_PAGE: u64 = USER_BASE + 0xA000;
-/// Scratch page used by the Ring 3 shell for its line buffer and argument copies.
-/// It must stay clear of the syscall stack at USER_BASE + 0x7000.
-const USER_DATA_PAGE: u64 = USER_BASE + 0x8000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum ProcessState {
-    Empty = 0,
-    Runnable = 1,
-    Running = 2,
-    Exited = 3,
+    Prepared = 0,
+    Publishing = 1,
+    Runnable = 2,
+    Running = 3,
+    Exited = 4,
 }
 
-#[repr(C, align(16))]
-pub struct UserContext {
-    pub r15: u64, pub r14: u64, pub r13: u64, pub r12: u64,
-    pub r11: u64, pub r10: u64, pub r9: u64, pub r8: u64,
-    pub rbp: u64, pub rdi: u64, pub rsi: u64, pub rdx: u64,
-    pub rcx: u64, pub rbx: u64, pub rax: u64,
-    pub user_rsp: u64,
-}
-
-impl UserContext {
-    const fn empty() -> Self {
-        Self {
-            r15: 0, r14: 0, r13: 0, r12: 0, r11: 0x202, r10: 0, r9: 0, r8: 0,
-            rbp: 0, rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0, rax: 0,
-            user_rsp: 0,
-        }
-    }
-
-    fn from_syscall_frame(frame: &SyscallFrame) -> Self {
-        Self {
-            r15: frame.r15, r14: frame.r14, r13: frame.r13, r12: frame.r12,
-            r11: frame.r11, r10: frame.r10, r9: frame.r9, r8: frame.r8,
-            rbp: frame.rbp, rdi: frame.rdi, rsi: frame.rsi, rdx: frame.rdx,
-            rcx: frame.rcx, rbx: frame.rbx, rax: frame.rax,
-            user_rsp: frame.user_rsp,
-        }
-    }
-
-    fn to_syscall_frame(&self, frame: &mut SyscallFrame) {
-        frame.r15 = self.r15; frame.r14 = self.r14; frame.r13 = self.r13; frame.r12 = self.r12;
-        frame.r11 = self.r11; frame.r10 = self.r10; frame.r9 = self.r9; frame.r8 = self.r8;
-        frame.rbp = self.rbp; frame.rdi = self.rdi; frame.rsi = self.rsi; frame.rdx = self.rdx;
-        frame.rcx = self.rcx; frame.rbx = self.rbx; frame.rax = self.rax;
-        frame.user_rsp = self.user_rsp;
-    }
-}
-
+/// Owner of the resources that make one Ring 3 process independent from every
+/// other process on the system. The scheduler only stores an opaque context id;
+/// it never owns or frees these resources.
 pub struct Process {
-    pub pid: u32,
-    pub state: AtomicU8,
-    pub address_space: AddressSpace,
-    pub entry: u64,
-    pub user_stack: u64,
-    pub context: UserContext,
-    pub file_table: ProcessFileTable,
-    pub exit_code: u32,
+    pid: u32,
+    state: ProcessState,
+    address_space: Option<AddressSpace>,
+    entry: u64,
+    user_stack: u64,
+    task: Option<Ring3TaskHandle>,
+    file_table: ProcessFileTable,
+    exit_code: Option<u32>,
 }
 
 impl Process {
-    pub fn new(
+    fn new(
         pid: u32,
         address_space: AddressSpace,
         entry: u64,
         user_stack: u64,
         file_table: ProcessFileTable,
+        task: Option<Ring3TaskHandle>,
     ) -> Self {
         Self {
             pid,
-            state: AtomicU8::new(ProcessState::Runnable as u8),
-            address_space, entry, user_stack,
-            context: UserContext {
-                rcx: entry, user_rsp: user_stack, r11: 0x202,
-                ..UserContext::empty()
-            },
+            state: ProcessState::Prepared,
+            address_space: Some(address_space),
+            entry,
+            user_stack,
+            task,
             file_table,
-            exit_code: 0,
+            exit_code: None,
         }
     }
+
+    pub const fn pid(&self) -> u32 { self.pid }
+    pub const fn state(&self) -> ProcessState { self.state }
+    pub const fn entry(&self) -> u64 { self.entry }
+    pub const fn user_stack(&self) -> u64 { self.user_stack }
+    pub const fn task_handle(&self) -> Option<Ring3TaskHandle> { self.task }
+    pub const fn exit_code(&self) -> Option<u32> { self.exit_code }
+
+    pub fn address_space_root(&self) -> Option<u64> {
+        self.address_space.as_ref().map(AddressSpace::root)
+    }
+
+    pub fn file_table(&self) -> &ProcessFileTable { &self.file_table }
+    pub fn file_table_mut(&mut self) -> &mut ProcessFileTable { &mut self.file_table }
 }
 
-pub struct ProcessTable {
-    processes: [Option<Process>; MAX_PROCESSES],
-    next_pid: AtomicU32,
+struct ProcessTable {
+    slots: [Option<Process>; MAX_PROCESSES],
+    next_pid: u32,
 }
 
 impl ProcessTable {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
-            processes: [const { None }; MAX_PROCESSES],
-            next_pid: AtomicU32::new(1),
+            slots: [const { None }; MAX_PROCESSES],
+            next_pid: 1,
         }
     }
 
-    pub fn insert(&mut self, mut process: Process) -> Result<u32, &'static str> {
-        let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
-        if pid == 0 || pid >= MAX_PROCESSES as u32 {
-            return Err("pid out of range");
+    fn insert(
+        &mut self,
+        address_space: AddressSpace,
+        entry: u64,
+        user_stack: u64,
+        file_table: ProcessFileTable,
+        task: Option<Ring3TaskHandle>,
+    ) -> Result<u32, ProcessError> {
+        let slot = self
+            .slots
+            .iter()
+            .position(Option::is_none)
+            .ok_or(ProcessError::TableFull)?;
+        let pid = self.next_pid;
+        self.next_pid = pid.checked_add(1).ok_or(ProcessError::PidExhausted)?;
+        if pid == 0 {
+            return Err(ProcessError::PidExhausted);
         }
-        let slot = pid as usize;
-        if self.processes[slot].is_some() {
-            return Err("pid slot occupied");
-        }
-        process.pid = pid;
-        self.processes[slot] = Some(process);
+        self.slots[slot] = Some(Process::new(
+            pid,
+            address_space,
+            entry,
+            user_stack,
+            file_table,
+            task,
+        ));
         Ok(pid)
     }
 
-    pub fn get(&self, pid: u32) -> Option<&Process> {
-        if pid == 0 || pid as usize >= MAX_PROCESSES {
-            return None;
-        }
-        self.processes[pid as usize].as_ref()
+    fn get(&self, pid: u32) -> Option<&Process> {
+        self.slots.iter().flatten().find(|process| process.pid == pid)
     }
 
-    pub fn get_mut(&mut self, pid: u32) -> Option<&mut Process> {
-        if pid == 0 || pid as usize >= MAX_PROCESSES {
-            return None;
-        }
-        self.processes[pid as usize].as_mut()
+    fn get_mut(&mut self, pid: u32) -> Option<&mut Process> {
+        self.slots
+            .iter_mut()
+            .flatten()
+            .find(|process| process.pid == pid)
     }
 
-    pub fn remove(&mut self, pid: u32) -> Option<Process> {
-        if pid == 0 || pid as usize >= MAX_PROCESSES {
-            return None;
+    fn remove(&mut self, pid: u32) -> Option<Process> {
+        let slot = self
+            .slots
+            .iter()
+            .position(|entry| entry.as_ref().is_some_and(|process| process.pid == pid))?;
+        self.slots[slot].take()
+    }
+}
+
+static PROCESS_TABLE: SpinLock<ProcessTable> = SpinLock::new(ProcessTable::new());
+static CURRENT_PID: [AtomicU32; scheduler::MAX_CPUS] =
+    [const { AtomicU32::new(0) }; scheduler::MAX_CPUS];
+/// Context ids are never recycled. A stale handle therefore cannot match a
+/// later reservation of the same PID or the same scheduler slot.
+static NEXT_CONTEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessError {
+    TableFull,
+    PidExhausted,
+    NotFound,
+    InvalidState,
+    TaskAlreadyReserved,
+    TaskNotReserved,
+    WrongCpu,
+    AlreadyExited,
+    ActiveAddressSpace,
+    Scheduler(SchedulerError),
+    AddressSpace(AddressSpaceError),
+}
+
+fn next_context_ref() -> Ring3TaskContextRef {
+    let id = NEXT_CONTEXT_ID.fetch_add(1, Ordering::AcqRel);
+    // usize::MAX is the scheduler's "no context" sentinel.
+    if id == usize::MAX {
+        NEXT_CONTEXT_ID.store(1, Ordering::Release);
+        Ring3TaskContextRef::new(1)
+    } else {
+        Ring3TaskContextRef::new(id)
+    }
+}
+
+/// Insert a fully constructed address space as a non-runnable process.
+pub fn create_prepared_process(
+    address_space: AddressSpace,
+    entry: u64,
+    user_stack: u64,
+    file_table: ProcessFileTable,
+) -> Result<u32, ProcessError> {
+    PROCESS_TABLE
+        .lock()
+        .insert(address_space, entry, user_stack, file_table, None)
+}
+
+/// Reserve the scheduler slot first, then insert the process that owns it.
+/// Any table failure cancels the unpublished reservation before returning.
+pub fn create_process_with_task(
+    address_space: AddressSpace,
+    entry: u64,
+    user_stack: u64,
+    file_table: ProcessFileTable,
+) -> Result<(u32, Ring3TaskHandle), ProcessError> {
+    let handle = scheduler::reserve_ring3_task(next_context_ref()).map_err(ProcessError::Scheduler)?;
+    match PROCESS_TABLE.lock().insert(
+        address_space,
+        entry,
+        user_stack,
+        file_table,
+        Some(handle),
+    ) {
+        Ok(pid) => Ok((pid, handle)),
+        Err(error) => {
+            let _ = scheduler::cancel_ring3_reservation(handle);
+            Err(error)
         }
-        self.processes[pid as usize].take()
+    }
+}
+
+/// Associate a new, non-recycled scheduler reservation with an existing process.
+/// The process-table lock is released before the scheduler lock is taken.
+pub fn reserve_process_task(pid: u32) -> Result<Ring3TaskHandle, ProcessError> {
+    {
+        let table = PROCESS_TABLE.lock();
+        let process = table.get(pid).ok_or(ProcessError::NotFound)?;
+        if process.state != ProcessState::Prepared {
+            return Err(ProcessError::InvalidState);
+        }
+        if process.task.is_some() {
+            return Err(ProcessError::TaskAlreadyReserved);
+        }
     }
 
-    pub fn next_runnable(&self, current: u32) -> Option<u32> {
-        let mut pid = current.wrapping_add(1);
-        for _ in 0..MAX_PROCESSES {
-            if pid as usize >= MAX_PROCESSES {
-                pid = 1;
+    let handle = scheduler::reserve_ring3_task(next_context_ref()).map_err(ProcessError::Scheduler)?;
+
+    let associated = {
+        let mut table = PROCESS_TABLE.lock();
+        match table.get_mut(pid) {
+            Some(process)
+                if process.state == ProcessState::Prepared && process.task.is_none() =>
+            {
+                process.task = Some(handle);
+                true
             }
-            if let Some(p) = self.processes[pid as usize].as_ref() {
-                if p.state.load(Ordering::Acquire) == ProcessState::Runnable as u8 {
-                    return Some(pid);
-                }
-            }
-            pid = pid.wrapping_add(1);
+            _ => false,
         }
-        None
-    }
-
-    pub fn count_runnable(&self) -> usize {
-        self.processes.iter().flatten().filter(|p| {
-            p.state.load(Ordering::Acquire) == ProcessState::Runnable as u8
-        }).count()
-    }
-}
-
-static mut PROCESS_TABLE: ProcessTable = ProcessTable::new();
-static CURRENT_PID: AtomicU32 = AtomicU32::new(0);
-static mut FRAME_ALLOCATOR: Option<PhysicalFrameAllocator> = None;
-
-pub fn process_table() -> &'static mut ProcessTable {
-    unsafe {
-        let ptr = &raw mut PROCESS_TABLE;
-        &mut *ptr
-    }
-}
-
-pub fn current_pid() -> u32 {
-    CURRENT_PID.load(Ordering::Acquire)
-}
-
-pub fn set_current_pid(pid: u32) {
-    CURRENT_PID.store(pid, Ordering::Release);
-}
-
-pub unsafe fn init_frame_allocator(allocator: PhysicalFrameAllocator) {
-    FRAME_ALLOCATOR = Some(allocator);
-}
-
-pub fn frame_allocator() -> Option<&'static mut PhysicalFrameAllocator> {
-    unsafe {
-        let ptr = &raw mut FRAME_ALLOCATOR as *mut Option<PhysicalFrameAllocator>;
-        match *ptr {
-            Some(ref mut a) => Some(a),
-            None => None,
-        }
-    }
-}
-
-fn kernel_pml4_root() -> u64 {
-    unsafe { cr3_root(read_cr3()) }
-}
-
-pub fn spawn_from_vfs(path: &str) -> Result<u32, &'static str> {
-    let data = rootfs::read_file(path).ok_or("file not found on VFS")?;
-    spawn_from_elf(&data)
-}
-
-/// Spawn a new process from an ELF image in memory.
-pub fn spawn_from_elf(data: &[u8]) -> Result<u32, &'static str> {
-    let allocator = frame_allocator().ok_or("frame allocator not initialized")?;
-    let mut space = unsafe {
-        AddressSpace::create(allocator, kernel_pml4_root())
-            .map_err(|_| "failed to create address space")?
     };
-    let entry = unsafe { load_elf(data, allocator, &mut space) }
-        .map_err(|_| "failed to load ELF")?;
-    let stack_frame = allocator.allocate_frame().ok_or("out of frames")?;
-    if stack_frame % PAGE_SIZE != 0 || stack_frame >= IDENTITY_MAP_BYTES {
-        let _ = allocator.free_frame(stack_frame);
-        return Err("invalid stack frame");
+
+    if !associated {
+        let _ = scheduler::cancel_ring3_reservation(handle);
+        return Err(ProcessError::TaskAlreadyReserved);
     }
-    unsafe { ptr::write_bytes(stack_frame as *mut u8, 0, PAGE_SIZE as usize); }
-    unsafe {
-        space.map_user_page(
-            allocator, USER_STACK_PAGE, stack_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        ).map_err(|_| "failed to map user stack")?;
-    }
-    let data_frame = allocator.allocate_frame().ok_or("out of frames")?;
-    if data_frame % PAGE_SIZE != 0 || data_frame >= IDENTITY_MAP_BYTES {
-        let _ = allocator.free_frame(data_frame);
-        return Err("invalid data frame");
-    }
-    unsafe { ptr::write_bytes(data_frame as *mut u8, 0, PAGE_SIZE as usize); }
-    unsafe {
-        space.map_user_page(
-            allocator, USER_DATA_PAGE, data_frame,
-            UserPagePermissions::ReadWriteNoExecute,
-        ).map_err(|_| "failed to map user data page")?;
-    }
-    let user_stack = USER_STACK_PAGE + PAGE_SIZE - 16;
-    let file_table = ProcessFileTable::new();
-    let process = Process::new(0, space, entry, user_stack, file_table);
-    let pid = process_table().insert(process)?;
-    Ok(pid)
+    Ok(handle)
 }
 
-pub fn fork_current() -> Result<u32, &'static str> {
-    let _current = current_pid();
-    Err("fork not yet implemented")
-}
-
-fn save_current_and_select_next(frame: &SyscallFrame) -> Option<u32> {
-    let current = current_pid();
-    let table = process_table();
-    if current != 0 {
-        if let Some(p) = table.get_mut(current) {
-            p.context = UserContext::from_syscall_frame(frame);
-            p.state.store(ProcessState::Runnable as u8, Ordering::Release);
+/// Publish only after the caller has built the complete initial interrupt frame
+/// on the reserved task's pinned kernel stack.
+pub fn publish_process_task(pid: u32, saved_rsp: usize) -> Result<(), ProcessError> {
+    let handle = {
+        let mut table = PROCESS_TABLE.lock();
+        let process = table.get_mut(pid).ok_or(ProcessError::NotFound)?;
+        if process.state != ProcessState::Prepared {
+            return Err(ProcessError::InvalidState);
         }
-    }
-    table.next_runnable(current)
-}
+        let handle = process.task.ok_or(ProcessError::TaskNotReserved)?;
+        process.state = ProcessState::Publishing;
+        handle
+    };
 
-pub fn yield_to_next(frame: &mut SyscallFrame) -> u64 {
-    set_yield_requested(true);
-    let next_pid = save_current_and_select_next(frame);
-    match next_pid {
-        Some(pid) => {
-            set_current_pid(pid);
-            let table = process_table();
-            let p = table.get_mut(pid).expect("next process exists");
-            p.state.store(ProcessState::Running as u8, Ordering::Release);
-            unsafe { write_cr3(p.address_space.root()); }
-            p.context.to_syscall_frame(frame);
-            unsafe { interrupts::set_syscall_user_rsp(p.context.user_rsp); }
-            0
-        }
-        None => {
-            if current_pid() != 0 {
-                let table = process_table();
-                if let Some(p) = table.get_mut(current_pid()) {
-                    p.state.store(ProcessState::Running as u8, Ordering::Release);
-                }
+    if let Err(error) = scheduler::publish_ring3_task(handle, saved_rsp) {
+        if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+            if process.task == Some(handle) && process.state == ProcessState::Publishing {
+                process.state = ProcessState::Prepared;
             }
-            0
+        }
+        return Err(ProcessError::Scheduler(error));
+    }
+
+    if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+        if process.task == Some(handle) && process.state == ProcessState::Publishing {
+            process.state = ProcessState::Runnable;
+            return Ok(());
         }
     }
+
+    Err(ProcessError::InvalidState)
 }
 
-pub fn exit_current(exit_code: u32, frame: &mut SyscallFrame) -> u64 {
-    set_yield_requested(false);
-    let current = current_pid();
-    // Close all file descriptors of the exiting process while it is still in the table.
-    if current != 0 {
-        let table = process_table();
-        if let Some(p) = table.get_mut(current) {
-            let handles = p.file_table.take_all();
-            let _ = crate::rootfs::with_root(|vfs| {
-                for handle in handles.iter().flatten().copied() {
-                    let _ = vfs.close(handle);
-                }
-            });
+/// Cancel a reservation only while its process remains unpublished.
+pub fn cancel_process_task(pid: u32) -> Result<(), ProcessError> {
+    let handle = {
+        let table = PROCESS_TABLE.lock();
+        let process = table.get(pid).ok_or(ProcessError::NotFound)?;
+        if process.state != ProcessState::Prepared {
+            return Err(ProcessError::InvalidState);
+        }
+        process.task.ok_or(ProcessError::TaskNotReserved)?
+    };
+
+    scheduler::cancel_ring3_reservation(handle).map_err(ProcessError::Scheduler)?;
+    let mut table = PROCESS_TABLE.lock();
+    let process = table.get_mut(pid).ok_or(ProcessError::NotFound)?;
+    if process.state != ProcessState::Prepared || process.task != Some(handle) {
+        return Err(ProcessError::InvalidState);
+    }
+    process.task = None;
+    Ok(())
+}
+
+/// Mark a published process as the active owner on `cpu_index` before entering
+/// Ring 3. The CPU-qualified handle prevents a cross-CPU activation.
+pub fn activate_process(cpu_index: usize, pid: u32) -> Result<(), ProcessError> {
+    if cpu_index >= scheduler::MAX_CPUS {
+        return Err(ProcessError::WrongCpu);
+    }
+    let mut table = PROCESS_TABLE.lock();
+    let process = table.get_mut(pid).ok_or(ProcessError::NotFound)?;
+    if process.state != ProcessState::Runnable && process.state != ProcessState::Running {
+        return Err(ProcessError::InvalidState);
+    }
+    let handle = process.task.ok_or(ProcessError::TaskNotReserved)?;
+    if handle.cpu_index() != cpu_index {
+        return Err(ProcessError::WrongCpu);
+    }
+    process.state = ProcessState::Running;
+    CURRENT_PID[cpu_index].store(pid, Ordering::Release);
+    Ok(())
+}
+
+/// Publish a single, idempotent voluntary exit for the current process.
+pub fn mark_process_exited(cpu_index: usize, pid: u32, exit_code: u32) -> Result<(), ProcessError> {
+    if cpu_index >= scheduler::MAX_CPUS {
+        return Err(ProcessError::WrongCpu);
+    }
+    let mut table = PROCESS_TABLE.lock();
+    let process = table.get_mut(pid).ok_or(ProcessError::NotFound)?;
+    if process.state == ProcessState::Exited {
+        return Err(ProcessError::AlreadyExited);
+    }
+    if process.state != ProcessState::Running {
+        return Err(ProcessError::InvalidState);
+    }
+    let handle = process.task.ok_or(ProcessError::TaskNotReserved)?;
+    if handle.cpu_index() != cpu_index {
+        return Err(ProcessError::WrongCpu);
+    }
+    process.state = ProcessState::Exited;
+    process.exit_code = Some(exit_code);
+    if CURRENT_PID[cpu_index].load(Ordering::Acquire) == pid {
+        CURRENT_PID[cpu_index].store(0, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// Reap an exited process: close its descriptors and destroy its private space.
+/// The caller must have switched off the process CR3 before calling.
+pub fn reap_process(
+    pid: u32,
+    allocator: &mut crate::memory::PhysicalFrameAllocator,
+) -> Result<(), ProcessError> {
+    {
+        let table = PROCESS_TABLE.lock();
+        let process = table.get(pid).ok_or(ProcessError::NotFound)?;
+        if process.state != ProcessState::Exited {
+            return Err(ProcessError::InvalidState);
+        }
+        if process
+            .address_space_root()
+            .is_some_and(|root| cr3_root(unsafe { read_cr3() }) == root)
+        {
+            return Err(ProcessError::ActiveAddressSpace);
         }
     }
-    let table = process_table();
-    if current != 0 {
-        if let Some(mut p) = table.remove(current) {
-            p.state.store(ProcessState::Exited as u8, Ordering::Release);
-            p.exit_code = exit_code;
-            let allocator = frame_allocator().expect("frame allocator not initialized");
-            unsafe { write_cr3(kernel_pml4_root()); }
-            let _ = unsafe { p.address_space.destroy(allocator) };
+
+    let mut process = PROCESS_TABLE
+        .lock()
+        .remove(pid)
+        .ok_or(ProcessError::NotFound)?;
+    let handles = process.file_table.take_all();
+    let _ = rootfs::with_root(|vfs| {
+        for handle in handles.iter().flatten().copied() {
+            let _ = vfs.close(handle);
         }
-    }
-    set_current_pid(0);
-    let table = process_table();
-    let next_pid = table.processes.iter().enumerate().find_map(|(i, opt)| {
-        if let Some(p) = opt {
-            if p.state.load(Ordering::Acquire) == ProcessState::Runnable as u8 {
-                Some(i as u32)
-            } else { None }
-        } else { None }
     });
-    match next_pid {
-        Some(pid) => {
-            set_current_pid(pid);
-            let mut table = process_table();
-            let p = table.get_mut(pid).expect("next process exists");
-            p.state.store(ProcessState::Running as u8, Ordering::Release);
-            unsafe { write_cr3(p.address_space.root()); }
-            p.context.to_syscall_frame(frame);
-            unsafe { interrupts::set_syscall_user_rsp(p.context.user_rsp); }
-            0
-        }
-        None => 0,
+    let space = process.address_space.take().ok_or(ProcessError::InvalidState)?;
+    // SAFETY: The active CR3 was checked above and the caller owns the allocator.
+    unsafe { space.destroy(allocator).map_err(ProcessError::AddressSpace)? }
+    Ok(())
+}
+
+pub fn current_process(cpu_index: usize) -> Option<u32> {
+    CURRENT_PID
+        .get(cpu_index)
+        .map(|pid| pid.load(Ordering::Acquire))
+        .filter(|pid| *pid != 0)
+}
+
+pub fn process_state(pid: u32) -> Option<ProcessState> {
+    PROCESS_TABLE.lock().get(pid).map(|process| process.state)
+}
+
+pub fn process_task_handle(pid: u32) -> Option<Ring3TaskHandle> {
+    PROCESS_TABLE.lock().get(pid).and_then(|process| process.task)
+}
+
+/// Reverse lookup: which process owns a CPU-qualified scheduler handle?
+pub fn process_for_task_handle(handle: Ring3TaskHandle) -> Option<u32> {
+    PROCESS_TABLE
+        .lock()
+        .get_slots()
+        .iter()
+        .flatten()
+        .find(|process| process.task == Some(handle))
+        .map(|process| process.pid)
+}
+
+/// Reverse lookup by the scheduler's local task id.
+pub fn process_for_task_id(task_id: TaskId) -> Option<u32> {
+    PROCESS_TABLE
+        .lock()
+        .get_slots()
+        .iter()
+        .flatten()
+        .find(|process| process.task.is_some_and(|handle| handle.task_id() == task_id))
+        .map(|process| process.pid)
+}
+
+impl ProcessTable {
+    fn get_slots(&self) -> &[Option<Process>; MAX_PROCESSES] {
+        &self.slots
     }
 }
 
-pub fn getpid() -> u32 {
-    current_pid()
+#[cfg(test)]
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    extern "C" fn noop_task() {}
+
+    fn prepare_scheduler() {
+        scheduler::initialize_for_process_test();
+        NEXT_CONTEXT_ID.store(1, Ordering::Release);
+        PROCESS_TABLE.lock().reset_for_test();
+    }
+
+    #[test]
+    fn process_to_task_binding_is_bidirectional_and_exclusive() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        prepare_scheduler();
+
+        let (pid, handle) = create_process_with_task(
+            AddressSpace::for_test(0x1000),
+            0x2000,
+            0x3000,
+            ProcessFileTable::new(),
+        )
+        .unwrap();
+
+        assert_eq!(process_task_handle(pid), Some(handle));
+        assert_eq!(process_for_task_handle(handle), Some(pid));
+        assert_eq!(process_for_task_id(handle.task_id()), Some(pid));
+        assert_eq!(process_state(pid), Some(ProcessState::Prepared));
+
+        let saved_rsp = scheduler::prepare_ring3_task(handle, noop_task).unwrap();
+        publish_process_task(pid, saved_rsp).unwrap();
+        assert_eq!(process_state(pid), Some(ProcessState::Runnable));
+        activate_process(0, pid).unwrap();
+        assert_eq!(current_process(0), Some(pid));
+        mark_process_exited(0, pid, 42).unwrap();
+        assert_eq!(process_state(pid), Some(ProcessState::Exited));
+        assert_eq!(process_task_handle(pid), Some(handle));
+        assert_eq!(process_for_task_handle(handle), Some(pid));
+        assert_eq!(current_process(0), None);
+        assert_eq!(mark_process_exited(0, pid, 43), Err(ProcessError::AlreadyExited));
+        scheduler::reset_for_process_test();
+    }
+
+    #[test]
+    fn failed_publication_rolls_back_and_a_stale_handle_cannot_be_reused() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        prepare_scheduler();
+
+        let (pid, handle) = create_process_with_task(
+            AddressSpace::for_test(0x4000),
+            0x5000,
+            0x6000,
+            ProcessFileTable::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            publish_process_task(pid, 1),
+            Err(ProcessError::Scheduler(SchedulerError::InvalidSavedStack))
+        );
+        assert_eq!(process_state(pid), Some(ProcessState::Prepared));
+        assert_eq!(process_task_handle(pid), Some(handle));
+
+        // The failed publication did not consume the reservation: a valid retry works.
+        let saved_rsp = scheduler::prepare_ring3_task(handle, noop_task).unwrap();
+        publish_process_task(pid, saved_rsp).unwrap();
+        assert_eq!(process_state(pid), Some(ProcessState::Runnable));
+        scheduler::reset_for_process_test();
+    }
+
+    #[test]
+    fn reaping_requires_a_terminal_process() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        prepare_scheduler();
+
+        let (pid, _handle) = create_process_with_task(
+            AddressSpace::for_test(0x7000),
+            0x8000,
+            0x9000,
+            ProcessFileTable::new(),
+        )
+        .unwrap();
+
+        // No allocator is needed on the invalid-state path.
+        let mut allocator = crate::memory::PhysicalFrameAllocator::empty();
+        assert_eq!(
+            reap_process(pid, &mut allocator),
+            Err(ProcessError::InvalidState)
+        );
+        assert_eq!(process_state(pid), Some(ProcessState::Prepared));
+        scheduler::reset_for_process_test();
+    }
 }
 
-pub(crate) fn current_file_table() -> Option<&'static mut ProcessFileTable> {
-    let pid = current_pid();
-    if pid == 0 { return None; }
-    let table = process_table();
-    table.get_mut(pid).map(|p| &mut p.file_table)
-}
-
-pub(crate) fn close_current_process_files() {
-    let pid = current_pid();
-    if pid == 0 { return; }
-    let table = process_table();
-    if let Some(p) = table.get_mut(pid) {
-        let handles = p.file_table.take_all();
-        let _ = crate::rootfs::with_root(|vfs| {
-            for handle in handles.iter().flatten().copied() {
-                let _ = vfs.close(handle);
-            }
-        });
+#[cfg(test)]
+impl ProcessTable {
+    fn reset_for_test(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+        self.next_pid = 1;
     }
 }

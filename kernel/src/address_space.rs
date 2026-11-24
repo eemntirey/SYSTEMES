@@ -11,7 +11,7 @@ use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
 use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
 use alloc::vec::Vec;
 #[cfg(any(feature = "qemu-ring3-smp-test", feature = "qemu-ring3-task-test"))]
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 const PRESENT: u64 = 1;
 const WRITABLE: u64 = 1 << 1;
@@ -59,6 +59,7 @@ pub enum AddressSpaceError {
     Ring3TaskStateMismatch,
     Ring3TaskExitReasonMismatch,
     Ring3TaskCr3Mismatch,
+    Ring3TaskStackMismatch,
     Ring3TaskResumedInUserMode,
     Ring3TaskObserverMissing,
 }
@@ -105,6 +106,15 @@ pub struct AddressSpace {
 impl AddressSpace {
     pub const fn root(&self) -> u64 {
         self.root
+    }
+
+    /// Build an ownerless test address space without touching CR3 or memory.
+    #[cfg(test)]
+    pub(crate) const fn for_test(root: u64) -> Self {
+        Self {
+            root,
+            owned_frames: Vec::new(),
+        }
     }
 
     /// Create a PML4 that shares the kernel identity mapping in slot 0.
@@ -1282,7 +1292,16 @@ static RING3_TASK_OBSERVED_CR3: [AtomicU64; RING3_TASK_COUNT] =
 static RING3_TASK_EXECUTIONS: [AtomicUsize; RING3_TASK_COUNT] =
     [const { AtomicUsize::new(0) }; RING3_TASK_COUNT];
 #[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVED_SYSCALL_STACKS: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVED_TSS_RSP0S: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
 static RING3_TASK_OBSERVER_RAN: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_PIDS: [AtomicU32; RING3_TASK_COUNT] =
+    [const { AtomicU32::new(0) }; RING3_TASK_COUNT];
 
 /// Entry of a schedulable Ring 3 task. The kernel continuation recorded by
 /// `enter_user_mode` is this function's caller frame on the task's own kernel
@@ -1297,6 +1316,11 @@ fn run_scheduled_ring3_task(index: usize) {
     let root = RING3_TASK_ROOTS[index].load(Ordering::Acquire);
     let user_rip = RING3_TASK_RIPS[index].load(Ordering::Acquire);
     let user_rsp = RING3_TASK_RSPS[index].load(Ordering::Acquire);
+    let pid = RING3_TASK_PIDS[index].load(Ordering::Acquire);
+    let cpu_index = crate::scheduler::current_cpu_index();
+    // The process owns this task's address space and file table; activation
+    // rejects a stale or cross-CPU binding before any user transition.
+    let _ = crate::process::activate_process(cpu_index, pid);
 
     // SAFETY: The scheduler yields with interrupts enabled; user-mode entry
     // requires them masked, and this CPU owns the transition state.
@@ -1310,6 +1334,11 @@ fn run_scheduled_ring3_task(index: usize) {
     // SAFETY: The private address space maps `user_rip` executable and
     // `user_rsp` writable, and the CPU descriptor tables are initialized.
     let status = unsafe { crate::interrupts::enter_user_mode(user_rip, user_rsp) };
+
+    RING3_TASK_OBSERVED_SYSCALL_STACKS[index]
+        .store(crate::interrupts::syscall_stack_top(), Ordering::Release);
+    RING3_TASK_OBSERVED_TSS_RSP0S[index]
+        .store(crate::interrupts::tss_rsp0(), Ordering::Release);
 
     // SAFETY: Returning to the task kernel stack and the kernel address space
     // is valid because every context shares the kernel PML4 slot.
@@ -1330,6 +1359,7 @@ fn run_scheduled_ring3_task(index: usize) {
         },
     };
     let _ = mark_current_exited(reason);
+    let _ = crate::process::mark_process_exited(cpu_index, pid, status as u32);
 }
 
 #[cfg(feature = "qemu-ring3-task-test")]
@@ -1379,9 +1409,10 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
     allocator: &mut PhysicalFrameAllocator,
     kernel_root: u64,
 ) -> Result<(), AddressSpaceError> {
+    use crate::file_descriptors::ProcessFileTable;
     use crate::scheduler::{
-        self, prepare_ring3_task, publish_ring3_task, reserve_ring3_task,
-        TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
+        self, prepare_ring3_task, task_ring3_stack_tops, TaskExitReason, TaskId, TaskState,
+
     };
 
     let free_pages_before = allocator.free_pages();
@@ -1390,7 +1421,10 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         RING3_TASK_RIPS[index].store(0, Ordering::Release);
         RING3_TASK_RSPS[index].store(0, Ordering::Release);
         RING3_TASK_OBSERVED_CR3[index].store(0, Ordering::Release);
+        RING3_TASK_OBSERVED_SYSCALL_STACKS[index].store(0, Ordering::Release);
+        RING3_TASK_OBSERVED_TSS_RSP0S[index].store(0, Ordering::Release);
         RING3_TASK_EXECUTIONS[index].store(0, Ordering::Release);
+        RING3_TASK_PIDS[index].store(0, Ordering::Release);
     }
     RING3_TASK_OBSERVER_RAN.store(false, Ordering::Release);
 
@@ -1509,12 +1543,22 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         ring3_task_entry_page_fault as crate::scheduler::TaskEntry,
         ring3_task_entry_general_protection as crate::scheduler::TaskEntry,
     ];
-    for (index, entry) in ring3_entries.into_iter().enumerate() {
-        let handle = reserve_ring3_task(Ring3TaskContextRef::new(0xB000 + index))
-            .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+    for (index, (entry, space)) in ring3_entries
+        .into_iter()
+        .zip(spaces.into_iter().flatten())
+        .enumerate()
+    {
+        let (pid, handle) = crate::process::create_process_with_task(
+            space,
+            RING3_TASK_CODE_ADDRESSES[index],
+            RING3_TASK_STACK_ADDRESSES[index] + PAGE_SIZE - 16,
+            ProcessFileTable::new(),
+        )
+        .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
+        RING3_TASK_PIDS[index].store(pid, Ordering::Release);
         let saved_rsp = prepare_ring3_task(handle, entry)
             .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
-        publish_ring3_task(handle, saved_rsp)
+        crate::process::publish_process_task(pid, saved_rsp)
             .map_err(|_| AddressSpaceError::Ring3TransitionFailed)?;
     }
 
@@ -1568,6 +1612,16 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
             failure = Err(AddressSpaceError::Ring3TaskCr3Mismatch);
             break;
         }
+        let Some((expected_tss_rsp0, expected_syscall_stack)) = task_ring3_stack_tops(id) else {
+            failure = Err(AddressSpaceError::Ring3TaskStackMismatch);
+            break;
+        };
+        if RING3_TASK_OBSERVED_SYSCALL_STACKS[index].load(Ordering::Acquire) != expected_syscall_stack
+            || RING3_TASK_OBSERVED_TSS_RSP0S[index].load(Ordering::Acquire) != expected_tss_rsp0
+        {
+            failure = Err(AddressSpaceError::Ring3TaskStackMismatch);
+            break;
+        }
         // The user canary is only written by instructions after the exit path;
         // a non-zero value means kernel code resumed user mode.
         let canary = unsafe {
@@ -1580,6 +1634,11 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
             failure = Err(AddressSpaceError::Ring3TaskResumedInUserMode);
             break;
         }
+        let pid = RING3_TASK_PIDS[index].load(Ordering::Acquire);
+        if crate::process::process_state(pid) != Some(crate::process::ProcessState::Exited) {
+            failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+            break;
+        }
     }
     if failure.is_ok() && !RING3_TASK_OBSERVER_RAN.load(Ordering::Acquire) {
         failure = Err(AddressSpaceError::Ring3TaskObserverMissing);
@@ -1588,9 +1647,10 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
     }
 
-    for space in spaces.into_iter().flatten() {
-        // SAFETY: Every Ring 3 task returned to the kernel root before this point.
-        unsafe { space.destroy(allocator)? };
+    for index in 0..RING3_TASK_COUNT {
+        let pid = RING3_TASK_PIDS[index].load(Ordering::Acquire);
+        crate::process::reap_process(pid, allocator)
+            .map_err(|_| AddressSpaceError::FrameReclaimMismatch)?;
     }
     if allocator.free_pages() != free_pages_before {
         return Err(AddressSpaceError::FrameReclaimMismatch);
