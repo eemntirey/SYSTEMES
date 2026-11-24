@@ -1021,14 +1021,17 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> u64 {
     status
 }
 
-/// Per-CPU syscall exit status (for ring-3 test compatibility).
+#[cfg(test)]
+std::thread_local! {
+    /// Host tests run in parallel at CPL3. Each thread gets its own syscall
+    /// context so exit status and Ring 3 continuation checks cannot interfere.
+    static TEST_SYSCALL_LOCAL: core::cell::UnsafeCell<SyscallCpuLocal> =
+        core::cell::UnsafeCell::new(SyscallCpuLocal::new());
+}
+
 #[cfg(test)]
 fn current_syscall_local() -> *mut SyscallCpuLocal {
-    // Host-side unit tests run at CPL3 and cannot execute RDMSR. Their isolated
-    // test context uses the bootstrap CPU slot instead of the hardware GS base.
-    let cpu_index = current_cpu_index();
-    assert!(cpu_index < MAX_CPUS, "test CPU index exceeds supported slots");
-    unsafe { addr_of_mut!(CPU_CONTEXTS[cpu_index].syscall) }
+    TEST_SYSCALL_LOCAL.with(|cell| cell.get())
 }
 
 #[cfg(not(test))]

@@ -634,8 +634,66 @@ fn handle_matches_reservation(context_id: usize, handle: Ring3TaskHandle) -> boo
 }
 
 /// Get the current CPU's scheduler index (APIC ID).
-fn current_cpu_index() -> usize {
+pub fn current_cpu_index() -> usize {
     crate::apic::current_apic_id().map(|id| id as usize).unwrap_or(0)
+}
+
+/// Restore the scheduler's inert host-test state so later unit tests do not
+/// observe reservations created by process contract tests.
+#[cfg(test)]
+pub fn reset_for_process_test() {
+    let cpu_index = 0;
+    let sched = cpu_scheduler(cpu_index);
+    unsafe {
+        (*sched).run_queue_lock.store(false, Ordering::Release);
+        for index in 0..MAX_TASKS {
+            let task = task_ptr(cpu_index, index);
+            (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
+            (*task).saved_rsp.store(0, Ordering::Relaxed);
+            (*task).entry.store(0, Ordering::Relaxed);
+            (*task).wake_at.store(0, Ordering::Relaxed);
+            (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
+            (*task).cpu_affine.store(false, Ordering::Relaxed);
+            (*task).ring3_state = crate::interrupts::Ring3CpuState::none();
+            (*task).saved_cr3.store(0, Ordering::Relaxed);
+            (*task).exit_reason = None;
+        }
+        (*sched).current_task.store(0, Ordering::Release);
+        (*sched).task_count.store(0, Ordering::Release);
+        (*sched).initialized.store(false, Ordering::Release);
+        (*sched).preemptive_enabled.store(false, Ordering::Release);
+        (*sched).fpu_contexts_ready.store(false, Ordering::Release);
+    }
+}
+
+/// Minimal scheduler setup for host-side process-ownership contract tests.
+/// It deliberately avoids ring-0 FPU and interrupt instructions.
+#[cfg(test)]
+pub fn initialize_for_process_test() {
+    let cpu_index = 0;
+    let sched = cpu_scheduler(cpu_index);
+    unsafe {
+        (*sched).run_queue_lock.store(false, Ordering::Release);
+        for index in 0..MAX_TASKS {
+            let task = task_ptr(cpu_index, index);
+            (*task).resource_id.store(cpu_index * MAX_TASKS + index, Ordering::Relaxed);
+            (*task).saved_rsp.store(0, Ordering::Relaxed);
+            (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
+            (*task).switches.store(0, Ordering::Relaxed);
+            (*task).entry.store(0, Ordering::Relaxed);
+            (*task).wake_at.store(0, Ordering::Relaxed);
+            (*task).migrations.store(0, Ordering::Relaxed);
+            (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
+            (*task).cpu_affine.store(false, Ordering::Relaxed);
+            (*task).ring3_state = crate::interrupts::Ring3CpuState::none();
+            (*task).saved_cr3.store(0, Ordering::Relaxed);
+            (*task).exit_reason = None;
+        }
+        (*task_ptr(cpu_index, 0)).state.store(TaskState::Running as u8, Ordering::Release);
+        (*sched).current_task.store(0, Ordering::Release);
+        (*sched).task_count.store(1, Ordering::Release);
+        (*sched).initialized.store(true, Ordering::Release);
+    }
 }
 
 /// Capture CPU-local Ring 3 state into the outgoing task before a context switch.
@@ -823,16 +881,18 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
         irq_restore(interrupt_flags);
         return Err("too many kernel tasks");
     }
-    // Kernel tasks share the active root; Ring 3 tasks replace it on entry.
-    // Host unit tests run at CPL3 where CR3 is unreadable, so they keep zero.
+    // Kernel tasks share the active root and the CPU privilege stack; Ring 3
+    // tasks replace both on entry. Host unit tests run at CPL3 where CR3 and
+    // the TSS are unreadable, so they keep zero.
     let kernel_cr3: u64 = if cfg!(test) { 0 } else { unsafe { crate::address_space::read_cr3() } };
     // Kernel tasks inherit the CPU's default syscall/TSS stacks; Ring 3
-    // reservations replace them with the slot's pinned kernel stack below.
+    // reservations replace them with the slot's dedicated entry stacks below.
     let default_ring3_state = if cfg!(test) {
         crate::interrupts::Ring3CpuState::none()
     } else {
         crate::interrupts::ring3_cpu_state()
     };
+
     // SAFETY: This CPU owns its scheduler slots until initialized; resource IDs
     // are fixed by the CPU/task slot and remain valid even after the descriptor migrates.
     unsafe {
@@ -923,7 +983,7 @@ fn schedule(cpu_index: usize, saved_rsp: usize, count_preemption: bool) -> usize
             // after a later wake-up; only a genuinely running task becomes READY.
             (*current_task).saved_rsp.store(saved_rsp, Ordering::Release);
             if cpu_index == current_cpu_index() {
-                unsafe { save_ring3_cpu_state(current_task) };
+                save_ring3_cpu_state(current_task);
             }
             (*current_task).switches.fetch_add(1, Ordering::Relaxed);
             if current_state == TaskState::Running as u8 {
@@ -1132,16 +1192,32 @@ pub fn preemption_count() -> usize {
 }
 
 fn irq_save_disable() -> usize {
-    let flags: usize;
-    // SAFETY: RFLAGS is readable and CLI is valid at ring 0.
-    unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) flags, options(nomem)); }
-    flags
+    #[cfg(test)]
+    {
+        // Host contract tests run at CPL3, where CLI/STI are privileged.
+        // Scheduler state is still protected by the run-queue spin lock.
+        1 << 9
+    }
+    #[cfg(not(test))]
+    {
+        let flags: usize;
+        // SAFETY: RFLAGS is readable and CLI is valid at ring 0.
+        unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) flags, options(nomem)); }
+        flags
+    }
 }
 
 fn irq_restore(flags: usize) {
-    if flags & (1 << 9) != 0 {
-        // SAFETY: Restore the prior IF state after the scheduler state transition.
-        unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+    #[cfg(test)]
+    {
+        let _ = flags;
+    }
+    #[cfg(not(test))]
+    {
+        if flags & (1 << 9) != 0 {
+            // SAFETY: Restore the prior IF state after the scheduler state transition.
+            unsafe { core::arch::asm!("sti", options(nomem, nostack)); }
+        }
     }
 }
 
