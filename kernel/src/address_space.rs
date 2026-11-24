@@ -59,6 +59,7 @@ pub enum AddressSpaceError {
     Ring3TaskStateMismatch,
     Ring3TaskExitReasonMismatch,
     Ring3TaskCr3Mismatch,
+    Ring3TaskStackMismatch,
     Ring3TaskResumedInUserMode,
     Ring3TaskObserverMissing,
 }
@@ -1282,6 +1283,12 @@ static RING3_TASK_OBSERVED_CR3: [AtomicU64; RING3_TASK_COUNT] =
 static RING3_TASK_EXECUTIONS: [AtomicUsize; RING3_TASK_COUNT] =
     [const { AtomicUsize::new(0) }; RING3_TASK_COUNT];
 #[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVED_SYSCALL_STACKS: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_OBSERVED_TSS_RSP0S: [AtomicU64; RING3_TASK_COUNT] =
+    [const { AtomicU64::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
 static RING3_TASK_OBSERVER_RAN: AtomicBool = AtomicBool::new(false);
 
 /// Entry of a schedulable Ring 3 task. The kernel continuation recorded by
@@ -1310,6 +1317,11 @@ fn run_scheduled_ring3_task(index: usize) {
     // SAFETY: The private address space maps `user_rip` executable and
     // `user_rsp` writable, and the CPU descriptor tables are initialized.
     let status = unsafe { crate::interrupts::enter_user_mode(user_rip, user_rsp) };
+
+    RING3_TASK_OBSERVED_SYSCALL_STACKS[index]
+        .store(crate::interrupts::syscall_stack_top(), Ordering::Release);
+    RING3_TASK_OBSERVED_TSS_RSP0S[index]
+        .store(crate::interrupts::tss_rsp0(), Ordering::Release);
 
     // SAFETY: Returning to the task kernel stack and the kernel address space
     // is valid because every context shares the kernel PML4 slot.
@@ -1381,7 +1393,7 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
 ) -> Result<(), AddressSpaceError> {
     use crate::scheduler::{
         self, prepare_ring3_task, publish_ring3_task, reserve_ring3_task,
-        TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
+        task_ring3_stack_tops, TaskExitReason, TaskId, TaskState, Ring3TaskContextRef,
     };
 
     let free_pages_before = allocator.free_pages();
@@ -1390,6 +1402,8 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         RING3_TASK_RIPS[index].store(0, Ordering::Release);
         RING3_TASK_RSPS[index].store(0, Ordering::Release);
         RING3_TASK_OBSERVED_CR3[index].store(0, Ordering::Release);
+        RING3_TASK_OBSERVED_SYSCALL_STACKS[index].store(0, Ordering::Release);
+        RING3_TASK_OBSERVED_TSS_RSP0S[index].store(0, Ordering::Release);
         RING3_TASK_EXECUTIONS[index].store(0, Ordering::Release);
     }
     RING3_TASK_OBSERVER_RAN.store(false, Ordering::Release);
@@ -1566,6 +1580,16 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         let expected_root = RING3_TASK_ROOTS[index].load(Ordering::Acquire);
         if RING3_TASK_OBSERVED_CR3[index].load(Ordering::Acquire) != expected_root {
             failure = Err(AddressSpaceError::Ring3TaskCr3Mismatch);
+            break;
+        }
+        let Some((expected_tss_rsp0, expected_syscall_stack)) = task_ring3_stack_tops(id) else {
+            failure = Err(AddressSpaceError::Ring3TaskStackMismatch);
+            break;
+        };
+        if RING3_TASK_OBSERVED_SYSCALL_STACKS[index].load(Ordering::Acquire) != expected_syscall_stack
+            || RING3_TASK_OBSERVED_TSS_RSP0S[index].load(Ordering::Acquire) != expected_tss_rsp0
+        {
+            failure = Err(AddressSpaceError::Ring3TaskStackMismatch);
             break;
         }
         // The user canary is only written by instructions after the exit path;

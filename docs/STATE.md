@@ -2,9 +2,9 @@
 
 **Actualisation :** 2026-11-24  
 **Branche de référence :** `main`  
-**Commit de référence :** `2d82f58225187f0479c16764026cd4664fc9a262` (squash de la PR #97)
+**Commit de référence :** `242753d20407cf3edae2d4fb5d6e47864e418ae2` (squash de la PR #98)
 
-Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8, la clôture du jalon livré en section 11 et l'état de P0-B aux sections 12 et 13. La section 6 est un historique de la feuille de route antérieure.
+Ce document conserve l'historique de l'intégration #86 et du durcissement #88. L'état le plus récent de la récupération synchrone Ring 3 est décrit en section 8, la clôture du jalon livré en section 11 et l'état de P0-B aux sections 12, 13 et 14. La section 6 est un historique de la feuille de route antérieure.
 
 ## 1. État global P0
 
@@ -189,11 +189,12 @@ Le chemin noyau enregistré par `enter_user_mode` est la frame de la fonction d'
 | Récupération synchrone `#PF`/`#GP` CPL3 | PR [#89](https://github.com/eemntirey/SYSTEMES/pull/89) (`a35c7ae`) | Scénarios QEMU de la matrice 1/2/4 CPU (section 8) |
 | Contrat scheduler + terminaison Ring 3 ordonnançable (niveau 2, BSP) | PR [#92](https://github.com/eemntirey/SYSTEMES/pull/92) (`6a77a50`), PR [#95](https://github.com/eemntirey/SYSTEMES/pull/95) (`2a720b8`) | 14/14 check-runs obligatoires `success` sur `97f8c48`, dont `Ring 3 schedulable task termination` (section 9) |
 | Réservation/préparation/publication sûre des tâches Ring 3 | PR [#96](https://github.com/eemntirey/SYSTEMES/pull/96) (`7874617a`) | 14/14 check-runs obligatoires `success` sur `e0f3fcac`, dont `Ring 3 schedulable task termination` et `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)` (section 12) |
+| Continuation Ring 3 possédée par la tâche | PR [#98](https://github.com/eemntirey/SYSTEMES/pull/98) (`242753d2`) | 14/14 check-runs obligatoires `success` sur `3921ce72`, dont le scénario `SYS_YIELD` et la matrice QEMU 1/2/4 CPU (section 13) |
 
-Les limitations des sections 10 et 12 restent vraies : continuation noyau CPU-locale, absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal, aucun couplage `Process`↔`TaskId` ni pilotage CR3/TSS.RSP0/GS/SYSCALL par le scheduler. Cette clôture ne constitue donc pas la fin du programme P0.
+Les limitations des sections 10 et 12 restent vraies : absence de reaper/IPI TLB-shootdown, tables de fichiers globales, chemin CPL0 fatal et aucun couplage `Process`↔`TaskId`. La continuation GS et le CR3 sont désormais possédés par la tâche (section 13) ; TSS.RSP0 et la pile SYSCALL sont activés par tâche dans l'incrément en cours (section 14). Cette clôture ne constitue donc pas la fin du programme P0.
 
 Le programme complet défini dans [P0_RING3_TASK_TERMINATION_DESIGN.md](P0_RING3_TASK_TERMINATION_DESIGN.md) se poursuit avec :
-- **PR B (suite)** — propriété stable des tâches Ring 3, couplage au `Process`, activation CR3/TSS.RSP0/GS/SYSCALL ;
+- **PR B (suite)** — couplage stable au `Process`, activation CR3/TSS.RSP0/GS/SYSCALL livrée par tranches vérifiées ;
 - **PR C** — trampoline de sortie non-retournant sur pile distincte, raccordement `SYS_EXIT` puis `#PF`/`#GP` ;
 - **PR D** — reaper SMP, références, masque CPU actifs, IPI TLB-shootdown/ACK ;
 - **PR E** — rafales, double terminaison, préemption, work-stealing noyau et build production.
@@ -220,7 +221,7 @@ Le harnais `qemu-ring3-task-test` utilise désormais ce chemin : le CPU initiali
 
 **Validation :** la PR [#96](https://github.com/eemntirey/SYSTEMES/pull/96) est fusionnée sous `7874617a`. Son compte rendu annonce 152/152 tests hôte et deux `cargo check` cible réussis. Sur le SHA final `e0f3fcac`, les 14 check-runs obligatoires étaient `success`, dont `Ring 3 schedulable task termination` et `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)` ; `Kilo Code Review` était en `action_required` et n'est pas une condition de fusion. La primitive est livrée, mais P0-B n'est pas achevé pour autant.
 
-## 13. P0-B — état d'exécution Ring 3 par tâche (en cours)
+## 13. P0-B — état d'exécution Ring 3 par tâche (livré)
 
 La branche `p0-b-per-task-ring3-state` rend l'état Ring 3 **possédé par la tâche** au lieu d'être possédé par le CPU :
 
@@ -231,4 +232,15 @@ La branche `p0-b-per-task-ring3-state` rend l'état Ring 3 **possédé par la t�
 
 Le harnais `qemu-ring3-task-test` exerce maintenant un `SYS_YIELD` explicite dans la tâche volontaire : celle-ci est donc préemptée en mode utilisateur, une autre tâche Ring 3 écrase le slot GS et le CR3, puis la première reprend et exécute `SYS_EXIT(42)`. Sans cette correction, la reprise utilisait la continuation, le statut ou la faute de l'autre tâche.
 
-**Validation locale :** 153/153 tests hôte, `cargo check --all-features --target x86_64-unknown-none` réussis, et QEMU/OVMF 1/2/4 CPU avec sortie 0x21 (`status=33`), tous les marqueurs et `RING3_TASK_TEST_OK`. La CI complète doit confirmer le SHA final avant fusion. **Reste hors de portée :** TSS.RSP0 et pile SYSCALL par tâche, trampoline non-retournant, reaper SMP/IPI TLB-shootdown et migration des tables de fichiers.
+**Validation :** la PR [#98](https://github.com/eemntirey/SYSTEMES/pull/98) est fusionnée sous `242753d2`. Son compte rendu annonce 153/153 tests hôte et le `cargo check` cible réussi. Sur le SHA final `3921ce72`, les 14 check-runs obligatoires étaient `success`, dont `Ring 3 schedulable task termination` et `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)` ; `Kilo Code Review` était en `action_required` et n'est pas une condition de fusion. **Reste hors de portée :** TSS.RSP0 et pile SYSCALL par tâche, trampoline non-retournant, reaper SMP/IPI TLB-shootdown et migration des tables de fichiers.
+
+## 14. P0-B — activation des piles d'entrée CPL3 par tâche (en cours)
+
+La branche `p0-b-per-task-stack-activation` étend `Ring3CpuState` avec deux pointeurs qui doivent suivre la tâche Ring 3 élue :
+
+- `syscall_stack_top`, chargé dans le champ GS que le stub `systemes_syscall_entry` utilise pour remplacer RSP ;
+- `tss_rsp0`, chargé dans le `TSS.RSP0` du CPU courant utilisé par le processeur lors d'une interruption ou exception depuis CPL3.
+
+Ces piles sont **distinctes** de la pile noyau de continuation de la tâche. Chaque slot de `TASK_RESOURCES` possède désormais une pile de privilège matérielle et une pile SYSCALL dédiées de 4 KiB. `reserve_ring3_task` associe leurs sommets au slot réservé, et `schedule()` / `schedule_after_exit()` les installent avec le reste de l'état Ring 3. Une première tentative qui réutilisait le sommet de la pile de continuation provoquait un `#PF` CPL0 (`error=0x11`) : les sauvegardes matérielles et logiques se chevauchaient. Le harnais vérifie maintenant, pour chaque tâche, que les deux sommets observés après retour utilisateur correspondent bien aux piles épinglées de cette tâche.
+
+**Validation locale :** 154/154 tests hôte, `cargo check --all-features --target x86_64-unknown-none` réussi, et QEMU/OVMF 1/2/4 CPU avec sortie 0x21 (`status=33`), tous les marqueurs et `RING3_TASK_TEST_OK`, sans `SYSTEMES_EXCEPTION` ni `SYSTEMES_KERNEL_FAIL` dans les journaux série. La CI complète doit confirmer le SHA final avant fusion. **Reste hors de portée :** couplage `Process`↔`TaskId`, trampoline non-retournant sur pile séparée, reaper SMP/IPI TLB-shootdown, tables de fichiers par processus et build production.

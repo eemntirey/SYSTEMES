@@ -77,6 +77,7 @@ fn ring3_task_failure_name(error: systemes_kernel::address_space::AddressSpaceEr
         Error::Ring3TaskStateMismatch => b"task-state-mismatch",
         Error::Ring3TaskExitReasonMismatch => b"exit-reason-mismatch",
         Error::Ring3TaskCr3Mismatch => b"per-task-cr3-mismatch",
+        Error::Ring3TaskStackMismatch => b"per-task-stack-mismatch",
         Error::Ring3TaskResumedInUserMode => b"user-mode-resumed-after-exit",
         Error::Ring3TaskObserverMissing => b"observer-not-scheduled",
         Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",

@@ -11,6 +11,9 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering}
 pub const MAX_TASKS: usize = 8;
 pub const MAX_CPUS: usize = 64;
 const STACK_SIZE: usize = 16 * 1024;
+/// Dedicated CPL3 entry stacks. Four KiB is ample for the hardware privilege
+/// frame plus the software register save area, and keeps the static pool small.
+const PRIVILEGE_STACK_SIZE: usize = 4 * 1024;
 const FPU_STATE_SIZE: usize = 512;
 const YIELD_VECTOR: usize = 0x41;
 const KERNEL_CODE_SELECTOR: usize = 0x08;
@@ -101,6 +104,9 @@ struct FpuState([u8; FPU_STATE_SIZE]);
 #[repr(align(16))]
 struct TaskStack([u8; STACK_SIZE]);
 
+#[repr(align(16))]
+struct PrivilegeStack([u8; PRIVILEGE_STACK_SIZE]);
+
 struct Task {
     /// Stable resource-pool slot; unlike the queue slot, this never changes during a task's life.
     resource_id: AtomicUsize,
@@ -161,12 +167,21 @@ impl Task {
 /// Stack and FPU resources stay at fixed addresses while their task descriptors migrate.
 struct TaskResources {
     stack: TaskStack,
+    /// Hardware stack switched to by the CPU on CPL3 exceptions/interrupts.
+    privilege_stack: PrivilegeStack,
+    /// Stack switched to by the SYSCALL entry stub through GS.
+    syscall_stack: PrivilegeStack,
     fpu: FpuState,
 }
 
 impl TaskResources {
     const fn new() -> Self {
-        Self { stack: TaskStack([0; STACK_SIZE]), fpu: FpuState([0; FPU_STATE_SIZE]) }
+        Self {
+            stack: TaskStack([0; STACK_SIZE]),
+            privilege_stack: PrivilegeStack([0; PRIVILEGE_STACK_SIZE]),
+            syscall_stack: PrivilegeStack([0; PRIVILEGE_STACK_SIZE]),
+            fpu: FpuState([0; FPU_STATE_SIZE]),
+        }
     }
 }
 
@@ -206,6 +221,36 @@ fn task_resource_ptr(resource_id: usize) -> *mut TaskResources {
     debug_assert!(resource_id < MAX_CPUS * MAX_TASKS);
     // SAFETY: resource_id is assigned once at task initialization and transferred atomically.
     unsafe { core::ptr::addr_of_mut!(TASK_RESOURCES).cast::<TaskResources>().add(resource_id) }
+}
+
+/// Top of the pinned kernel stack owned by a resource slot.
+fn task_stack_top(resource_id: usize) -> u64 {
+    // SAFETY: The caller bounds resource_id and this CPU owns the reservation.
+    unsafe {
+        core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).stack.0)
+            .cast::<u8>()
+            .add(STACK_SIZE) as u64
+    }
+}
+
+/// Top of the dedicated hardware privilege stack owned by a resource slot.
+fn task_privilege_stack_top(resource_id: usize) -> u64 {
+    // SAFETY: The caller bounds resource_id and this CPU owns the reservation.
+    unsafe {
+        core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).privilege_stack.0)
+            .cast::<u8>()
+            .add(PRIVILEGE_STACK_SIZE) as u64
+    }
+}
+
+/// Top of the dedicated SYSCALL stack owned by a resource slot.
+fn task_syscall_stack_top(resource_id: usize) -> u64 {
+    // SAFETY: The caller bounds resource_id and this CPU owns the reservation.
+    unsafe {
+        core::ptr::addr_of_mut!((*task_resource_ptr(resource_id)).syscall_stack.0)
+            .cast::<u8>()
+            .add(PRIVILEGE_STACK_SIZE) as u64
+    }
 }
 
 fn cpu_scheduler(cpu_index: usize) -> *mut CpuScheduler {
@@ -302,6 +347,11 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandl
     unsafe {
         (*task).cpu_affine.store(true, Ordering::Release);
         (*task).ring3_context_id.store(context.0, Ordering::Release);
+        let resource_id = (*task).resource_id.load(Ordering::Acquire);
+        if resource_id < MAX_CPUS * MAX_TASKS {
+            (*task).ring3_state.syscall_stack_top = task_syscall_stack_top(resource_id);
+            (*task).ring3_state.tss_rsp0 = task_privilege_stack_top(resource_id);
+        }
         (*task).entry.store(0, Ordering::Relaxed);
         (*task).wake_at.store(0, Ordering::Relaxed);
         (*task).switches.store(0, Ordering::Relaxed);
@@ -776,6 +826,13 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
     // Kernel tasks share the active root; Ring 3 tasks replace it on entry.
     // Host unit tests run at CPL3 where CR3 is unreadable, so they keep zero.
     let kernel_cr3: u64 = if cfg!(test) { 0 } else { unsafe { crate::address_space::read_cr3() } };
+    // Kernel tasks inherit the CPU's default syscall/TSS stacks; Ring 3
+    // reservations replace them with the slot's pinned kernel stack below.
+    let default_ring3_state = if cfg!(test) {
+        crate::interrupts::Ring3CpuState::none()
+    } else {
+        crate::interrupts::ring3_cpu_state()
+    };
     // SAFETY: This CPU owns its scheduler slots until initialized; resource IDs
     // are fixed by the CPU/task slot and remain valid even after the descriptor migrates.
     unsafe {
@@ -795,7 +852,7 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
             (*task).migrations.store(0, Ordering::Relaxed);
             (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
             (*task).cpu_affine.store(false, Ordering::Relaxed);
-            (*task).ring3_state = crate::interrupts::Ring3CpuState::none();
+            (*task).ring3_state = default_ring3_state;
             (*task).saved_cr3.store(kernel_cr3, Ordering::Relaxed);
             (*task).exit_reason = None;
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
@@ -1311,6 +1368,21 @@ pub fn task_state(id: TaskId) -> Option<TaskState> {
     Some(TaskState::from_raw(unsafe { (*task_ptr(cpu_index, id.0)).state.load(Ordering::Acquire) }))
 }
 
+/// Pinned CPL3 entry stacks for a task slot: `(TSS.RSP0, SYSCALL GS stack)`.
+pub fn task_ring3_stack_tops(id: TaskId) -> Option<(u64, u64)> {
+    let cpu_index = current_cpu_index();
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    if id.0 == 0 || id.0 >= unsafe { (*sched).task_count.load(Ordering::Acquire) } {
+        return None;
+    }
+    let task = unsafe { task_ptr(cpu_index, id.0) };
+    let resource_id = unsafe { (*task).resource_id.load(Ordering::Acquire) };
+    if resource_id >= MAX_CPUS * MAX_TASKS {
+        return None;
+    }
+    Some((task_privilege_stack_top(resource_id), task_syscall_stack_top(resource_id)))
+}
+
 pub fn switch_count(id: TaskId) -> Option<usize> {
     let cpu_index = current_cpu_index();
     let sched = unsafe { cpu_scheduler(cpu_index) };
@@ -1608,6 +1680,22 @@ mod tests {
         assert!(handle_matches_reservation(91, handle));
         assert!(!handle_matches_reservation(92, handle));
         assert!(!handle_matches_reservation(usize::MAX, handle));
+    }
+
+    #[test]
+    fn ring3_entry_stacks_are_distinct_from_the_continuation_stack() {
+        let continuation = task_stack_top(0);
+        let privilege = task_privilege_stack_top(0);
+        let syscall = task_syscall_stack_top(0);
+        assert_ne!(continuation, privilege);
+        assert_ne!(continuation, syscall);
+        assert_ne!(privilege, syscall);
+
+        let continuation_bottom = continuation - STACK_SIZE as u64;
+        let privilege_bottom = privilege - PRIVILEGE_STACK_SIZE as u64;
+        let syscall_bottom = syscall - PRIVILEGE_STACK_SIZE as u64;
+        assert!(privilege_bottom >= continuation || privilege <= continuation_bottom);
+        assert!(syscall_bottom >= privilege || syscall <= privilege_bottom);
     }
 
     #[test]
