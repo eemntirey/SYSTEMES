@@ -112,6 +112,14 @@ struct Task {
     migrations: AtomicUsize,
     ring3_context_id: AtomicUsize,
     cpu_affine: AtomicBool,
+    /// Ring 3 continuation, exit status, and fault record owned by this task.
+    /// The hardware slots in `SyscallCpuLocal` are CPU-local; this per-task copy
+    /// survives interleaving of two Ring 3 tasks on the same CPU.
+    ring3_state: crate::interrupts::Ring3CpuState,
+    /// CR3 to install when this task is selected. A Ring 3 task updates it when
+    /// it switches to its private address space, so a preempted user-mode task
+    /// resumes with its own page tables.
+    saved_cr3: AtomicU64,
     /// Written under run_queue_lock before Exited is published; immutable afterwards.
     exit_reason: Option<TaskExitReason>,
 }
@@ -128,6 +136,8 @@ impl Task {
             migrations: AtomicUsize::new(0),
             ring3_context_id: AtomicUsize::new(usize::MAX),
             cpu_affine: AtomicBool::new(false),
+            ring3_state: crate::interrupts::Ring3CpuState::none(),
+            saved_cr3: AtomicU64::new(0),
             exit_reason: None,
         }
     }
@@ -519,12 +529,16 @@ fn steal_task(receiver: usize) -> bool {
                     (*dst).resource_id.store(resource_id, Ordering::Relaxed);
                     (*src).resource_id.store(dst_resource_id, Ordering::Relaxed);
                     (*dst).saved_rsp.store(src_rsp, Ordering::Relaxed);
+                    (*dst).saved_cr3.store((*src).saved_cr3.load(Ordering::Relaxed), Ordering::Relaxed);
+                    (*dst).ring3_state = (*src).ring3_state;
                     (*dst).switches.store((*src).switches.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).entry.store((*src).entry.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).wake_at.store((*src).wake_at.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).migrations.store((*src).migrations.load(Ordering::Relaxed).saturating_add(1), Ordering::Relaxed);
                     (*dst).state.store(TaskState::Runnable as u8, Ordering::Release);
                     (*src).saved_rsp.store(0, Ordering::Relaxed);
+                    (*src).saved_cr3.store(0, Ordering::Relaxed);
+                    (*src).ring3_state = crate::interrupts::Ring3CpuState::none();
                     (*src).entry.store(0, Ordering::Relaxed);
                     (*src).wake_at.store(0, Ordering::Relaxed);
                     (*src).state.store(TaskState::Empty as u8, Ordering::Release);
@@ -572,6 +586,31 @@ fn handle_matches_reservation(context_id: usize, handle: Ring3TaskHandle) -> boo
 /// Get the current CPU's scheduler index (APIC ID).
 fn current_cpu_index() -> usize {
     crate::apic::current_apic_id().map(|id| id as usize).unwrap_or(0)
+}
+
+/// Capture CPU-local Ring 3 state into the outgoing task before a context switch.
+/// The hardware slots (GS continuation and CR3) are per-CPU and would otherwise
+/// be overwritten by the next Ring 3 task scheduled on this CPU.
+unsafe fn save_ring3_cpu_state(task: *mut Task) {
+    if cfg!(test) { return; }
+    unsafe {
+        (*task).ring3_state = crate::interrupts::ring3_cpu_state();
+        (*task).saved_cr3.store(crate::address_space::read_cr3(), Ordering::Release);
+    }
+}
+
+/// Install the incoming task's Ring 3 state into the current CPU.
+unsafe fn restore_ring3_cpu_state(task: *mut Task) {
+    if cfg!(test) { return; }
+    unsafe {
+        crate::interrupts::install_ring3_cpu_state((*task).ring3_state);
+        let cr3 = (*task).saved_cr3.load(Ordering::Acquire);
+        // CR3=0 is a valid kernel root in QEMU builds, so there is no sentinel
+        // value: always install the incoming task's root when it differs.
+        if cr3 != crate::address_space::read_cr3() {
+            crate::address_space::write_cr3(cr3);
+        }
+    }
 }
 
 /// Configure architectural x87/SSE state management and initialize every task image.
@@ -734,6 +773,9 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
         irq_restore(interrupt_flags);
         return Err("too many kernel tasks");
     }
+    // Kernel tasks share the active root; Ring 3 tasks replace it on entry.
+    // Host unit tests run at CPL3 where CR3 is unreadable, so they keep zero.
+    let kernel_cr3: u64 = if cfg!(test) { 0 } else { unsafe { crate::address_space::read_cr3() } };
     // SAFETY: This CPU owns its scheduler slots until initialized; resource IDs
     // are fixed by the CPU/task slot and remain valid even after the descriptor migrates.
     unsafe {
@@ -753,6 +795,8 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
             (*task).migrations.store(0, Ordering::Relaxed);
             (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
             (*task).cpu_affine.store(false, Ordering::Relaxed);
+            (*task).ring3_state = crate::interrupts::Ring3CpuState::none();
+            (*task).saved_cr3.store(kernel_cr3, Ordering::Relaxed);
             (*task).exit_reason = None;
             (*task).state.store(TaskState::Empty as u8, Ordering::Relaxed);
         }
@@ -821,6 +865,9 @@ fn schedule(cpu_index: usize, saved_rsp: usize, count_preemption: bool) -> usize
             // Blocked tasks must retain the interrupt frame that will resume them
             // after a later wake-up; only a genuinely running task becomes READY.
             (*current_task).saved_rsp.store(saved_rsp, Ordering::Release);
+            if cpu_index == current_cpu_index() {
+                unsafe { save_ring3_cpu_state(current_task) };
+            }
             (*current_task).switches.fetch_add(1, Ordering::Relaxed);
             if current_state == TaskState::Running as u8 {
                 (*current_task).state.store(TaskState::Runnable as u8, Ordering::Release);
@@ -855,6 +902,9 @@ fn schedule(cpu_index: usize, saved_rsp: usize, count_preemption: bool) -> usize
         if next_rsp != 0 && unsafe { (*next_task).state.compare_exchange(TaskState::Runnable as u8, TaskState::Running as u8, Ordering::AcqRel, Ordering::Acquire) }.is_ok() {
             if count_preemption && next_index != current {
                 unsafe { (*sched).preemption_count.fetch_add(1, Ordering::Relaxed); }
+            }
+            if cpu_index == current_cpu_index() {
+                unsafe { restore_ring3_cpu_state(next_task) };
             }
             unsafe { (*sched).current_task.store(next_index, Ordering::Release); }
             unlock_run_queue(cpu_index);
@@ -1223,6 +1273,7 @@ pub fn schedule_after_exit(saved_rsp: usize) -> usize {
         if next_rsp != 0
             && unsafe { (*next_task).state.compare_exchange(TaskState::Runnable as u8, TaskState::Running as u8, Ordering::AcqRel, Ordering::Acquire) }.is_ok()
         {
+            unsafe { restore_ring3_cpu_state(next_task) };
             unsafe { (*sched).current_task.store(next_index, Ordering::Release); }
             unlock_run_queue(cpu_index);
             return next_rsp;

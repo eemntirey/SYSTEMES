@@ -1415,17 +1415,24 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         let mut code = [0u8; 32];
         let code_len = match index {
             0 => {
-                // SYS_EXIT(42), then a canary write and UD2 that must never run.
-                code[..12].copy_from_slice(&[
+                // SYS_YIELD forces a context switch while this task is in user
+                // mode; another Ring 3 task overwrites the CPU-local GS
+                // continuation and CR3. SYS_EXIT(42) must still resume on this
+                // task's own kernel stack and private page tables.
+                code[..7].copy_from_slice(&[
+                    0xB8, 0x04, 0x00, 0x00, 0x00, // mov eax, SYS_YIELD
+                    0x0F, 0x05, // syscall
+                ]);
+                code[7..19].copy_from_slice(&[
                     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, SYS_EXIT
                     0xBF, RING3_TASK_EXIT_STATUS as u8, 0x00, 0x00, 0x00, // mov edi, 42
                     0x0F, 0x05, // syscall
                 ]);
-                code[12..17].copy_from_slice(&[
+                code[19..24].copy_from_slice(&[
                     0xC6, 0x44, 0x24, 0xF8, RING3_TASK_USER_CANARY, // mov [rsp-8], canary
                 ]);
-                code[17..19].copy_from_slice(&[0x0F, 0x0B]); // ud2
-                19
+                code[24..26].copy_from_slice(&[0x0F, 0x0B]); // ud2
+                26
             }
             1 => {
                 // Read an unmapped user page: recoverable CPL3 #PF.

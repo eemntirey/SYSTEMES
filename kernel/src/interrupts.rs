@@ -87,6 +87,35 @@ pub struct UserFaultInfo {
     pub rip: u64,
 }
 
+/// Complete Ring 3 continuation state owned by a task rather than a CPU.
+///
+/// Every field lives in `SyscallCpuLocal` because the hardware entry/exit
+/// assembly accesses it through GS. The scheduler snapshots it on context
+/// switch so two Ring 3 tasks can interleave on the same CPU without sharing
+/// a continuation, exit status, or recoverable-fault record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ring3CpuState {
+    pub saved_kernel_rsp: u64,
+    pub ring3_active: bool,
+    pub exit_validated: bool,
+    pub expected_user_rsp: u64,
+    pub exit_status: u64,
+    pub fault: Option<UserFaultInfo>,
+}
+
+impl Ring3CpuState {
+    pub const fn none() -> Self {
+        Self {
+            saved_kernel_rsp: 0,
+            ring3_active: false,
+            exit_validated: false,
+            expected_user_rsp: 0,
+            exit_status: 0,
+            fault: None,
+        }
+    }
+}
+
 impl SyscallCpuLocal {
     const fn new() -> Self {
         Self {
@@ -1015,6 +1044,62 @@ pub(crate) fn user_exit_status() -> u64 {
     unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
 }
 
+/// Snapshot a syscall-local context's Ring 3 continuation state.
+unsafe fn snapshot_ring3_cpu_state(local: *mut SyscallCpuLocal) -> Ring3CpuState {
+    // SAFETY: The caller owns the syscall-local context.
+    unsafe {
+        let vector = (*local).fault_vector.load(Ordering::Acquire);
+        Ring3CpuState {
+            saved_kernel_rsp: (*local).saved_kernel_rsp.load(Ordering::Acquire),
+            ring3_active: (*local).ring3_active.load(Ordering::Acquire),
+            exit_validated: (*local).exit_validated.load(Ordering::Acquire),
+            expected_user_rsp: (*local).expected_user_rsp.load(Ordering::Acquire),
+            exit_status: (*local).exit_status.load(Ordering::Acquire),
+            fault: (vector != 0).then_some(UserFaultInfo {
+                vector,
+                error_code: (*local).fault_error.load(Ordering::Acquire),
+                cr2: (*local).fault_cr2.load(Ordering::Acquire),
+                rip: (*local).fault_rip.load(Ordering::Acquire),
+            }),
+        }
+    }
+}
+
+/// Install a Ring 3 continuation state into a syscall-local context.
+unsafe fn write_ring3_cpu_state(local: *mut SyscallCpuLocal, state: Ring3CpuState) {
+    // SAFETY: The caller owns the syscall-local context.
+    unsafe {
+        (*local).saved_kernel_rsp.store(state.saved_kernel_rsp, Ordering::Release);
+        (*local).ring3_active.store(state.ring3_active, Ordering::Release);
+        (*local).exit_validated.store(state.exit_validated, Ordering::Release);
+        (*local).expected_user_rsp.store(state.expected_user_rsp, Ordering::Release);
+        (*local).exit_status.store(state.exit_status, Ordering::Release);
+        let fault = state.fault.unwrap_or(UserFaultInfo {
+            vector: 0,
+            error_code: 0,
+            cr2: 0,
+            rip: 0,
+        });
+        (*local).fault_error.store(fault.error_code, Ordering::Release);
+        (*local).fault_cr2.store(fault.cr2, Ordering::Release);
+        (*local).fault_rip.store(fault.rip, Ordering::Release);
+        // Publish the record last; `fault_vector` is the valid bit.
+        (*local).fault_vector.store(fault.vector, Ordering::Release);
+    }
+}
+
+/// Snapshot the current CPU's Ring 3 continuation state for task ownership.
+pub fn ring3_cpu_state() -> Ring3CpuState {
+    // SAFETY: The current CPU owns its GS-local syscall context.
+    unsafe { snapshot_ring3_cpu_state(current_syscall_local()) }
+}
+
+/// Install a task's Ring 3 continuation state into the current CPU.
+pub fn install_ring3_cpu_state(state: Ring3CpuState) {
+    // SAFETY: The current CPU owns its GS-local syscall context.
+    unsafe { write_ring3_cpu_state(current_syscall_local(), state) };
+}
+
 /// Return the most recent recoverable CPL3 fault on this CPU, if any.
 pub fn last_user_fault() -> Option<UserFaultInfo> {
     let local = current_syscall_local();
@@ -1373,6 +1458,29 @@ mod tests {
         assert_eq!(core::mem::offset_of!(SyscallCpuLocal, exit_validated), INTERRUPT_STACK_SIZE + 25);
         assert_eq!(core::mem::offset_of!(SyscallCpuLocal, expected_user_rsp), INTERRUPT_STACK_SIZE + 32);
         assert_eq!(GS_EXIT_STATUS, INTERRUPT_STACK_SIZE + 40);
+    }
+
+    #[test]
+    fn ring3_cpu_state_round_trips_through_cpu_local_slot() {
+        let state = Ring3CpuState {
+            saved_kernel_rsp: 0x1234_5678,
+            ring3_active: true,
+            exit_validated: true,
+            expected_user_rsp: 0x9ABC_DEF0,
+            exit_status: 42,
+            fault: Some(UserFaultInfo {
+                vector: 14,
+                error_code: 4,
+                cr2: 0x8000_9000,
+                rip: 0x8000_200A,
+            }),
+        };
+        let mut a = SyscallCpuLocal::new();
+        let mut b = SyscallCpuLocal::new();
+        // SAFETY: These are freshly allocated test-local contexts.
+        unsafe { write_ring3_cpu_state(&mut a, state) };
+        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut a) }, state);
+        assert_eq!(unsafe { snapshot_ring3_cpu_state(&mut b) }, Ring3CpuState::none());
     }
 
     #[test]
