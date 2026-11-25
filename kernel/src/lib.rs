@@ -14,6 +14,7 @@ pub mod console;
 pub mod clock;
 pub mod heap;
 pub mod interrupts;
+pub mod keyboard;
 pub mod memory;
 pub mod paging;
 pub mod rootfs;
