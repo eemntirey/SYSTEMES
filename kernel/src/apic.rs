@@ -15,6 +15,9 @@ const APIC_X2_ENABLE: u64 = 1 << 10;
 const CPUID_APIC: u32 = 1 << 9;
 const APIC_SPURIOUS_VECTOR: u32 = 0xFF;
 const TIMER_VECTOR: u8 = 0x40;
+/// Dedicated IPI vector for private-address-space TLB shootdowns.
+pub const TLB_SHOOTDOWN_VECTOR: u8 = 0x42;
+const TLB_SHOOTDOWN_VECTOR_U64: u64 = TLB_SHOOTDOWN_VECTOR as u64;
 const LAPIC_TPR: usize = 0x80;
 const LAPIC_EOI: usize = 0xB0;
 const LAPIC_SVR: usize = 0xF0;
@@ -293,6 +296,38 @@ pub fn current_apic_id() -> Option<u8> {
     Some(((id_register >> 24) & 0xFF) as u8)
 }
 
+/// CPU slots in this kernel are APIC IDs. This conversion exists so the
+/// shootdown initiator does not need to reach into another module's tables.
+pub fn apic_id_for_cpu_index(cpu_index: usize) -> Option<u8> {
+    if cpu_index >= crate::interrupts::MAX_CPUS || !APIC_ACTIVE.load(Ordering::Acquire) {
+        return None;
+    }
+    Some(cpu_index as u8)
+}
+
+/// Send a fixed vector to one destination CPU. Used by the TLB-shootdown
+/// protocol; the caller is responsible for collecting ACKs without holding a
+/// scheduler or reaper lock.
+pub fn send_ipi(apic_id: u8, vector: u8) -> Result<(), ApicInitError> {
+    if vector < 0x10 || !APIC_ACTIVE.load(Ordering::Acquire) {
+        return Err(ApicInitError::IpiUnavailable);
+    }
+    let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+    if base.is_null() {
+        return Err(ApicInitError::IpiUnavailable);
+    }
+    // Physical destination mode, fixed delivery, assert. ICR high carries the
+    // destination APIC ID, exactly as in the INIT/SIPI bring-up path.
+    let destination = (apic_id as u32) << 24;
+    // SAFETY: The Local APIC page is active and UC-mapped; ICR halves are
+    // independent 32-bit MMIO registers and the destination is written first.
+    unsafe {
+        lapic_write(base, LAPIC_ICR_HIGH, destination);
+        lapic_write(base, LAPIC_ICR_LOW, vector as u32);
+        wait_for_icr_delivery(base)
+    }
+}
+
 /// Wait for the ICR delivery-status bit to clear. QEMU clears it as soon as
 /// the interrupt is queued; real chipsets raise it while the command trips
 /// through the bus, so the bounded spin covers both without any timer.
@@ -410,6 +445,22 @@ pub extern "C" fn systemes_apic_timer_dispatch(vector: u64, saved_rsp: usize) ->
             crate::scheduler::on_timer(saved_rsp)
         }
         0x41 => crate::scheduler::on_yield(saved_rsp),
+        TLB_SHOOTDOWN_VECTOR_U64 => {
+            // Reload CR3 locally before publishing the ACK. Re-reading CR3
+            // flushes non-global translations from this address space.
+            // SAFETY: CR3 stays a valid kernel-owned PML4 in the IPI handler.
+            unsafe {
+                let current = crate::address_space::read_cr3();
+                crate::address_space::write_cr3(current);
+            }
+            crate::address_space::ack_tlb_shootdown();
+            let base = LOCAL_APIC_BASE.load(Ordering::Acquire) as *mut u8;
+            if !base.is_null() {
+                // SAFETY: The LAPIC mapping is active while the vector is delivered.
+                unsafe { lapic_write(base, LAPIC_EOI, 0); }
+            }
+            saved_rsp
+        }
         _ => saved_rsp,
     }
 }

@@ -78,6 +78,16 @@ struct SyscallCpuLocal {
     fault_error: AtomicU64,
     fault_cr2: AtomicU64,
     fault_rip: AtomicU64,
+    /// Set for scheduler-owned Ring 3 tasks whose exit must hand off to the
+    /// non-returning task-exit trampoline instead of the legacy synchronous
+    /// `enter_user_mode` continuation.
+    ///
+    /// Appended after the legacy fields so every GS offset used by the existing
+    /// assembly remains unchanged.
+    task_exit_enabled: AtomicBool,
+    /// Stable CPU-owned stack used only by `systemes_task_exit_trampoline`.
+    /// It is never a task continuation stack and is never released.
+    task_exit_stack_top: u64,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UserFaultInfo {
@@ -105,6 +115,8 @@ pub struct Ring3CpuState {
     pub syscall_stack_top: u64,
     /// Privilege-stack top installed in the CPU's TSS.RSP0 for CPL3 interrupts.
     pub tss_rsp0: u64,
+    /// Whether this task's CPL3 exits use the non-returning handoff trampoline.
+    pub task_exit_enabled: bool,
 }
 
 impl Ring3CpuState {
@@ -118,6 +130,7 @@ impl Ring3CpuState {
             fault: None,
             syscall_stack_top: 0,
             tss_rsp0: 0,
+            task_exit_enabled: false,
         }
     }
 }
@@ -137,6 +150,8 @@ impl SyscallCpuLocal {
             fault_error: AtomicU64::new(0),
             fault_cr2: AtomicU64::new(0),
             fault_rip: AtomicU64::new(0),
+            task_exit_enabled: AtomicBool::new(false),
+            task_exit_stack_top: 0,
         }
     }
 }
@@ -152,6 +167,8 @@ struct CpuContext {
     double_fault_stack: InterruptStack,
     nmi_stack: InterruptStack,
     machine_check_stack: InterruptStack,
+    /// Dedicated, CPU-owned non-returning task-exit stack.
+    task_exit_stack: InterruptStack,
 }
 
 impl CpuContext {
@@ -170,6 +187,7 @@ impl CpuContext {
             double_fault_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             nmi_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
             machine_check_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
+            task_exit_stack: InterruptStack([0; INTERRUPT_STACK_SIZE]),
         }
     }
 }
@@ -186,6 +204,8 @@ const GS_SYSCALL_STACK_TOP: usize = core::mem::offset_of!(SyscallCpuLocal, sysca
 const GS_USER_RSP: usize = core::mem::offset_of!(SyscallCpuLocal, user_rsp);
 const GS_SAVED_KERNEL_RSP: usize = core::mem::offset_of!(SyscallCpuLocal, saved_kernel_rsp);
 const GS_EXIT_STATUS: usize = core::mem::offset_of!(SyscallCpuLocal, exit_status);
+const GS_TASK_EXIT_ENABLED: usize = core::mem::offset_of!(SyscallCpuLocal, task_exit_enabled);
+const GS_TASK_EXIT_STACK_TOP: usize = core::mem::offset_of!(SyscallCpuLocal, task_exit_stack_top);
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -278,6 +298,8 @@ unsafe extern "C" {
     fn systemes_load_tr(selector: u16);
     fn systemes_enter_ring3(user_rip: u64, user_rsp: u64, user_rflags: u64);
     fn systemes_ring3_exit_trampoline();
+    fn systemes_task_exit_trampoline();
+    fn systemes_tlb_shootdown();
     fn systemes_isr0();
     fn systemes_isr1();
     fn systemes_isr2();
@@ -369,6 +391,40 @@ systemes_ring3_exit_trampoline:
     pop rbp
     pop rbx
     ret
+
+/* P0-C: non-returning handoff for scheduler-owned Ring 3 tasks.
+   This trampoline deliberately never restores the exiting task's
+   `gs_saved_kernel_rsp`. It switches to the stable CPU-owned exit stack,
+   calls the Rust exit handler, and resumes the selected task's IRETQ frame. */
+.global systemes_task_exit_trampoline
+systemes_task_exit_trampoline:
+    mov ax, {kernel_data_selector}
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov rsp, qword ptr gs:[{gs_task_exit_stack_top}]
+    and rsp, -16
+    xor rbp, rbp
+    call systemes_task_exit_handler
+    mov r12, rax
+    mov rsp, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
+    iretq
 
 .global systemes_isr0
 systemes_isr0:
@@ -604,8 +660,13 @@ systemes_syscall_entry:
     swapgs
     sysretq
 .Lsystemes_syscall_exit:
+    test byte ptr gs:[{gs_task_exit_enabled}], 1
+    jnz .Lsystemes_syscall_task_exit
     mov rax, qword ptr gs:[{gs_exit_status}]
     jmp systemes_ring3_exit_trampoline
+.Lsystemes_syscall_task_exit:
+    mov rax, qword ptr gs:[{gs_exit_status}]
+    jmp systemes_task_exit_trampoline
 
 .global systemes_lapic_timer
 systemes_lapic_timer:
@@ -617,6 +678,12 @@ systemes_lapic_timer:
 systemes_scheduler_yield:
     push 0
     push 65
+    jmp systemes_irq_common
+
+.global systemes_tlb_shootdown
+systemes_tlb_shootdown:
+    push 0
+    push 66
     jmp systemes_irq_common
 
 .global systemes_apic_spurious
@@ -764,6 +831,8 @@ systemes_exception_common:
     gs_user_rsp = const GS_USER_RSP,
     gs_saved_kernel_rsp = const GS_SAVED_KERNEL_RSP,
     gs_exit_status = const GS_EXIT_STATUS,
+    gs_task_exit_enabled = const GS_TASK_EXIT_ENABLED,
+    gs_task_exit_stack_top = const GS_TASK_EXIT_STACK_TOP,
 );
 
 /// Return true only when the processor loaded the kernel's 64-bit TSS selector.
@@ -1053,6 +1122,117 @@ pub(crate) fn user_exit_status() -> u64 {
     unsafe { (*current_syscall_local()).exit_status.load(Ordering::Acquire) }
 }
 
+/// Number of scheduler-owned exits that used the non-returning handoff.
+static TASK_EXIT_HANDOFFS: AtomicU64 = AtomicU64::new(0);
+/// Number of times the dedicated CPU exit stack was installed.
+static TASK_EXIT_STACK_USES: AtomicU64 = AtomicU64::new(0);
+/// P0-E proof: a competing termination attempted after the first publication.
+#[cfg(feature = "qemu-ring3-task-test")]
+static TASK_EXIT_DOUBLE_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Enable the non-returning exit handoff for the current Ring 3 task.
+///
+/// The flag is part of `Ring3CpuState`, so the scheduler snapshots and restores
+/// it per task. The legacy synchronous `enter_user_mode` path keeps it clear.
+pub fn enable_task_exit_handoff() {
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe {
+        (*current_syscall_local())
+            .task_exit_enabled
+            .store(true, Ordering::Release)
+    };
+}
+
+pub fn task_exit_handoff_count() -> u64 {
+    TASK_EXIT_HANDOFFS.load(Ordering::Acquire)
+}
+
+pub fn task_exit_stack_use_count() -> u64 {
+    TASK_EXIT_STACK_USES.load(Ordering::Acquire)
+}
+
+/// Number of concurrent double-terminations rejected after the first reason won.
+#[cfg(feature = "qemu-ring3-task-test")]
+pub fn task_exit_double_rejection_count() -> u64 {
+    TASK_EXIT_DOUBLE_REJECTIONS.load(Ordering::Acquire)
+}
+
+/// Top of the current CPU's stable task-exit stack (test/verification helper).
+pub fn task_exit_stack_top() -> u64 {
+    // SAFETY: The current CPU exclusively owns its local syscall context.
+    unsafe { (*current_syscall_local()).task_exit_stack_top }
+}
+
+/// Rust half of the P0-C non-returning task exit handoff.
+///
+/// Called by `systemes_task_exit_trampoline` after it has switched away from the
+/// terminating task's continuation stack. The first exit reason wins; a second
+/// concurrent event cannot overwrite it. The handler returns the saved RSP of
+/// the next runnable task, which the trampoline resumes with `iretq`.
+#[unsafe(no_mangle)]
+pub extern "C" fn systemes_task_exit_handler() -> usize {
+    // Exception gates and the trampoline already clear IF, but SYSCALL entry
+    // inherits IF from user mode. No interrupts may fire during the handoff.
+    unsafe { asm!("cli", options(nomem, nostack)); }
+    TASK_EXIT_STACK_USES.fetch_add(1, Ordering::AcqRel);
+
+    let status = user_exit_status();
+    let reason = match last_user_fault() {
+        Some(fault) if fault.vector == 14 => crate::scheduler::TaskExitReason::PageFault {
+            cr2: fault.cr2 as usize,
+            error_code: fault.error_code as usize,
+            rip: fault.rip as usize,
+        },
+        Some(fault) if fault.vector == 13 => crate::scheduler::TaskExitReason::GeneralProtection {
+            error_code: fault.error_code as usize,
+            rip: fault.rip as usize,
+        },
+        _ => crate::scheduler::TaskExitReason::VoluntaryExit {
+            code: status as i32,
+        },
+    };
+
+    let marked = crate::scheduler::mark_current_exited(reason).is_ok();
+    if marked {
+        if let Some(task_id) = crate::scheduler::current_task_id() {
+            if let Some(pid) = crate::process::process_for_task_id(task_id) {
+                let cpu_index = crate::scheduler::current_cpu_index();
+                let _ = crate::process::mark_process_exited(cpu_index, pid, status as u32);
+                // P0-D: hand the process to the CPU-affine reaper instead of
+                // destroying its private address space on the exit path.
+                let _ = crate::process::queue_process_for_reap(pid);
+            }
+        }
+    }
+
+    // P0-E: simulate a competing termination event before the handoff. The
+    // first reason and the single reap queue entry must survive unchanged.
+    #[cfg(feature = "qemu-ring3-task-test")]
+    if crate::scheduler::mark_current_exited(crate::scheduler::TaskExitReason::VoluntaryExit {
+        code: i32::MAX,
+    })
+    .is_err()
+    {
+        TASK_EXIT_DOUBLE_REJECTIONS.fetch_add(1, Ordering::AcqRel);
+    }
+
+    // The exiting task is never saved as Runnable and its continuation stack is
+    // never restored. `schedule_after_exit` installs the next task's CR3 and
+    // Ring 3 continuation state before returning its RSP.
+    let next_rsp = crate::scheduler::schedule_after_exit(0);
+    if next_rsp == 0 {
+        unsafe {
+            asm!("cli", options(nomem, nostack));
+            loop {
+                asm!("hlt", options(nomem, nostack));
+            }
+        }
+    }
+    crate::scheduler::systemes_fpu_restore_current();
+    TASK_EXIT_HANDOFFS.fetch_add(1, Ordering::AcqRel);
+    next_rsp
+}
+
 /// Snapshot a syscall-local context's Ring 3 continuation state.
 unsafe fn snapshot_ring3_cpu_state(
     local: *mut SyscallCpuLocal,
@@ -1075,6 +1255,7 @@ unsafe fn snapshot_ring3_cpu_state(
             }),
             syscall_stack_top: (*local).syscall_stack_top,
             tss_rsp0: core::ptr::addr_of!((*tss).rsp0).read_unaligned(),
+            task_exit_enabled: (*local).task_exit_enabled.load(Ordering::Acquire),
         }
     }
 }
@@ -1105,6 +1286,7 @@ unsafe fn write_ring3_cpu_state(
         (*local).fault_vector.store(fault.vector, Ordering::Release);
         addr_of_mut!((*local).syscall_stack_top).write_unaligned(state.syscall_stack_top);
         core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(state.tss_rsp0);
+        (*local).task_exit_enabled.store(state.task_exit_enabled, Ordering::Release);
     }
 }
 
@@ -1214,6 +1396,10 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
     let df_top = unsafe { addr_of_mut!((*ctx).double_fault_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let nmi_top = unsafe { addr_of_mut!((*ctx).nmi_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
     let mc_top = unsafe { addr_of_mut!((*ctx).machine_check_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    let task_exit_top = unsafe { addr_of_mut!((*ctx).task_exit_stack.0).cast::<u8>().add(INTERRUPT_STACK_SIZE) as u64 };
+    // The exit stack is CPU-owned and stable for the kernel lifetime. It is not
+    // part of the task-owned Ring 3 continuation state and is never swapped.
+    unsafe { addr_of_mut!((*syscall_local).task_exit_stack_top).write(task_exit_top) };
     let tss = unsafe { addr_of_mut!((*ctx).tss) };
     unsafe {
         core::ptr::addr_of_mut!((*tss).rsp0).write_unaligned(rsp0_top);
@@ -1289,6 +1475,8 @@ pub unsafe fn initialize_cpu(cpu_index: usize) {
     unsafe {
         idt.add(0x40).write(IdtEntry::interrupt_gate(systemes_lapic_timer as *const () as usize as u64, 0));
         idt.add(0x41).write(IdtEntry::interrupt_gate(systemes_scheduler_yield as *const () as usize as u64, 0));
+        idt.add(crate::apic::TLB_SHOOTDOWN_VECTOR as usize)
+            .write(IdtEntry::interrupt_gate(systemes_tlb_shootdown as *const () as usize as u64, 0));
         idt.add(0xFF).write(IdtEntry::interrupt_gate(systemes_apic_spurious as *const () as usize as u64, 0));
         idt.add(USER_EXIT_VECTOR as usize).write(IdtEntry::user_interrupt_gate(systemes_user_exit as *const () as usize as u64));
     }
@@ -1379,12 +1567,24 @@ pub extern "C" fn systemes_exception_dispatch(
                     (*syscall_local).exit_status.store(USER_FAULT_EXIT_STATUS, Ordering::Release);
                     (*syscall_local).ring3_active.store(false, Ordering::Release);
                 }
-                frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+                let task_exit = unsafe { (*syscall_local).task_exit_enabled.load(Ordering::Acquire) };
+                let (trampoline, handoff_rsp) = if task_exit {
+                    // P0-C: never restore the terminating task's continuation RSP.
+                    (
+                        systemes_task_exit_trampoline as *const () as usize as u64,
+                        unsafe { (*syscall_local).task_exit_stack_top },
+                    )
+                } else {
+                    (
+                        systemes_ring3_exit_trampoline as *const () as usize as u64,
+                        unsafe { (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire) },
+                    )
+                };
+                frame_ref.rip = trampoline;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
-                let kernel_rsp = unsafe { (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire) };
                 unsafe {
-                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame.add(20).write(handoff_rsp);
                     privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                     debug_write(b"SYSTEMES_TEST: Ring 3 fault detected vector=0x");
                     debug_hex(vector);
@@ -1415,14 +1615,23 @@ pub extern "C" fn systemes_exception_dispatch(
                     unsafe { (*syscall_local).expected_user_rsp.load(Ordering::Acquire) },
                 )
             {
-                frame_ref.rip = systemes_ring3_exit_trampoline as *const () as usize as u64;
+                let task_exit = unsafe { (*syscall_local).task_exit_enabled.load(Ordering::Acquire) };
+                let (trampoline, handoff_rsp) = if task_exit {
+                    (
+                        systemes_task_exit_trampoline as *const () as usize as u64,
+                        unsafe { (*syscall_local).task_exit_stack_top },
+                    )
+                } else {
+                    (
+                        systemes_ring3_exit_trampoline as *const () as usize as u64,
+                        unsafe { (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire) },
+                    )
+                };
+                frame_ref.rip = trampoline;
                 frame_ref.cs = KERNEL_CODE_SELECTOR as u64;
                 frame_ref.rflags = 0x02;
-                let kernel_rsp = unsafe {
-                    (*syscall_local).saved_kernel_rsp.load(Ordering::Acquire)
-                };
                 unsafe {
-                    privilege_frame.add(20).write(kernel_rsp);
+                    privilege_frame.add(20).write(handoff_rsp);
                     privilege_frame.add(21).write(KERNEL_DATA_SELECTOR as u64);
                 }
                 unsafe {
@@ -1500,6 +1709,17 @@ mod tests {
         assert_eq!(core::mem::offset_of!(SyscallCpuLocal, exit_validated), INTERRUPT_STACK_SIZE + 25);
         assert_eq!(core::mem::offset_of!(SyscallCpuLocal, expected_user_rsp), INTERRUPT_STACK_SIZE + 32);
         assert_eq!(GS_EXIT_STATUS, INTERRUPT_STACK_SIZE + 40);
+        assert_eq!(
+            GS_TASK_EXIT_ENABLED,
+            core::mem::offset_of!(SyscallCpuLocal, task_exit_enabled)
+        );
+        assert_eq!(
+            GS_TASK_EXIT_STACK_TOP,
+            core::mem::offset_of!(SyscallCpuLocal, task_exit_stack_top)
+        );
+        // P0-C fields are appended, so all legacy offsets remain stable.
+        assert!(GS_TASK_EXIT_ENABLED > GS_EXIT_STATUS);
+        assert!(GS_TASK_EXIT_STACK_TOP > GS_TASK_EXIT_ENABLED);
     }
 
     #[test]
@@ -1518,6 +1738,7 @@ mod tests {
             }),
             syscall_stack_top: 0x1000,
             tss_rsp0: 0x2000,
+            task_exit_enabled: true,
         };
         let mut a = SyscallCpuLocal::new();
         let mut b = SyscallCpuLocal::new();

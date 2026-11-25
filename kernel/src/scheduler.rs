@@ -351,6 +351,9 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandl
         if resource_id < MAX_CPUS * MAX_TASKS {
             (*task).ring3_state.syscall_stack_top = task_syscall_stack_top(resource_id);
             (*task).ring3_state.tss_rsp0 = task_privilege_stack_top(resource_id);
+            // Only scheduler-owned Ring 3 tasks use the non-returning exit
+            // handoff; legacy synchronous `enter_user_mode` callers keep it off.
+            (*task).ring3_state.task_exit_enabled = true;
         }
         (*task).entry.store(0, Ordering::Relaxed);
         (*task).wake_at.store(0, Ordering::Relaxed);
@@ -710,13 +713,20 @@ unsafe fn save_ring3_cpu_state(task: *mut Task) {
 /// Install the incoming task's Ring 3 state into the current CPU.
 unsafe fn restore_ring3_cpu_state(task: *mut Task) {
     if cfg!(test) { return; }
+    let cpu_index = current_cpu_index();
     unsafe {
         crate::interrupts::install_ring3_cpu_state((*task).ring3_state);
         let cr3 = (*task).saved_cr3.load(Ordering::Acquire);
+        let previous = crate::address_space::read_cr3();
         // CR3=0 is a valid kernel root in QEMU builds, so there is no sentinel
         // value: always install the incoming task's root when it differs.
-        if cr3 != crate::address_space::read_cr3() {
+        if cr3 != previous {
+            // P0-D: update the active CPU mask around CR3 activation. The old
+            // space loses this CPU before the new one claims it, so a reaper
+            // can never observe a stale active bit after the switch.
+            crate::process::mark_address_space_inactive(previous, cpu_index);
             crate::address_space::write_cr3(cr3);
+            crate::process::mark_address_space_active(cr3, cpu_index);
         }
     }
 }

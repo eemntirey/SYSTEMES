@@ -859,6 +859,13 @@ jobs:
             grep -q 'SYSTEMES_TEST: Ring 3 task terminated on general protection fault' "$log"
             grep -q 'SYSTEMES_TEST: Ring 3 observer resumed after every task reached Exited' "$log"
             grep -q 'SYSTEMES_TEST: per-task CR3 and non-returning exit verified count=3' "$log"
+            grep -q 'SYSTEMES_TEST: non-returning exit handoff used count=3' "$log"
+            grep -q 'SYSTEMES_TEST: CPU-owned exit stack stable across task exits' "$log"
+            grep -q 'SYSTEMES_TEST: reaper drained queued processes count=3' "$log"
+            grep -q 'SYSTEMES_TEST: address spaces destroyed after deferred reaping' "$log"
+            grep -q 'SYSTEMES_TEST: competing termination rejected without changing first reason' "$log"
+            grep -q 'SYSTEMES_TEST: repeated create/exit/reap bursts completed count=3' "$log"
+            grep -q 'SYSTEMES_TEST: multiple runnable Ring 3 tasks per CPU verified' "$log"
             grep -q 'SYSTEMES_TEST: Ring 3 task exit matrix complete' "$log"
             if grep -q 'SYSTEMES_KERNEL_FAIL:' "$log"; then
               echo "Kernel reported a failure marker on $cpus CPUs"
