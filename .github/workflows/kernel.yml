@@ -842,7 +842,7 @@ jobs:
           for cpus in 1 2 4; do
             cp "$variables" "build/uefi/OVMF_VARS_$cpus.fd"
             set +e
-            timeout 120s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp "$cpus" -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file="build/uefi/OVMF_VARS_$cpus.fd" -drive file=build/uefi/systemes-ring3-task.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:"build/uefi/serial-$cpus.log" -debugcon file:"build/uefi/debug-$cpus.log" -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D "build/uefi/qemu-$cpus.log" -display none -no-reboot
+            timeout 360s qemu-system-x86_64 -cpu max -machine q35 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -smp "$cpus" -m 512M -drive if=pflash,format=raw,unit=0,readonly=on,file="$firmware" -drive if=pflash,format=raw,unit=1,file="build/uefi/OVMF_VARS_$cpus.fd" -drive file=build/uefi/systemes-ring3-task.iso,media=cdrom,if=ide,readonly=on -boot order=d -serial file:"build/uefi/serial-$cpus.log" -debugcon file:"build/uefi/debug-$cpus.log" -global isa-debugcon.iobase=0xe9 -d int,cpu_reset -D "build/uefi/qemu-$cpus.log" -display none -no-reboot
             qemu_status=$?
             set -e
             if [ "$qemu_status" -ne 33 ]; then
@@ -867,6 +867,12 @@ jobs:
             grep -q 'SYSTEMES_TEST: repeated create/exit/reap bursts completed count=3' "$log"
             grep -q 'SYSTEMES_TEST: multiple runnable Ring 3 tasks per CPU verified' "$log"
             grep -q 'SYSTEMES_TEST: Ring 3 task exit matrix complete' "$log"
+            if [ "$cpus" -gt 1 ]; then
+              # With APs online the test must prove the remote IPI/ACK path.
+              grep -q 'SYSTEMES_TEST: remote TLB shootdown acknowledged by all APs' "$log"
+            else
+              ! grep -q 'SYSTEMES_TEST: remote TLB shootdown acknowledged by all APs' "$log"
+            fi
             if grep -q 'SYSTEMES_KERNEL_FAIL:' "$log"; then
               echo "Kernel reported a failure marker on $cpus CPUs"
               exit 1

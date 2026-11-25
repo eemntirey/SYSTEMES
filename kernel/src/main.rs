@@ -80,6 +80,9 @@ fn ring3_task_failure_name(error: systemes_kernel::address_space::AddressSpaceEr
         Error::Ring3TaskStackMismatch => b"per-task-stack-mismatch",
         Error::Ring3TaskResumedInUserMode => b"user-mode-resumed-after-exit",
         Error::Ring3TaskObserverMissing => b"observer-not-scheduled",
+        Error::TlbShootdownTimeout => b"tlb-shootdown-timeout",
+        Error::Ring3TransitionFailed => b"ring3-transition-failed",
+        Error::Ring3TaskStackMismatch => b"task-stack-mismatch",
         Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",
         Error::OutOfFrames => b"out-of-frames",
         Error::OutOfMemory => b"out-of-memory",
@@ -303,7 +306,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
         halt();
     }
     unsafe { debug_write(b"SYSTEMES: physical frame allocator initialized\r\n") };
-    #[cfg(feature = "qemu-smp-test")]
+    #[cfg(any(feature = "qemu-smp-test", feature = "qemu-ring3-task-test"))]
     {
         // The identity map allocates its tables from the lowest frames, so the
         // SIPI page must be claimed before paging is built.
