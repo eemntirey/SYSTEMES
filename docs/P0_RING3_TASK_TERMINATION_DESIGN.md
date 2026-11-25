@@ -184,7 +184,7 @@ Contrat :
 
 ## 8. Plan de tests QEMU — matrice 1 / 2 / 4 CPU
 
-Les marqueurs ci-dessous sont des critères futurs, pas des résultats observés.
+Les marqueurs ci-dessous ont été observés sur le SHA final de la PR [#101](https://github.com/eemntirey/SYSTEMES/pull/101) (`f583a91c`) sur 1, 2 et 4 CPU, et sont désormais vérifiés par la CI.
 
 | Test | 1 CPU | 2 CPU | 4 CPU | Ce que cela prouve |
 |---|---:|---:|---:|---|
