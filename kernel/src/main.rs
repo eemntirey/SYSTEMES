@@ -82,7 +82,6 @@ fn ring3_task_failure_name(error: systemes_kernel::address_space::AddressSpaceEr
         Error::Ring3TaskObserverMissing => b"observer-not-scheduled",
         Error::TlbShootdownTimeout => b"tlb-shootdown-timeout",
         Error::Ring3TransitionFailed => b"ring3-transition-failed",
-        Error::Ring3TaskStackMismatch => b"task-stack-mismatch",
         Error::FrameReclaimMismatch => b"frame-reclaim-mismatch",
         Error::OutOfFrames => b"out-of-frames",
         Error::OutOfMemory => b"out-of-memory",
