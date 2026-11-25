@@ -1,85 +1,56 @@
-# Autonomous Development Log
+# SYSTEMES — État actuel et journal de développement
 
-## Project
-SYSTEMES native OS (https://github.com/eemntirey/SYSTEMES)
+## Référence de vérité
 
-## Roadmap Phase
-Current: **Phase B (deferred SMP) — P1-6a complete (merged), P1-6b next**
-Per `docs/PLAN_PROCHAINE_ETAPE.md`:
-- Phase A: Freestanding kernel contract ✓ (merged up to PR #74)
-- Phase B: SMP + scheduling + memory
-  - P1-6a: SMP AP bring-up (INIT/SIPI) — **PR #75 MERGED**
-  - P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler — **NEXT**
-  - P1-6c: lock-free per-CPU data structures
-- Phase C: VFS + syscalls + userland
-  - P2-1: writable VFS (other agent's PR #73, still open)
-  - P2-2: extended syscall surface
-  - ...
+- Dépôt : `eemntirey/SYSTEMES`
+- Branche de référence : `main`
+- Snapshot inspecté : commit de base `56b5f2147d6c82c4be3ed75a501cc0b1f43f2509` (25 novembre 2026).
+- Le code fusionné dans `main` prime sur les journaux historiques, les branches et les PR ouvertes.
+- Une capacité n'est déclarée opérationnelle qu'avec code dans `main`, compilation, tests et preuve QEMU/matériel attachée au SHA concerné.
 
-## Remote State Verification
-- `origin/main` = `b3cbbe7e` (Merge PR #75 from p1-6-smp-ap-bringup) — includes P1-6a SMP bring-up
-- PR #73 (P1-5c — SYS_READDIR + `ls`) open on `p1-5c-ls-readdir` (`83a65649`), ALL technical CI ✓, only "Kilo Code Review: action_required"
-- Other agent owns PR #73, plans to merge then start P2-1 (writable VFS)
-- **This agent completed parallel independent workstream: P1-6a SMP AP bring-up** (files disjoint from PR #73)
+## État livré
 
-## Local Environment
-- `gh` CLI: NOT installed
-- GitHub PAT: 40 chars, retrievable via `git credential fill` (Windows Credential Manager)
-- Helper script: `C:\Users\eemntirey\AppData\Local\Temp\opencode\gh_api.ps1`
-- `cargo` 1.98.1, `rust-toolchain` 1.98.1
-- `python` 3.11.9 works, `python3` broken
-- QEMU: `C:\Program Files\qemu\qemu-system-x86_64.exe`
-- NO GNU binutils/gcc/clang locally (CI handles release builds)
-- Worktree: `.p1-6-smp-worktree` on branch `p1-6-smp-ap-bringup` (merged, can be removed)
+- Noyau Rust `no_std` x86-64 et démarrage UEFI/OVMF.
+- Mémoire physique/virtuelle, protections NX/W^X, SMEP/SMAP conditionnelles, GDT/IDT/TSS/IST.
+- Ordonnanceur préemptif, runqueues par CPU et infrastructure SMP ; les capacités doivent être évaluées par scénario, sans assimiler AP démarré à migration Ring 3.
+- Ring 3, chargeur ELF de test intégré, syscalls minimales 0–8, shell UART.
+- Cycle de vie Ring 3, sortie non-retournante et réclamation différée livrés par les PR fusionnées jusqu'à #101 ; voir `docs/STATE.md` pour les SHA et preuves.
+- Virtio-blk en lecture seule et VFS SYSFS en lecture seule.
 
-### Changes
-| File | Description |
-|------|-------------|
-| `kernel/smp.rs` | New module: trampoline payload (16/32-bit), INIT/SIPI bring-up, per-AP stacks, cross-core validation (250 rounds private/relaxed/SpinLock counters) |
-| `kernel/apic.rs` | `current_apic_id()`, `send_init_and_startup_ipi(apic_id, vector_page)` with bounded IPI delivery waits + PIT delays |
-| `kernel/memory.rs` | `allocate_frame_below(limit)` with tests (head-advance, top-cut, page-0 exclusion) |
-| `kernel/main.rs` | `qemu-smp-test` feature block with validation markers |
-| `kernel/Cargo.toml` | `qemu-smp-test` feature |
-| `kernel/lib.rs` | Export `smp` module |
-| `kernel/interrupts.rs` | Remove `.type` directives (Rust 1.98 assembler compat) |
-| `.github/workflows/kernel.yml` | New `smp-bringup` CI job (`-smp 4`, greps all markers) |
-| `scripts/qemu-boot.sh` | `--smp` option for local testing |
+## Limites opérationnelles actuelles
 
-### Validation Markers (CI greps)
-- `SYSTEMES: AP trampoline published under 1 MiB`
-- `SYSTEMES_TEST: AP <n> started in kernel long mode`
-- `SYSTEMES_TEST: application processors parked after validation: count=<n>`
-- `SYSTEMES_TEST: cross-core SpinLock counter verified across <cpus> CPUs`
-- `SYSTEMES_TEST: cross-core relaxed counter verified`
-- `SYSTEMES_TEST: per-AP private counters verified`
-- `SYSTEMES_TEST: SMP bring-up validation complete`
+- VFS read-only ; FAT32 RW, flush durable et persistance après reboot non démontrés.
+- ABI utilisateur limitée aux 9 syscalls documentées ; pas de fork/exec/waitpid, mmap, IPC ou libc livrés.
+- ELF de test intégré en mémoire, pas de chargement général depuis le stockage.
+- Pilotes PC essentiels, réseau, interface graphique et écosystème applicatif natif manquants.
+- Pas de validation sur PC physique ni de test d'endurance 72 h documenté.
+- PR #83 (écriture/Cache/tmpfs/devfs) et PR #103 (preuve shootdown distant AP) ne sont pas des livraisons de `main` tant qu'elles restent ouvertes.
 
-### Testing Evidence
-- Host tests: 135 passed (`cargo test --all-features`)
-- Release build: clean (`cargo rustc --release --target x86_64-unknown-none --features qemu-smp-test ...`)
-- CI job `smp-bringup`: QEMU with `-smp 4 -cpu max -machine q35`, greps all markers above
+## Prochaines priorités
 
-## Next Actions
-1. ~~Wait for CI completion on PR #75 (head `4ecb21ce`)~~ ✓
-2. ~~Verify all mandatory check-runs green (excluding "Kilo Code Review")~~ ✓
-3. ~~Merge PR #75~~ ✓ **MERGED as `b3cbbe7e`**
-4. Fetch new `main`, rebase/merge with PR #73 if needed
-5. **START P1-6b: per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
+1. Fermer la preuve SMP/TLB sur le SHA final de la PR #103 ; vérifier AP réellement en ligne, ACK distant par AP et compteurs de travail.
+2. Prouver la migration des tâches noyau et préserver l'affinité Ring 3 tant que son contrat n'est pas migrable.
+3. Compléter le modèle processus/threads et l'ABI utilisateur.
+4. Livrer VFS inscriptible, FAT32 RW, flush/fsync et test persistance QEMU après reboot.
+5. Ajouter pilotes d'entrée/stockage, réseau, puis environnement graphique.
+6. Construire libc/runtime, gestionnaire de paquets, comptes et outils système.
+7. Produire une distribution installable et valider du matériel réel.
 
-## Repo Rules Compliance
-- No `git reset --hard` to erase work
-- No force-push
-- No deleting other agents' branches
-- No direct unvalidated merges to main
-- PR policy: dedicated branch → push → PR to main → verify CI on exact head SHA → merge only if all mandatory checks green
-- "Ne jamais utiliser Kilo Code Review comme condition de fusion"
-- Maintain `AUTONOMOUS_DEVELOPMENT.md` at repo root (created here, will be committed after merge)
-- Avoid conflicts with other agents' work (disjoint files: PR #73 touches syscall.rs, vfs.rs, simple_fs.rs, shell.S, shell_elf.rs, kernel.yml, make-sysfs.py; this PR touches smp.rs, apic.rs, memory.rs, main.rs, lib.rs, Cargo.toml, interrupts.rs, kernel.yml, qemu-boot.sh)
+Roadmap détaillée : `docs/PLAN_PROCHAINE_ETAPE.md`.
+Matrice comparative : `SYSTEMES_WINDOWS_FUNCTIONAL_GAP_AUDIT.md`.
+Contrat syscall réellement livré : `docs/SYSCALL_ABI.md`.
 
-## Resume State (if session limits)
-- Worktree: `C:\Users\eemntirey\Desktop\OSREAL\.p1-6-smp-worktree` (merged, can be removed)
-- Branch: `p1-6-smp-ap-bringup` (merged as `b3cbbe7e`, can be deleted)
-- Next: **start P1-6b worktree for per-CPU GDT/IDT/TSS + per-CPU APIC timers + multi-core scheduler**
+## Politique de livraison
+
+- Une PR ciblée par work package.
+- Aucun merge avant CI entièrement verte sur le SHA exact.
+- Préserver les tests de non-régression P0 Ring 3, SMP et TLB.
+- Ne jamais annoncer une commande cargo/QEMU exécutée sans terminal et résultat observable.
+- QEMU/OVMF et matériel physique sont deux niveaux de preuve distincts.
+
+## Journal historique
+
+Les entrées datées ci-dessous sont conservées pour la traçabilité. Elles décrivent l'état de leur époque et ne remplacent pas la section « État actuel » ci-dessus. En cas de contradiction, le code de `main`, `docs/STATE.md` et les résultats CI du SHA courant font foi.
 
 ## 2026-11-09 — trampoline debug session (Codebuff)
 
