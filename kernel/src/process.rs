@@ -6,7 +6,7 @@
 //! inversion. Reservation and publication are separate steps: a task is never
 //! runnable until its full Ring 3 context has been built.
 
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::{
     address_space::{AddressSpace, AddressSpaceError, cr3_root, read_cr3},
@@ -26,6 +26,10 @@ pub enum ProcessState {
     Runnable = 2,
     Running = 3,
     Exited = 4,
+    /// Exited and queued; pins or an active CPU mask still guard the space.
+    Reaping = 5,
+    /// Resources destroyed; the descriptor slot may be reused.
+    Reaped = 6,
 }
 
 /// Owner of the resources that make one Ring 3 process independent from every
@@ -40,6 +44,13 @@ pub struct Process {
     task: Option<Ring3TaskHandle>,
     file_table: ProcessFileTable,
     exit_code: Option<u32>,
+    /// Readers increment this before dereferencing a terminating process.
+    /// The reaper only destroys once the count reaches zero.
+    pin_count: AtomicUsize,
+    /// CPUs whose CR3 currently references this process's private space.
+    active_cpu_mask: AtomicU64,
+    /// Set when reaping starts; prevents new pins and new activations.
+    closing: AtomicBool,
 }
 
 impl Process {
@@ -60,6 +71,9 @@ impl Process {
             task,
             file_table,
             exit_code: None,
+            pin_count: AtomicUsize::new(0),
+            active_cpu_mask: AtomicU64::new(0),
+            closing: AtomicBool::new(false),
         }
     }
 
@@ -380,6 +394,258 @@ pub fn reap_process(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ReapEntry {
+    pid: u32,
+    cpu_index: usize,
+    root: u64,
+    /// Snapshot of CPUs referencing this space when the exit was published.
+    target_mask: u64,
+    /// Non-zero while a shootdown has been issued but not fully acknowledged.
+    shootdown_generation: u64,
+}
+
+/// CPU-affine deferred-destruction queue. The owner CPU briefly takes this lock
+/// to pop or requeue an entry, then releases it before any shootdown or allocator
+/// work. No scheduler run-queue lock is ever held across these operations.
+static REAP_QUEUE: SpinLock<[Option<ReapEntry>; MAX_PROCESSES]> = SpinLock::new([None; MAX_PROCESSES]);
+static REAP_ENQUEUED: AtomicU64 = AtomicU64::new(0);
+static REAP_DESTROYED: AtomicU64 = AtomicU64::new(0);
+static REAP_DEFERRED: AtomicU64 = AtomicU64::new(0);
+static REAP_SHOOTDOWNS: AtomicU64 = AtomicU64::new(0);
+static REAP_SHOOTDOWN_ACKS: AtomicU64 = AtomicU64::new(0);
+
+/// RAII reader pin: prevents deferred destruction while a context is inspected.
+pub struct ProcessPin(u32);
+
+impl Drop for ProcessPin {
+    fn drop(&mut self) {
+        unpin_process(self.0);
+    }
+}
+
+/// Take a reader pin on a live process. A process already being reaped refuses
+/// new pins, so a late reader can never keep a destroyed space alive.
+pub fn pin_process(pid: u32) -> Option<ProcessPin> {
+    let table = PROCESS_TABLE.lock();
+    let process = table.get(pid)?;
+    if matches!(process.state, ProcessState::Reaping | ProcessState::Reaped)
+        || process.closing.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    process.pin_count.fetch_add(1, Ordering::AcqRel);
+    Some(ProcessPin(pid))
+}
+
+pub fn unpin_process(pid: u32) {
+    let table = PROCESS_TABLE.lock();
+    if let Some(process) = table.get(pid) {
+        let _ = process.pin_count.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |count| count.checked_sub(1),
+        );
+    }
+}
+
+/// Record that `cpu_index` installed `root` as CR3. Unknown roots (kernel idle
+/// space) are ignored; new activations of a closing space are refused.
+pub fn mark_address_space_active(root: u64, cpu_index: usize) -> bool {
+    if cpu_index >= scheduler::MAX_CPUS || root == 0 {
+        return false;
+    }
+    let table = PROCESS_TABLE.lock();
+    for process in table.get_slots().iter().flatten() {
+        if process.address_space_root() == Some(root) && !process.closing.load(Ordering::Acquire) {
+            process
+                .active_cpu_mask
+                .fetch_or(1u64 << cpu_index, Ordering::AcqRel);
+            return true;
+        }
+    }
+    false
+}
+
+/// Remove `cpu_index` from the active mask of the process owning `root`.
+pub fn mark_address_space_inactive(root: u64, cpu_index: usize) -> bool {
+    if cpu_index >= scheduler::MAX_CPUS || root == 0 {
+        return false;
+    }
+    let table = PROCESS_TABLE.lock();
+    for process in table.get_slots().iter().flatten() {
+        if process.address_space_root() == Some(root) {
+            process
+                .active_cpu_mask
+                .fetch_and(!(1u64 << cpu_index), Ordering::AcqRel);
+            return true;
+        }
+    }
+    false
+}
+
+pub fn process_pin_count(pid: u32) -> Option<usize> {
+    let table = PROCESS_TABLE.lock();
+    table.get(pid).map(|process| process.pin_count.load(Ordering::Acquire))
+}
+
+pub fn process_active_cpu_mask(pid: u32) -> Option<u64> {
+    let table = PROCESS_TABLE.lock();
+    table.get(pid).map(|process| process.active_cpu_mask.load(Ordering::Acquire))
+}
+
+/// Move an exited process into the deferred reaper queue. This is the only path
+/// from task termination to resource reclamation; it never destroys directly.
+pub fn queue_process_for_reap(pid: u32) -> Result<(), ProcessError> {
+    let entry = {
+        let mut table = PROCESS_TABLE.lock();
+        let process = table.get_mut(pid).ok_or(ProcessError::NotFound)?;
+        if process.state != ProcessState::Exited {
+            return Err(ProcessError::InvalidState);
+        }
+        let root = process.address_space_root().ok_or(ProcessError::InvalidState)?;
+        let cpu_index = process
+            .task
+            .map(|handle| handle.cpu_index())
+            .ok_or(ProcessError::InvalidState)?;
+        let target_mask = process.active_cpu_mask.load(Ordering::Acquire);
+        process.closing.store(true, Ordering::Release);
+        process.state = ProcessState::Reaping;
+        ReapEntry { pid, cpu_index, root, target_mask, shootdown_generation: 0 }
+    };
+    let mut queue = REAP_QUEUE.lock();
+    let slot = queue
+        .iter_mut()
+        .find(|slot| slot.is_none())
+        .ok_or(ProcessError::TableFull)?;
+    *slot = Some(entry);
+    REAP_ENQUEUED.fetch_add(1, Ordering::AcqRel);
+    Ok(())
+}
+
+fn requeap_entry(entry: ReapEntry) {
+    let mut queue = REAP_QUEUE.lock();
+    if let Some(slot) = queue.iter_mut().find(|slot| slot.is_none()) {
+        *slot = Some(entry);
+    }
+}
+
+/// Destroy a process that is already in `Reaping` and has no pins or active CPUs.
+fn destroy_reaped_process(
+    pid: u32,
+    allocator: &mut crate::memory::PhysicalFrameAllocator,
+) -> Result<(), ProcessError> {
+    let mut process = PROCESS_TABLE.lock().remove(pid).ok_or(ProcessError::NotFound)?;
+    if process.state != ProcessState::Reaping {
+        return Err(ProcessError::InvalidState);
+    }
+    process.state = ProcessState::Reaped;
+    let handles = process.file_table.take_all();
+    let _ = rootfs::with_root(|vfs| {
+        for handle in handles.iter().flatten().copied() {
+            let _ = vfs.close(handle);
+        }
+    });
+    let space = process.address_space.take().ok_or(ProcessError::InvalidState)?;
+    // SAFETY: pins and the active CPU mask were checked before destruction, and
+    // the shootdown acknowledged every CPU in the snapshot mask.
+    unsafe { space.destroy(allocator).map_err(ProcessError::AddressSpace)? }
+    Ok(())
+}
+
+/// Drain this CPU's reaper entries. Entries with outstanding pins or active CPUs
+/// are requeued without taking any scheduler lock or waiting for an ACK inside
+/// the queue lock.
+pub fn drain_reaper(
+    cpu_index: usize,
+    allocator: &mut crate::memory::PhysicalFrameAllocator,
+) -> Result<usize, ProcessError> {
+    if cpu_index >= scheduler::MAX_CPUS {
+        return Err(ProcessError::WrongCpu);
+    }
+    let mut taken = [None; MAX_PROCESSES];
+    {
+        let mut queue = REAP_QUEUE.lock();
+        let mut used = 0;
+        for slot in queue.iter_mut() {
+            if let Some(entry) = *slot {
+                if entry.cpu_index == cpu_index {
+                    taken[used] = Some(entry);
+                    used += 1;
+                    *slot = None;
+                }
+            }
+        }
+    }
+
+    let mut destroyed = 0;
+    for entry in taken.iter().flatten().copied() {
+        let mut entry = entry;
+        let ready = {
+            let table = PROCESS_TABLE.lock();
+            let Some(process) = table.get(entry.pid) else { continue };
+            process.pin_count.load(Ordering::Acquire) == 0
+                && process.active_cpu_mask.load(Ordering::Acquire) == 0
+        };
+        // A pending shootdown is checked without spin-waiting. The entry returns
+        // to the queue and destruction resumes on a later drain once every
+        // remote CPU has acknowledged the generation.
+        let pending_shootdown = if entry.shootdown_generation != 0 {
+            let status = crate::address_space::tlb_shootdown_status(
+                entry.target_mask,
+                entry.shootdown_generation,
+            );
+            status.acks < status.targets
+        } else {
+            false
+        };
+        if !ready || pending_shootdown {
+            requeap_entry(entry);
+            REAP_DEFERRED.fetch_add(1, Ordering::AcqRel);
+            continue;
+        }
+        if entry.shootdown_generation == 0 && entry.target_mask != 0 {
+            let stats = crate::address_space::tlb_shootdown(entry.root, entry.target_mask);
+            REAP_SHOOTDOWNS.fetch_add(1, Ordering::AcqRel);
+            REAP_SHOOTDOWN_ACKS.fetch_add(stats.acks as u64, Ordering::AcqRel);
+            if stats.acks < stats.targets {
+                entry.shootdown_generation = stats.generation;
+                requeap_entry(entry);
+                REAP_DEFERRED.fetch_add(1, Ordering::AcqRel);
+                continue;
+            }
+        }
+        destroy_reaped_process(entry.pid, allocator)?;
+        destroyed += 1;
+        REAP_DESTROYED.fetch_add(1, Ordering::AcqRel);
+    }
+    Ok(destroyed)
+}
+
+pub fn reaper_pending_count() -> usize {
+    REAP_QUEUE.lock().iter().flatten().count()
+}
+
+pub fn reaper_enqueued_count() -> u64 {
+    REAP_ENQUEUED.load(Ordering::Acquire)
+}
+
+pub fn reaper_destroyed_count() -> u64 {
+    REAP_DESTROYED.load(Ordering::Acquire)
+}
+
+pub fn reaper_deferred_count() -> u64 {
+    REAP_DEFERRED.load(Ordering::Acquire)
+}
+
+pub fn reaper_shootdown_count() -> u64 {
+    REAP_SHOOTDOWNS.load(Ordering::Acquire)
+}
+
+pub fn reaper_shootdown_ack_count() -> u64 {
+    REAP_SHOOTDOWN_ACKS.load(Ordering::Acquire)
+}
+
 pub fn current_process(cpu_index: usize) -> Option<u32> {
     CURRENT_PID
         .get(cpu_index)
@@ -427,6 +693,14 @@ impl ProcessTable {
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
+pub fn reset_reaper_for_test() {
+    let mut queue = REAP_QUEUE.lock();
+    for slot in queue.iter_mut() {
+        *slot = None;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -436,6 +710,7 @@ mod tests {
         scheduler::initialize_for_process_test();
         NEXT_CONTEXT_ID.store(1, Ordering::Release);
         PROCESS_TABLE.lock().reset_for_test();
+        reset_reaper_for_test();
     }
 
     #[test]
@@ -494,6 +769,52 @@ mod tests {
         let saved_rsp = scheduler::prepare_ring3_task(handle, noop_task).unwrap();
         publish_process_task(pid, saved_rsp).unwrap();
         assert_eq!(process_state(pid), Some(ProcessState::Runnable));
+        scheduler::reset_for_process_test();
+    }
+
+    #[test]
+    fn pins_and_active_cpu_mask_defer_reaper_destruction() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        prepare_scheduler();
+        let deferred_before = reaper_deferred_count();
+
+        let (pid, handle) = create_process_with_task(
+            AddressSpace::for_test(0x7000),
+            0x8000,
+            0x9000,
+            ProcessFileTable::new(),
+        )
+        .unwrap();
+        let saved_rsp = scheduler::prepare_ring3_task(handle, noop_task).unwrap();
+        publish_process_task(pid, saved_rsp).unwrap();
+        activate_process(0, pid).unwrap();
+
+        assert!(mark_address_space_active(0x7000, 0));
+        assert_eq!(process_active_cpu_mask(pid), Some(1));
+        let pin = pin_process(pid).unwrap();
+        assert_eq!(process_pin_count(pid), Some(1));
+
+        mark_process_exited(0, pid, 7).unwrap();
+        queue_process_for_reap(pid).unwrap();
+        assert_eq!(process_state(pid), Some(ProcessState::Reaping));
+        assert!(pin_process(pid).is_none());
+        assert_eq!(reaper_pending_count(), 1);
+
+        // No allocator work is done while a pin or an active CPU still exists.
+        let mut allocator = crate::memory::PhysicalFrameAllocator::empty();
+        assert_eq!(drain_reaper(0, &mut allocator), Ok(0));
+        assert_eq!(reaper_pending_count(), 1);
+        assert!(reaper_deferred_count() > deferred_before);
+
+        drop(pin);
+        assert!(mark_address_space_inactive(0x7000, 0));
+        assert_eq!(process_pin_count(pid), Some(0));
+        assert_eq!(process_active_cpu_mask(pid), Some(0));
+
+        // The reaper queue is drained by CPU affinity; a different CPU must not
+        // consume this owner's entry.
+        assert_eq!(drain_reaper(1, &mut allocator), Ok(0));
+        assert_eq!(reaper_pending_count(), 1);
         scheduler::reset_for_process_test();
     }
 

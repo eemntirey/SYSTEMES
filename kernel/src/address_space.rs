@@ -10,8 +10,9 @@ use crate::interrupts::RING3_TEST_MAGIC;
 use crate::memory::{PAGE_SIZE, PhysicalFrameAllocator};
 use crate::paging::{IDENTITY_MAP_BYTES, page_table_indices};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 #[cfg(any(feature = "qemu-ring3-smp-test", feature = "qemu-ring3-task-test"))]
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 
 const PRESENT: u64 = 1;
 const WRITABLE: u64 = 1 << 1;
@@ -372,6 +373,103 @@ pub unsafe fn read_cr3() -> u64 {
 pub unsafe fn write_cr3(root: u64) {
     // SAFETY: The caller guarantees a valid PML4 root.
     unsafe { core::arch::asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags)) };
+}
+
+/// TLB-shootdown generation. Generation zero means "no shootdown issued".
+static SHOOTDOWN_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Last generation acknowledged by each CPU slot.
+static SHOOTDOWN_ACKS: [AtomicU64; crate::interrupts::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::interrupts::MAX_CPUS];
+static SHOOTDOWN_ACK_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Statistics returned by a shootdown observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShootdownStats {
+    pub generation: u64,
+    pub targets: u32,
+    pub acks: u32,
+}
+
+/// Acknowledgement hook for the dedicated TLB-shootdown IPI vector.
+///
+/// The interrupt handler calls this after reloading CR3 locally. Publishing the
+/// current generation with Release is the ACK the initiator acquires.
+pub fn ack_tlb_shootdown() {
+    let cpu_index = crate::scheduler::current_cpu_index();
+    if cpu_index >= crate::interrupts::MAX_CPUS {
+        return;
+    }
+    let generation = SHOOTDOWN_GENERATION.load(Ordering::Acquire);
+    if generation == 0 {
+        return;
+    }
+    SHOOTDOWN_ACKS[cpu_index].store(generation, Ordering::Release);
+    SHOOTDOWN_ACK_COUNT.fetch_add(1, Ordering::AcqRel);
+}
+
+pub fn tlb_shootdown_ack_count() -> u64 {
+    SHOOTDOWN_ACK_COUNT.load(Ordering::Acquire)
+}
+
+/// Count the remote CPUs that must acknowledge a generation. The initiator
+/// reloads CR3 locally and never sends itself an IPI, so it is not a target:
+/// the reaper may run with local interrupts masked and must never spin on self.
+fn remote_shootdown_targets(target_mask: u64) -> u32 {
+    let initiator = crate::scheduler::current_cpu_index();
+    let mut targets = 0u32;
+    for cpu_index in 0..crate::interrupts::MAX_CPUS {
+        if cpu_index != initiator && target_mask & (1u64 << cpu_index) != 0 {
+            targets += 1;
+        }
+    }
+    targets
+}
+
+/// Non-blocking ACK observation for a previously issued generation.
+pub fn tlb_shootdown_status(target_mask: u64, generation: u64) -> ShootdownStats {
+    let initiator = crate::scheduler::current_cpu_index();
+    let mut targets = 0u32;
+    let mut acks = 0u32;
+    for cpu_index in 0..crate::interrupts::MAX_CPUS {
+        if cpu_index == initiator || target_mask & (1u64 << cpu_index) == 0 {
+            continue;
+        }
+        targets += 1;
+        if generation != 0 && SHOOTDOWN_ACKS[cpu_index].load(Ordering::Acquire) >= generation {
+            acks += 1;
+        }
+    }
+    ShootdownStats { generation, targets, acks }
+}
+
+/// Invalidate stale translations of `root` on every remote CPU in `target_mask`.
+///
+/// This never spin-waits: the caller requeues the process when ACKs are still
+/// outstanding. Each targeted CPU reloads CR3 in its interrupt handler before
+/// publishing its ACK, so frames are released only after every target has
+/// stopped referencing them. The initiator invalidates locally before sending.
+pub fn tlb_shootdown(_root: u64, target_mask: u64) -> ShootdownStats {
+    let generation = SHOOTDOWN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let initiator = crate::scheduler::current_cpu_index();
+    for cpu_index in 0..crate::interrupts::MAX_CPUS {
+        if cpu_index == initiator || target_mask & (1u64 << cpu_index) == 0 {
+            continue;
+        }
+        if let Some(apic_id) = crate::apic::apic_id_for_cpu_index(cpu_index) {
+            let _ = crate::apic::send_ipi(apic_id, crate::apic::TLB_SHOOTDOWN_VECTOR);
+        }
+    }
+
+    // The initiator drops its own stale translations before requeueing.
+    // SAFETY: CR3 remains a valid kernel-owned PML4 throughout.
+    unsafe {
+        let current = read_cr3();
+        write_cr3(current);
+    }
+
+    let mut status = tlb_shootdown_status(target_mask, generation);
+    status.acks = status.acks.min(remote_shootdown_targets(target_mask));
+    status
 }
 
 /// Check that every page in a user range is present and user-accessible.
@@ -1263,6 +1361,9 @@ pub unsafe fn run_qemu_address_space_test(
 
 #[cfg(feature = "qemu-ring3-task-test")]
 const RING3_TASK_COUNT: usize = 3;
+/// P0-E: repeat create/exit/reap with fresh private spaces and scheduler slots.
+#[cfg(feature = "qemu-ring3-task-test")]
+const RING3_TASK_BURST_COUNT: usize = 3;
 #[cfg(feature = "qemu-ring3-task-test")]
 const RING3_TASK_EXIT_STATUS: u32 = 42;
 #[cfg(feature = "qemu-ring3-task-test")]
@@ -1302,16 +1403,19 @@ static RING3_TASK_OBSERVER_RAN: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "qemu-ring3-task-test")]
 static RING3_TASK_PIDS: [AtomicU32; RING3_TASK_COUNT] =
     [const { AtomicU32::new(0) }; RING3_TASK_COUNT];
+#[cfg(feature = "qemu-ring3-task-test")]
+static RING3_TASK_WAVES_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 
-/// Entry of a schedulable Ring 3 task. The kernel continuation recorded by
-/// `enter_user_mode` is this function's caller frame on the task's own kernel
-/// stack, so a voluntary exit or a recoverable CPL3 fault returns here instead
-/// of resuming user code. The task then publishes its exit reason and returns
-/// to `task_bootstrap`, which marks it Exited and yields to another task.
+/// Entry of a schedulable Ring 3 task.
+///
+/// P0-C: this function installs the non-returning handoff flag and enters Ring 3.
+/// A voluntary `SYS_EXIT` or a recoverable CPL3 `#PF`/`#GP` never returns to
+/// this continuation: `systemes_task_exit_trampoline` switches to the stable
+/// CPU-owned exit stack, publishes the first exit reason, and resumes another
+/// task's IRETQ frame. Everything after `enter_user_mode` is therefore
+/// unreachable for these tasks and only reports a protocol violation.
 #[cfg(feature = "qemu-ring3-task-test")]
 fn run_scheduled_ring3_task(index: usize) {
-    use crate::scheduler::{mark_current_exited, TaskExitReason};
-
     RING3_TASK_EXECUTIONS[index].fetch_add(1, Ordering::AcqRel);
     let root = RING3_TASK_ROOTS[index].load(Ordering::Acquire);
     let user_rip = RING3_TASK_RIPS[index].load(Ordering::Acquire);
@@ -1326,39 +1430,37 @@ fn run_scheduled_ring3_task(index: usize) {
     // requires them masked, and this CPU owns the transition state.
     unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
     let previous_root = unsafe { read_cr3() };
+    // P0-D: publish the CPU/root relationship around the manual CR3 activation,
+    // exactly as the scheduler does on ordinary context switches. The reaper
+    // can then see an active CPU instead of relying on a stale TLB assumption.
+    crate::process::mark_address_space_inactive(previous_root, cpu_index);
     // SAFETY: This Ring 3 task owns the private address space in `root`.
     unsafe { write_cr3(root) };
+    crate::process::mark_address_space_active(root, cpu_index);
     RING3_TASK_OBSERVED_CR3[index]
         .store(cr3_root(unsafe { read_cr3() }), Ordering::Release);
-
-    // SAFETY: The private address space maps `user_rip` executable and
-    // `user_rsp` writable, and the CPU descriptor tables are initialized.
-    let status = unsafe { crate::interrupts::enter_user_mode(user_rip, user_rsp) };
 
     RING3_TASK_OBSERVED_SYSCALL_STACKS[index]
         .store(crate::interrupts::syscall_stack_top(), Ordering::Release);
     RING3_TASK_OBSERVED_TSS_RSP0S[index]
         .store(crate::interrupts::tss_rsp0(), Ordering::Release);
+    crate::interrupts::enable_task_exit_handoff();
 
-    // SAFETY: Returning to the task kernel stack and the kernel address space
-    // is valid because every context shares the kernel PML4 slot.
-    unsafe { write_cr3(previous_root) };
+    // SAFETY: The private address space maps `user_rip` executable and
+    // `user_rsp` writable, and the CPU descriptor tables are initialized.
+    // A scheduler-owned task never returns from this call; the exit trampoline
+    // restores the next task's CR3 directly.
+    let _previous_root = previous_root;
+    let status = unsafe { crate::interrupts::enter_user_mode(user_rip, user_rsp) };
+    let _ = status;
 
-    let reason = match crate::interrupts::last_user_fault() {
-        Some(fault) if fault.vector == 14 => TaskExitReason::PageFault {
-            cr2: fault.cr2 as usize,
-            error_code: fault.error_code as usize,
-            rip: fault.rip as usize,
-        },
-        Some(fault) if fault.vector == 13 => TaskExitReason::GeneralProtection {
-            error_code: fault.error_code as usize,
-            rip: fault.rip as usize,
-        },
-        _ => TaskExitReason::VoluntaryExit {
-            code: status as u32 as i32,
-        },
-    };
-    let _ = mark_current_exited(reason);
+    // Reaching this point means the exit protocol regressed to a synchronous
+    // continuation. Record the violation instead of silently claiming success.
+    crate::process::mark_address_space_inactive(root, cpu_index);
+    unsafe { crate::console::debug_write(b"SYSTEMES_KERNEL_FAIL: task exit returned to terminating continuation\r\n") };
+    let _ = crate::scheduler::mark_current_exited(crate::scheduler::TaskExitReason::VoluntaryExit {
+        code: status as u32 as i32,
+    });
     let _ = crate::process::mark_process_exited(cpu_index, pid, status as u32);
 }
 
@@ -1416,6 +1518,17 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
     };
 
     let free_pages_before = allocator.free_pages();
+    // Baselines are per wave: the P0-E burst reuses this function after the
+    // scheduler and process table have been reset, so absolute counters must
+    // not be confused with the three tasks of the current wave.
+    let handoffs_before = crate::interrupts::task_exit_handoff_count();
+    let stack_uses_before = crate::interrupts::task_exit_stack_use_count();
+    let double_rejections_before = crate::interrupts::task_exit_double_rejection_count();
+    let reaper_enqueued_before = crate::process::reaper_enqueued_count();
+    let reaper_destroyed_before = crate::process::reaper_destroyed_count();
+    // P0-C proof anchor: the exit stack must be CPU-owned and stable across
+    // every task exit, never a task continuation stack.
+    let exit_stack_top_before = crate::interrupts::task_exit_stack_top();
     for index in 0..RING3_TASK_COUNT {
         RING3_TASK_ROOTS[index].store(0, Ordering::Release);
         RING3_TASK_RIPS[index].store(0, Ordering::Release);
@@ -1635,7 +1748,11 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
             break;
         }
         let pid = RING3_TASK_PIDS[index].load(Ordering::Acquire);
-        if crate::process::process_state(pid) != Some(crate::process::ProcessState::Exited) {
+        if !matches!(
+            crate::process::process_state(pid),
+            Some(crate::process::ProcessState::Exited)
+                | Some(crate::process::ProcessState::Reaping)
+        ) {
             failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
             break;
         }
@@ -1646,11 +1763,41 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
     if failure.is_ok() && scheduler::current_task() != TaskId(0) {
         failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
     }
+    // P0-C: every termination must have used the non-returning handoff and the
+    // same stable CPU exit stack; a synchronous continuation return would leave
+    // these counters at zero.
+    if failure.is_ok()
+        && (crate::interrupts::task_exit_handoff_count()
+            != handoffs_before + RING3_TASK_COUNT as u64
+            || crate::interrupts::task_exit_stack_use_count()
+                != stack_uses_before + RING3_TASK_COUNT as u64
+            || crate::interrupts::task_exit_double_rejection_count()
+                != double_rejections_before + RING3_TASK_COUNT as u64
+            || exit_stack_top_before == 0
+            || crate::interrupts::task_exit_stack_top() != exit_stack_top_before)
+    {
+        failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+    }
 
+    // P0-D: no exit path destroys directly. The CPU-affine reaper drains the
+    // queued processes only after pins and active CPU masks are clear.
+    let cpu_index = crate::scheduler::current_cpu_index();
+    let reaped = crate::process::drain_reaper(cpu_index, allocator)
+        .map_err(|_| AddressSpaceError::FrameReclaimMismatch)?;
+    if reaped != RING3_TASK_COUNT
+        || crate::process::reaper_pending_count() != 0
+        || crate::process::reaper_enqueued_count()
+            != reaper_enqueued_before + RING3_TASK_COUNT as u64
+        || crate::process::reaper_destroyed_count()
+            != reaper_destroyed_before + RING3_TASK_COUNT as u64
+    {
+        failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+    }
     for index in 0..RING3_TASK_COUNT {
         let pid = RING3_TASK_PIDS[index].load(Ordering::Acquire);
-        crate::process::reap_process(pid, allocator)
-            .map_err(|_| AddressSpaceError::FrameReclaimMismatch)?;
+        if crate::process::process_state(pid).is_some() {
+            failure = Err(AddressSpaceError::Ring3TaskStateMismatch);
+        }
     }
     if allocator.free_pages() != free_pages_before {
         return Err(AddressSpaceError::FrameReclaimMismatch);
@@ -1673,6 +1820,46 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         );
         crate::console::debug_write(
             b"SYSTEMES_TEST: per-task CR3 and non-returning exit verified count=3\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: non-returning exit handoff used count=3\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: CPU-owned exit stack stable across task exits\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: reaper drained queued processes count=3\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: address spaces destroyed after deferred reaping\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: competing termination rejected without changing first reason\r\n",
+        );
+    }
+
+    // P0-E: run the same create/exit/reap burst repeatedly with fresh private
+    // spaces. A leak or a stale scheduler slot breaks the next wave's CSS for
+    // exactly this reason.
+    let completed = RING3_TASK_WAVES_COMPLETED.fetch_add(1, Ordering::AcqRel) + 1;
+    if completed < RING3_TASK_BURST_COUNT {
+        if !scheduler::reset_after_all_tasks_exit() {
+            unsafe {
+                crate::console::debug_write(
+                    b"SYSTEMES_KERNEL_FAIL: scheduler reset between exit bursts failed\r\n",
+                );
+            }
+            return Err(AddressSpaceError::Ring3TaskStateMismatch);
+        }
+        return unsafe { run_qemu_ring3_task_exit_test(allocator, kernel_root) };
+    }
+
+    unsafe {
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: repeated create/exit/reap bursts completed count=3\r\n",
+        );
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: multiple runnable Ring 3 tasks per CPU verified\r\n",
         );
         crate::console::debug_write(
             b"SYSTEMES_TEST: Ring 3 task exit matrix complete\r\n",
