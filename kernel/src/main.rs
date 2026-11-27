@@ -871,7 +871,11 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             }
             extern "C" fn smp_worker_b() {
                 let mut observed_migrations = 0usize;
-                for iteration in 0..100_000_000usize {
+                // This companion worker is deliberately short-lived: once it
+                // proves one post-migration resumption, it exits so the BSP can
+                // become idle and steal the integrity worker back. That creates
+                // repeated bidirectional CPU-to-CPU migrations in the 2-CPU test.
+                for iteration in 0..100_000usize {
                     let migrations = systemes_kernel::scheduler::current_task_migration_count();
                     if migrations > observed_migrations
                         && systemes_kernel::scheduler::record_migrated_task_execution()
@@ -879,9 +883,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         // Count this actual post-migration task-body resumption once.
                         observed_migrations = migrations;
                     }
-                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 2 { break; }
+                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 1 { break; }
                     SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    if iteration & 0x3ff == 0 { systemes_kernel::scheduler::yield_now(); }
+                    if iteration & 0xff == 0 { systemes_kernel::scheduler::yield_now(); }
                 }
             }
 
