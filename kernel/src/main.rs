@@ -285,7 +285,7 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     // SAFETY: This test runs in ring 0. Disable maskable interrupts while
     // taking a consistent CPU/migration/CR3 snapshot and touching the probe page.
     unsafe {
-        asm!("pushfq", "pop {}", "cli", out(reg) before_flags, options(nomem));
+        asm!("pushfq", "pop {}", "cli", out(reg) before_flags);
     }
     let before_cpu = systemes_kernel::scheduler::current_cpu_index();
     let before_migrations = systemes_kernel::scheduler::current_task_migration_count();
@@ -419,7 +419,7 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     }
     if before_flags & (1 << 9) != 0 {
         // SAFETY: Restore the task's original interrupt-enable state after all checks.
-        unsafe { asm!("sti", options(nomem, nostack)); }
+        unsafe { asm!("sti", options(nostack)); }
     }
     outcome
 }
