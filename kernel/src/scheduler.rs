@@ -1329,10 +1329,8 @@ pub fn yield_now() {
 /// This function is called by each CPU (BSP and APs) after initialization.
 /// It runs the scheduler on the current CPU until all tasks exit.
 pub fn run_cpu_loop() -> ! {
-    // Every CPU must opt into timer-driven preemption after its scheduler is
-    // initialized; otherwise an AP can strand a yielded task in its run queue.
-    enable_preemption();
-    // Enable interrupts and enter the idle loop. Each CPU handles its own timer.
+    // Enable interrupts and enter the idle loop.
+    // Each CPU will handle its own timer interrupts and schedule tasks.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
     loop {
         // SAFETY: The scheduler runs with interrupts enabled; HLT waits for the next IRQ.
