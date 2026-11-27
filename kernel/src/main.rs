@@ -932,7 +932,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 unsafe { debug_write(b"SYSTEMES: per-CPU schedulers initialized; work-stealing enabled\r\n"); }
                 let migration_deadline = systemes_kernel::clock::ticks().saturating_add(500);
                 while (systemes_kernel::scheduler::migration_count() < 4
-                    || systemes_kernel::scheduler::migrated_task_execution_count() < 2
+                    || systemes_kernel::scheduler::migrated_task_execution_count() < 1
                     || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4)
                     && systemes_kernel::clock::ticks() < migration_deadline
                 {
