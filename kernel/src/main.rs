@@ -274,9 +274,8 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
         return 2;
     }
 
-    let stack_canary = [0x5a5a_c3c3_9696_3c3cu64; 8];
+    let mut stack_canary = [0x5a5a_c3c3_9696_3c3cu64; 8];
     let stack_address = stack_canary.as_ptr() as usize;
-    core::hint::black_box(&stack_canary);
 
     let mut saved_context = [0usize; 4];
     let saved_context_ptr = saved_context.as_mut_ptr();
@@ -295,6 +294,8 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     let tlb_value = 0x5359_5354_454d_4553u64
         ^ ((before_cpu as u64) << 32)
         ^ before_migrations as u64;
+    stack_canary[0] = tlb_value;
+    core::hint::black_box(&mut stack_canary);
     QEMU_MIGRATION_PROBE_PAGE.0[slot].store(tlb_value, Ordering::Release);
 
     let register_status: u64;
@@ -382,7 +383,8 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     let cr3_after = unsafe { systemes_kernel::address_space::read_cr3() };
     let translation_after = QEMU_MIGRATION_PROBE_PAGE.0[slot].load(Ordering::Acquire);
     let stack_ok = stack_address == stack_canary.as_ptr() as usize
-        && stack_canary.iter().all(|value| *value == 0x5a5a_c3c3_9696_3c3cu64)
+        && stack_canary[0] == tlb_value
+        && stack_canary[1..].iter().all(|value| *value == 0x5a5a_c3c3_9696_3c3cu64)
         && saved_context[0] != 0
         && saved_context[1] != 0
         && saved_context[2] == saved_context_ptr as usize;
