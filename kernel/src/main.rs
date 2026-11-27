@@ -930,7 +930,9 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             {
                 systemes_kernel::scheduler::enable_preemption();
                 unsafe { debug_write(b"SYSTEMES: per-CPU schedulers initialized; work-stealing enabled\r\n"); }
-                let migration_deadline = systemes_kernel::clock::ticks().saturating_add(500);
+                // Give the two pinned Ring 3 workers enough scheduler quanta to
+                // finish their bounded no-steal proof before the migration deadline.
+                let migration_deadline = systemes_kernel::clock::ticks().saturating_add(1500);
                 while (systemes_kernel::scheduler::migration_count() < 4
                     || systemes_kernel::scheduler::migrated_task_execution_count() < 1
                     || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4
@@ -987,7 +989,21 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS)
                     || RING3_AFFINE_MIGRATIONS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != 0)
                 {
-                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute\r\n"); }
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute ring3-a=");
+                        let length = encode_decimal(RING3_AFFINE_COUNTS[0].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-b=");
+                        let length = encode_decimal(RING3_AFFINE_COUNTS[1].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-a-migrations=");
+                        let length = encode_decimal(RING3_AFFINE_MIGRATIONS[0].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-b-migrations=");
+                        let length = encode_decimal(RING3_AFFINE_MIGRATIONS[1].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b"\r\n");
+                    }
                     qemu_debug_exit(0x11);
                 }
                 unsafe {
