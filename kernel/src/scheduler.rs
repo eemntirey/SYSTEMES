@@ -1208,9 +1208,22 @@ pub fn wake_task(id: TaskId) -> bool {
 
 /// Enable timer-driven preemption after all task contexts are initialized on the current CPU.
 pub fn enable_preemption() {
-    let cpu_index = current_cpu_index();
+    let _ = enable_preemption_for_cpu(current_cpu_index());
+}
+
+/// Enable timer-driven preemption for an explicitly identified CPU scheduler.
+/// AP startup uses its published APIC-ID slot instead of relying on implicit
+/// current-CPU discovery while bringing the local scheduler online.
+pub fn enable_preemption_for_cpu(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
     let sched = unsafe { cpu_scheduler(cpu_index) };
+    if !unsafe { (*sched).initialized.load(Ordering::Acquire) } {
+        return false;
+    }
     unsafe { (*sched).preemptive_enabled.store(true, Ordering::Release); }
+    true
 }
 
 /// Number of timer interrupts that switched to a different runnable task on the current CPU.
