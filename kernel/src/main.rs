@@ -943,17 +943,17 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         let length = encode_decimal(failure_reason as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
                         debug_write(b" attempts=");
-                        let length = encode_decimal(probe_attempts as u64, &mut digits);
-                        debug_write(&digits[..length]);
+                        let length = encode_decimal(probe_attempts as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b" checks=");
-                        let length = encode_decimal(integrity_checks as u64, &mut digits);
-                        debug_write(&digits[..length]);
+                        let length = encode_decimal(integrity_checks as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b" max-migrations=");
-                        let length = encode_decimal(integrity_migrations as u64, &mut digits);
-                        debug_write(&digits[..length]);
+                        let length = encode_decimal(integrity_migrations as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b" failures=");
-                        let length = encode_decimal(integrity_failures as u64, &mut digits);
-                        debug_write(&digits[..length]);
+                        let length = encode_decimal(integrity_failures as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b"\r\n");
                     }
                     qemu_debug_exit(0x11);
