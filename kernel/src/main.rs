@@ -855,6 +855,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 core::sync::atomic::AtomicUsize::new(0),
                 core::sync::atomic::AtomicUsize::new(0),
             ];
+            const RING3_AFFINE_ITERATIONS: usize = 64;
 
             extern "C" fn smp_worker_a() {
                 loop {
@@ -884,8 +885,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             // complete so the BSP can become genuinely idle and participate in
             // repeated work-stealing. Their exact completion counts are asserted
             // below; this does not relax the no-migration requirement.
-            const RING3_AFFINE_ITERATIONS: usize = 64;
-
             extern "C" fn ring3_affine_worker_a() {
                 for _ in 0..RING3_AFFINE_ITERATIONS {
                     if systemes_kernel::scheduler::current_task_migration_count() != 0 {
