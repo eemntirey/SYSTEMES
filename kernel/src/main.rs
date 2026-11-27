@@ -296,10 +296,6 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
         ^ ((before_cpu as u64) << 32)
         ^ before_migrations as u64;
     QEMU_MIGRATION_PROBE_PAGE.0[slot].store(tlb_value, Ordering::Release);
-    if before_flags & (1 << 9) != 0 {
-        // SAFETY: Restore the task's prior interrupt-enable state before yielding.
-        unsafe { asm!("sti", options(nomem, nostack)); }
-    }
 
     let register_status: u64;
     // SAFETY: Vector 0x41 is the installed ring-0 scheduler-yield gate. The
@@ -377,11 +373,9 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
         );
     }
 
-    let after_flags: u64;
-    // SAFETY: Snapshot the resumed CPU atomically with interrupts disabled.
-    unsafe {
-        asm!("pushfq", "pop {}", "cli", out(reg) after_flags, options(nomem));
-    }
+    // IF remains disabled from the baseline snapshot through the software
+    // yield and all post-resume checks, so only this explicit int 0x41 can
+    // migrate the task during the canary window.
     let after_cpu = systemes_kernel::scheduler::current_cpu_index();
     let after_migrations = systemes_kernel::scheduler::current_task_migration_count();
     // SAFETY: The probe executes in ring 0.
@@ -421,8 +415,8 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
         QEMU_MIGRATION_MAX_PER_TASK.fetch_max(after_migrations, Ordering::AcqRel);
         outcome = 1;
     }
-    if after_flags & (1 << 9) != 0 {
-        // SAFETY: Restore the interrupt-enable state observed after the yield.
+    if before_flags & (1 << 9) != 0 {
+        // SAFETY: Restore the task's original interrupt-enable state after all checks.
         unsafe { asm!("sti", options(nomem, nostack)); }
     }
     outcome
