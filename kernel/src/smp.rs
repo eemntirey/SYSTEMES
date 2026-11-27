@@ -105,6 +105,13 @@ static mut SYSTEMES_AP_STACKS: [u64; MAX_CPUS_PER_APIC_ID] = [0; MAX_CPUS_PER_AP
 
 static AP_STATES: [AtomicU64; MAX_CPUS_PER_APIC_ID] =
     [const { AtomicU64::new(0) }; MAX_CPUS_PER_APIC_ID];
+
+/// True once the AP owning `cpu_index` has installed its IDT/scheduler and
+/// reached the online/parked state. Used by tests that target remote CPUs.
+pub fn is_cpu_online(cpu_index: usize) -> bool {
+    cpu_index < MAX_CPUS_PER_APIC_ID
+        && AP_STATES[cpu_index].load(Ordering::Acquire) >= SLOT_STATE_PARKED
+}
 static AP_PRIVATE_COUNTERS: [AtomicU64; MAX_CPUS_PER_APIC_ID] =
     [const { AtomicU64::new(0) }; MAX_CPUS_PER_APIC_ID];
 

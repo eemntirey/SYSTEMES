@@ -876,6 +876,24 @@ extern "C" fn task_bootstrap() -> ! {
 /// Initialize the boot task and up to seven cooperative kernel tasks on the given CPU.
 /// APs pass an empty entry list and later receive runnable tasks through work-stealing.
 pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'static str> {
+    initialize_cpu_with_affinity(cpu_index, entries, false)
+}
+
+/// Initialize the current CPU with every supplied kernel entry pinned to it.
+/// Affinity is set before the Runnable publication, so an idle AP can never
+/// steal a CPU-owned test/worker task during construction.
+pub fn initialize_cpu_pinned(
+    cpu_index: usize,
+    entries: &[TaskEntry],
+) -> Result<(), &'static str> {
+    initialize_cpu_with_affinity(cpu_index, entries, true)
+}
+
+fn initialize_cpu_with_affinity(
+    cpu_index: usize,
+    entries: &[TaskEntry],
+    pin_entries: bool,
+) -> Result<(), &'static str> {
     if cpu_index >= MAX_CPUS {
         return Err("invalid CPU index");
     }
@@ -938,6 +956,7 @@ pub fn initialize_cpu(cpu_index: usize, entries: &[TaskEntry]) -> Result<(), &'s
         for (offset, entry) in entries.iter().copied().enumerate() {
             let task = task_ptr(cpu_index, offset + 1);
             (*task).entry.store(entry as usize, Ordering::Relaxed);
+            (*task).cpu_affine.store(pin_entries, Ordering::Relaxed);
             let rsp = build_initial_context(cpu_index, task);
             (*task).saved_rsp.store(rsp, Ordering::Release);
             (*task).state.store(TaskState::Runnable as u8, Ordering::Release);

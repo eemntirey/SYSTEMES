@@ -63,6 +63,7 @@ pub enum AddressSpaceError {
     Ring3TaskStackMismatch,
     Ring3TaskResumedInUserMode,
     Ring3TaskObserverMissing,
+    TlbShootdownTimeout,
 }
 
 #[cfg(feature = "qemu-ring3-test")]
@@ -1506,6 +1507,48 @@ extern "C" fn ring3_task_observer() {
 ///
 /// Must run once during boot with the kernel page tables active, the CPU
 /// descriptor tables initialized, and no other CPU executing test tasks.
+/// P0-D proof: exercise the remote IPI/ACK path used by deferred reaping.
+///
+/// The Ring 3 scenario is CPU-affine to the BSP, so no process ever activates
+/// its CR3 on an AP. This check still sends a real shootdown IPI to every
+/// online AP and requires each one to reload CR3 and publish the generation
+/// ACK before the test declares the SMP protocol valid.
+#[cfg(feature = "qemu-ring3-task-test")]
+fn verify_remote_tlb_shootdown() -> Result<(), AddressSpaceError> {
+    let bsp = crate::scheduler::current_cpu_index();
+    let mut target_mask = 0u64;
+    for cpu_index in 0..crate::interrupts::MAX_CPUS {
+        if cpu_index != bsp && crate::smp::is_cpu_online(cpu_index) {
+            target_mask |= 1u64 << cpu_index;
+        }
+    }
+    if target_mask == 0 {
+        return Ok(());
+    }
+    let acks_before = tlb_shootdown_ack_count();
+    let stats = tlb_shootdown(0, target_mask);
+    let mut acknowledged = false;
+    for _ in 0..50_000_000u64 {
+        let status = tlb_shootdown_status(target_mask, stats.generation);
+        if status.targets != 0 && status.acks >= status.targets {
+            acknowledged = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !acknowledged
+        || tlb_shootdown_ack_count() < acks_before + stats.targets as u64
+    {
+        return Err(AddressSpaceError::TlbShootdownTimeout);
+    }
+    unsafe {
+        crate::console::debug_write(
+            b"SYSTEMES_TEST: remote TLB shootdown acknowledged by all APs\r\n",
+        );
+    }
+    Ok(())
+}
+
 #[cfg(feature = "qemu-ring3-task-test")]
 pub unsafe fn run_qemu_ring3_task_exit_test(
     allocator: &mut PhysicalFrameAllocator,
@@ -1513,7 +1556,8 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
 ) -> Result<(), AddressSpaceError> {
     use crate::file_descriptors::ProcessFileTable;
     use crate::scheduler::{
-        self, prepare_ring3_task, task_ring3_stack_tops, TaskExitReason, TaskId, TaskState,
+        self, prepare_ring3_task, task_ring3_stack_tops,
+        TaskExitReason, TaskId, TaskState,
 
     };
 
@@ -1646,7 +1690,9 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
     // Slot 0 stays boot, slot 1 is the kernel observer. Ring 3 slots are
     // reserved first, then published only after their initial kernel frame
     // exists. This exercises the same reservation path future processes use.
-    scheduler::initialize_cpu(
+    // The observer is a CPU-owned kernel task: publish it already pinned so an
+    // AP's idle steal can never race the affinity update.
+    scheduler::initialize_cpu_pinned(
         crate::interrupts::bootstrap_cpu_index(),
         &[ring3_task_observer],
     )
@@ -1853,6 +1899,10 @@ pub unsafe fn run_qemu_ring3_task_exit_test(
         }
         return unsafe { run_qemu_ring3_task_exit_test(allocator, kernel_root) };
     }
+
+    // P0-D: the non-CPU-affine part of the protocol (IPI, CR3 reload, ACK) is
+    // only observable when at least one AP is online.
+    verify_remote_tlb_shootdown()?;
 
     unsafe {
         crate::console::debug_write(
