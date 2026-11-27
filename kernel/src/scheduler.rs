@@ -116,6 +116,9 @@ struct Task {
     entry: AtomicUsize,
     wake_at: AtomicU64,
     migrations: AtomicUsize,
+    /// Switch count when this task was last migrated. A task must execute and
+    /// yield once on its destination CPU before another CPU may steal it again.
+    last_migration_switches: AtomicUsize,
     ring3_context_id: AtomicUsize,
     cpu_affine: AtomicBool,
     /// Ring 3 continuation, exit status, and fault record owned by this task.
@@ -140,6 +143,7 @@ impl Task {
             entry: AtomicUsize::new(0),
             wake_at: AtomicU64::new(0),
             migrations: AtomicUsize::new(0),
+            last_migration_switches: AtomicUsize::new(0),
             ring3_context_id: AtomicUsize::new(usize::MAX),
             cpu_affine: AtomicBool::new(false),
             ring3_state: crate::interrupts::Ring3CpuState::none(),
@@ -359,6 +363,7 @@ pub fn reserve_ring3_task(context: Ring3TaskContextRef) -> Result<Ring3TaskHandl
         (*task).wake_at.store(0, Ordering::Relaxed);
         (*task).switches.store(0, Ordering::Relaxed);
         (*task).migrations.store(0, Ordering::Relaxed);
+        (*task).last_migration_switches.store(0, Ordering::Relaxed);
         let count = (*sched).task_count.load(Ordering::Acquire);
         if index >= count { (*sched).task_count.store(index + 1, Ordering::Release); }
     }
@@ -515,6 +520,10 @@ pub fn cancel_ring3_reservation(handle: Ring3TaskHandle) -> Result<(), Scheduler
 
 /// Move one READY task from a donor CPU into an idle receiver's private task slot.
 /// Both run-queue locks are always acquired in ascending CPU-index order.
+fn migration_resteal_allowed(migrations: usize, switches: usize, last_migration_switches: usize) -> bool {
+    migrations == 0 || switches > last_migration_switches
+}
+
 fn steal_task(receiver: usize) -> bool {
     if receiver >= MAX_CPUS { return false; }
     let receiver_sched = unsafe { cpu_scheduler(receiver) };
@@ -558,6 +567,12 @@ fn steal_task(receiver: usize) -> bool {
                 if src_index == donor_current { continue; }
                 let src = task_ptr(donor, src_index);
                 if unsafe { (*src).state.load(Ordering::Acquire) } != TaskState::Runnable as u8 { continue; }
+                let src_migrations = unsafe { (*src).migrations.load(Ordering::Relaxed) };
+                let src_switches = unsafe { (*src).switches.load(Ordering::Relaxed) };
+                let last_migration_switches = unsafe { (*src).last_migration_switches.load(Ordering::Relaxed) };
+                if !migration_resteal_allowed(src_migrations, src_switches, last_migration_switches) {
+                    continue;
+                }
                 // Ring 3 contexts are CPU-affine until CR3/TSS/GS state is migratable.
                 if unsafe { (*src).cpu_affine.load(Ordering::Acquire) } { continue; }
                 let resource_id = unsafe { (*src).resource_id.load(Ordering::Acquire) };
@@ -584,7 +599,8 @@ fn steal_task(receiver: usize) -> bool {
                     (*dst).saved_rsp.store(src_rsp, Ordering::Relaxed);
                     (*dst).saved_cr3.store((*src).saved_cr3.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).ring3_state = (*src).ring3_state;
-                    (*dst).switches.store((*src).switches.load(Ordering::Relaxed), Ordering::Relaxed);
+                    (*dst).switches.store(src_switches, Ordering::Relaxed);
+                    (*dst).last_migration_switches.store(src_switches, Ordering::Relaxed);
                     (*dst).entry.store((*src).entry.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).wake_at.store((*src).wake_at.load(Ordering::Relaxed), Ordering::Relaxed);
                     (*dst).migrations.store((*src).migrations.load(Ordering::Relaxed).saturating_add(1), Ordering::Relaxed);
@@ -594,6 +610,7 @@ fn steal_task(receiver: usize) -> bool {
                     (*src).ring3_state = crate::interrupts::Ring3CpuState::none();
                     (*src).entry.store(0, Ordering::Relaxed);
                     (*src).wake_at.store(0, Ordering::Relaxed);
+                    (*src).last_migration_switches.store(0, Ordering::Relaxed);
                     (*src).state.store(TaskState::Empty as u8, Ordering::Release);
                     if dst_index >= receiver_count {
                         (*receiver_sched).task_count.store(dst_index + 1, Ordering::Release);
@@ -686,6 +703,7 @@ pub fn initialize_for_process_test() {
             (*task).entry.store(0, Ordering::Relaxed);
             (*task).wake_at.store(0, Ordering::Relaxed);
             (*task).migrations.store(0, Ordering::Relaxed);
+            (*task).last_migration_switches.store(0, Ordering::Relaxed);
             (*task).ring3_context_id.store(usize::MAX, Ordering::Relaxed);
             (*task).cpu_affine.store(false, Ordering::Relaxed);
             (*task).ring3_state = crate::interrupts::Ring3CpuState::none();
@@ -1790,6 +1808,20 @@ mod preemptive_qemu_test {
 #[cfg(feature = "qemu-preemptive-scheduler-test")]
 pub fn run_preemptive_qemu_test() -> bool {
     preemptive_qemu_test::run()
+}
+
+#[cfg(test)]
+mod migration_resteal_tests {
+    use super::migration_resteal_allowed;
+
+    #[test]
+    fn a_migrated_task_must_run_before_it_can_be_stolen_again() {
+        assert!(migration_resteal_allowed(0, 0, 0));
+        assert!(!migration_resteal_allowed(1, 4, 4));
+        assert!(migration_resteal_allowed(1, 5, 4));
+        assert!(!migration_resteal_allowed(3, 9, 9));
+        assert!(migration_resteal_allowed(3, 10, 9));
+    }
 }
 
 #[cfg(test)]
