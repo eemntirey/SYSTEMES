@@ -934,6 +934,8 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let integrity_checks = QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_failures = QEMU_MIGRATION_INTEGRITY_FAILURES.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_migrations = QEMU_MIGRATION_MAX_PER_TASK.load(core::sync::atomic::Ordering::Acquire);
+                let ap1_preemptions = systemes_kernel::scheduler::preemption_count_for_cpu(1);
+                let ap1_preemption_enabled = systemes_kernel::scheduler::preemption_enabled_for_cpu(1);
                 let mut failure_digits = [0u8; 20];
                 if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 {
                     let failure_reason = QEMU_MIGRATION_FAILURE_REASON.load(core::sync::atomic::Ordering::Acquire);
@@ -954,6 +956,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(b" failures=");
                         let length = encode_decimal(integrity_failures as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
+                        debug_write(b" ap1-preemptions=");
+                        let length = encode_decimal(ap1_preemptions as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(if ap1_preemption_enabled { b" ap1-enabled=1" } else { b" ap1-enabled=0" });
                         debug_write(b"\r\n");
                     }
                     qemu_debug_exit(0x11);
