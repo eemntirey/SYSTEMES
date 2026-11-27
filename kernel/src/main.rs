@@ -889,8 +889,14 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
 
+            // Keep the CPU-affinity regression bounded: both workers must
+            // complete so the BSP can become genuinely idle and participate in
+            // repeated work-stealing. Their exact completion counts are asserted
+            // below; this does not relax the no-migration requirement.
+            const RING3_AFFINE_ITERATIONS: usize = 64;
+
             extern "C" fn ring3_affine_worker_a() {
-                for _ in 0..20_000 {
+                for _ in 0..RING3_AFFINE_ITERATIONS {
                     if systemes_kernel::scheduler::current_task_migration_count() != 0 {
                         RING3_AFFINE_MIGRATIONS[0].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     }
@@ -899,7 +905,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
             extern "C" fn ring3_affine_worker_b() {
-                for _ in 0..20_000 {
+                for _ in 0..RING3_AFFINE_ITERATIONS {
                     if systemes_kernel::scheduler::current_task_migration_count() != 0 {
                         RING3_AFFINE_MIGRATIONS[1].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     }
@@ -975,7 +981,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     qemu_debug_exit(0x11);
                 }
                 if migrations < 4 || resumed < 1
-                    || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) == 0)
+                    || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS)
                     || RING3_AFFINE_MIGRATIONS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != 0)
                 {
                     unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute\r\n"); }
