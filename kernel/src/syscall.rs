@@ -34,6 +34,11 @@ pub const ERROR_NAME_TOO_LONG: u64 = (-36i64) as u64;
 pub const ERROR_NOT_DIRECTORY: u64 = (-20i64) as u64;
 pub const ERROR_IS_DIRECTORY: u64 = (-21i64) as u64;
 pub const ERROR_BUFFER_TOO_SMALL: u64 = (-75i64) as u64;
+pub const ERROR_FILE_EXISTS: u64 = (-17i64) as u64;
+pub const ERROR_NO_SPACE: u64 = (-28i64) as u64;
+pub const ERROR_READ_ONLY: u64 = (-30i64) as u64;
+pub const ERROR_NOT_EMPTY: u64 = (-39i64) as u64;
+pub const ERROR_UNSUPPORTED: u64 = (-95i64) as u64;
 const MAX_OPEN_PATH: usize = 255;
 const FILE_READ_CHUNK: usize = 512;
 static PROCESS_FILES: SpinLock<ProcessFileTable> = SpinLock::new(ProcessFileTable::new());
@@ -86,6 +91,11 @@ fn map_vfs_error(error: VfsError) -> u64 {
         VfsError::OutOfHandles => ERROR_TOO_MANY_FILES,
         VfsError::BadHandle => ERROR_BAD_FD,
         VfsError::Busy | VfsError::IoError => ERROR_IO,
+        VfsError::Exists => ERROR_FILE_EXISTS,
+        VfsError::NotEmpty => ERROR_NOT_EMPTY,
+        VfsError::NoSpace => ERROR_NO_SPACE,
+        VfsError::ReadOnly => ERROR_READ_ONLY,
+        VfsError::Unsupported => ERROR_UNSUPPORTED,
     }
 }
 
@@ -660,6 +670,11 @@ mod tests {
         assert_eq!(map_vfs_error(VfsError::BufferTooSmall), ERROR_BUFFER_TOO_SMALL);
         assert_eq!(map_vfs_error(VfsError::OutOfHandles), ERROR_TOO_MANY_FILES);
         assert_eq!(map_vfs_error(VfsError::BadHandle), ERROR_BAD_FD);
+        assert_eq!(map_vfs_error(VfsError::Exists), ERROR_FILE_EXISTS);
+        assert_eq!(map_vfs_error(VfsError::NotEmpty), ERROR_NOT_EMPTY);
+        assert_eq!(map_vfs_error(VfsError::NoSpace), ERROR_NO_SPACE);
+        assert_eq!(map_vfs_error(VfsError::ReadOnly), ERROR_READ_ONLY);
+        assert_eq!(map_vfs_error(VfsError::Unsupported), ERROR_UNSUPPORTED);
     }
 
     #[test]
