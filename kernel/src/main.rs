@@ -255,6 +255,12 @@ static QEMU_MIGRATION_INTEGRITY_FAILURES: core::sync::atomic::AtomicUsize =
 #[cfg(feature = "qemu-smp-scheduler-test")]
 static QEMU_MIGRATION_MAX_PER_TASK: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_PROBE_ATTEMPTS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_FAILURE_REASON: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
 /// Yield a kernel task and validate its complete GPR/stack/CR3/translation
 /// context if that yield resumes on a different CPU.
@@ -262,6 +268,7 @@ static QEMU_MIGRATION_MAX_PER_TASK: core::sync::atomic::AtomicUsize =
 fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     use core::sync::atomic::Ordering;
 
+    QEMU_MIGRATION_PROBE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
     if slot >= 512 {
         QEMU_MIGRATION_INTEGRITY_FAILURES.fetch_add(1, Ordering::AcqRel);
         return 2;
@@ -386,14 +393,27 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
         && saved_context[1] != 0
         && saved_context[2] == saved_context_ptr as usize;
     let migrated = after_migrations > before_migrations;
-    let integrity_ok = register_status == 0
-        && stack_ok
-        && cr3_before == cr3_after
-        && translation_after == tlb_value
-        && (after_cpu == before_cpu || migrated);
+    let failure_reason = if register_status == 1 {
+        1
+    } else if register_status == 2 {
+        2
+    } else if !stack_ok {
+        3
+    } else if cr3_before != cr3_after {
+        4
+    } else if translation_after != tlb_value {
+        5
+    } else if after_cpu != before_cpu && !migrated {
+        6
+    } else {
+        0
+    };
 
     let mut outcome = 0;
-    if !integrity_ok {
+    if failure_reason != 0 {
+        let _ = QEMU_MIGRATION_FAILURE_REASON.compare_exchange(
+            0, failure_reason, Ordering::AcqRel, Ordering::Acquire
+        );
         QEMU_MIGRATION_INTEGRITY_FAILURES.fetch_add(1, Ordering::AcqRel);
         outcome = 2;
     } else if migrated {
@@ -919,7 +939,26 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let integrity_failures = QEMU_MIGRATION_INTEGRITY_FAILURES.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_migrations = QEMU_MIGRATION_MAX_PER_TASK.load(core::sync::atomic::Ordering::Acquire);
                 if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 {
-                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: migrated task lost register, stack, CR3 or translation state\r\n"); }
+                    let failure_reason = QEMU_MIGRATION_FAILURE_REASON.load(core::sync::atomic::Ordering::Acquire);
+                    let probe_attempts = QEMU_MIGRATION_PROBE_ATTEMPTS.load(core::sync::atomic::Ordering::Acquire);
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: migration integrity reason=");
+                        let length = encode_decimal(failure_reason as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" attempts=");
+                        let length = encode_decimal(probe_attempts as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" checks=");
+                        let length = encode_decimal(integrity_checks as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" max-migrations=");
+                        let length = encode_decimal(integrity_migrations as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b" failures=");
+                        let length = encode_decimal(integrity_failures as u64, &mut digits);
+                        debug_write(&digits[..length]);
+                        debug_write(b"\r\n");
+                    }
                     qemu_debug_exit(0x11);
                 }
                 if migrations < 4 || resumed < 2
