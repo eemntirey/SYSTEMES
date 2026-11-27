@@ -61,7 +61,7 @@ Les blocages les plus importants pour un usage quotidien sont :
 | B09 | SMP : démarrage des AP | Trampoline INIT/SIPI ; CI QEMU/OVMF `-smp 4` vérifie les 3 AP, compteurs privés, compteur partagé et SpinLock cross-core | `IMPLEMENTED` | Preuve QEMU, pas validation sur matériel physique ; ne pas confondre bring-up avec migration des tâches utilisateur |
 | B10 | Tables CPU-locales et timers APIC | GDT/IDT/TSS et configuration SYSCALL par CPU ; timers Local APIC AP ; jobs QEMU vérifient les schedulers per-CPU et la migration sur 2/4 CPU | `IMPLEMENTED` | Périmètre QEMU validé ; compatibilité matérielle réelle et stress prolongé restent à prouver |
 | B11 | Ordonnanceur multicœur | Runqueues CPU et chemins de migration présents | `PARTIAL` | Migration fiable, absence de double exécution et stress soutenu à prouver |
-| B12 | Shootdown TLB distant | Code d'IPI/ACK et réclamation différée documentés après PR #101 | `PARTIAL` | PR #103 cible une lacune de preuve : AP réellement en ligne dans le scénario de shootdown ; ne pas compter cette PR ouverte |
+| B12 | Shootdown TLB distant | PR #103 fusionnée ; CI QEMU vérifie les AP en ligne et le marqueur IPI/ACK distant sur 2/4 CPU | `PARTIAL` | Les tâches Ring 3 restent CPU-affines au BSP : aucune traduction d'un espace utilisateur effectivement actif sur un AP n'est encore invalidée dans un test ; étendre la preuve avant de déclarer le shootdown multi-espace complet |
 | B13 | Horloge monotone / timer | Timer Local APIC calibré et tests QEMU | `IMPLEMENTED` | Horloge murale/RTC et gestion énergie restent distinctes |
 | B14 | Gestion énergie / veille / reprise | Aucun cycle complet ACPI S-state ou reprise système validé identifié | `MISSING` | ACPI power management, suspend/resume, arrêt propre |
 
