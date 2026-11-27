@@ -4,7 +4,7 @@
 
 - Dépôt : `eemntirey/SYSTEMES`
 - Branche de référence : `main`
-- Snapshot inspecté : commit de base `56b5f2147d6c82c4be3ed75a501cc0b1f43f2509` (25 novembre 2026).
+- Snapshot inspecté : `main` au commit `0eea6f4945581c9a47c4b9add70bb8d17988260b` (27 novembre 2026).
 - Le code fusionné dans `main` prime sur les journaux historiques, les branches et les PR ouvertes.
 - Une capacité n'est déclarée opérationnelle qu'avec code dans `main`, compilation, tests et preuve QEMU/matériel attachée au SHA concerné.
 
@@ -24,17 +24,17 @@
 - ELF de test intégré en mémoire, pas de chargement général depuis le stockage.
 - Pilotes PC essentiels, réseau, interface graphique et écosystème applicatif natif manquants.
 - Pas de validation sur PC physique ni de test d'endurance 72 h documenté.
-- PR #83 (écriture/Cache/tmpfs/devfs) et PR #103 (preuve shootdown distant AP) ne sont pas des livraisons de `main` tant qu'elles restent ouvertes.
+- PR #83 (écriture/Cache/tmpfs/devfs) reste ouverte et ne constitue pas une livraison de `main`.
+- PR #103 est fusionnée sous `0eea6f4` ; CI #575 : 14/14 jobs verts, preuve QEMU des AP en ligne et des ACK distants sur 2/4 CPU. Limite conservée : les tâches Ring 3 restent CPU-affines au BSP.
 
 ## Prochaines priorités
 
-1. Fermer la preuve SMP/TLB sur le SHA final de la PR #103 ; vérifier AP réellement en ligne, ACK distant par AP et compteurs de travail.
-2. Prouver la migration des tâches noyau et préserver l'affinité Ring 3 tant que son contrat n'est pas migrable.
-3. Compléter le modèle processus/threads et l'ABI utilisateur.
-4. Livrer VFS inscriptible, FAT32 RW, flush/fsync et test persistance QEMU après reboot.
-5. Ajouter pilotes d'entrée/stockage, réseau, puis environnement graphique.
-6. Construire libc/runtime, gestionnaire de paquets, comptes et outils système.
-7. Produire une distribution installable et valider du matériel réel.
+1. WP1.2 : renforcer la preuve de migration répétée d'une tâche noyau en vérifiant registres, pile et traductions mémoire.
+2. Compléter le modèle processus/threads et l'ABI utilisateur.
+3. Livrer VFS inscriptible, FAT32 RW, flush/fsync et test persistance QEMU après reboot.
+4. Ajouter pilotes d'entrée/stockage, réseau, puis environnement graphique.
+5. Construire libc/runtime, gestionnaire de paquets, comptes et outils système.
+6. Produire une distribution installable et valider du matériel réel.
 
 Roadmap détaillée : `docs/PLAN_PROCHAINE_ETAPE.md`.
 Matrice comparative : `SYSTEMES_WINDOWS_FUNCTIONAL_GAP_AUDIT.md`.

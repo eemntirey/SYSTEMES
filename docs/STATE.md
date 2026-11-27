@@ -262,3 +262,22 @@ La PR [#101](https://github.com/eemntirey/SYSTEMES/pull/101) intègre la fin du 
 **Validation CI :** 14/14 check-runs obligatoires `success` sur `f583a91c`, dont `Ring 3 schedulable task termination`, `QEMU SMP concurrency matrix (1, 2 and 4 CPUs)`, `Build UEFI loader and boot kernel in QEMU/OVMF` et les deux `Production boot` ; `Kilo Code Review` reste non bloquant.
 
 **Validation locale :** 158/158 tests hôte, `cargo check --all-features --target x86_64-unknown-none` réussi, build release `x86_64-unknown-none` sans feature de test réussi, QEMU/OVMF `status=33` sur 1/2/4 CPU avec tous les marqueurs C/D/E et `RING3_TASK_TEST_OK`, et boot complet 1/2/4 CPU sans `SYSTEMES_KERNEL_FAIL`. Aucune validation sur matériel physique n'est revendiquée.
+
+## 17. WP1.1 — preuve SMP et shootdown TLB distant
+
+**Date :** 2026-11-27  
+**PR :** [#103](https://github.com/eemntirey/SYSTEMES/pull/103), fusionnée en squash sous le commit `0eea6f4945581c9a47c4b9add70bb8d17988260b`.  
+**CI :** run [#45634843926](https://github.com/eemntirey/SYSTEMES/actions/runs/45634843926), SHA de tête PR `bb5aca956a83703180448c685023e68d76559947`, **14/14 jobs success**.
+
+Le scénario `qemu-ring3-task-test` réserve maintenant la page trampoline SMP avant la construction des tables de pages. Il initialise l'observateur BSP avec affinité CPU avant publication, puis envoie un shootdown IPI aux AP détectés en ligne. Chaque AP cible doit recharger CR3 et publier l'ACK de génération ; le scénario échoue si le marqueur d'ACK distant manque sur une configuration multi-CPU.
+
+**Preuves observées dans les logs CI :**
+- `-smp 1` : succès sans marqueur d'ACK distant attendu.
+- `-smp 2` : `SYSTEMES: AP schedulers online count=1`, puis `SYSTEMES_TEST: remote TLB shootdown acknowledged by all APs`.
+- `-smp 4` : `SYSTEMES: AP schedulers online count=3`, puis le même marqueur d'ACK distant.
+- Le job de matrice de concurrence valide aussi le démarrage des AP et les tests SMP 1/2/4 CPU.
+
+**Limites :** les tâches Ring 3 restent CPU-affines au BSP. Le test démontre l'IPI, le rechargement CR3 et l'ACK sur les AP en ligne, mais ne démontre pas encore qu'un AP détient une traduction d'un espace utilisateur actif à invalider. Aucun test sur matériel physique n'est revendiqué.
+
+**Statut WP1.1 :** preuve du travail AP et du protocole distant IPI/ACK acquise sous QEMU/OVMF.  
+**Suite :** WP1.2 doit renforcer la preuve de migration répétée d'une tâche noyau en vérifiant explicitement registres, pile et comportement des traductions mémoire après migration.
