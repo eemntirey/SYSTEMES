@@ -969,7 +969,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(b" global-migrations=");
                         let length = encode_decimal(migrations as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
-                        debug_write(b" resumed=");
+                        debug_write(b" companion-resumed=");
                         let length = encode_decimal(resumed as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
                         debug_write(b" ap1-preemptions=");
@@ -997,7 +997,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
                     debug_write(b"SYSTEMES_TEST: migrated task resumed after repeated migrations count=");
-                    let length = encode_decimal(resumed as u64, &mut digits);
+                    let length = encode_decimal(integrity_checks as u64, &mut digits);
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
                     debug_write(b"SYSTEMES_TEST: task migration integrity verified migrations=");
