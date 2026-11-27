@@ -47,3 +47,20 @@ kernel restores its address space and releases the exiting process's user
 pages and page-table frames before continuing to idle. `SYS_YIELD` is
 cooperative and does not promise a switch when there are no other runnable
 kernel tasks. `SYS_UPTIME` is monotonic modulo its unsigned 64-bit wrap-around. `SYS_EXIT` closes all descriptors owned by the exiting process before resuming the kernel continuation.
+
+
+## Périmètre non implémenté — ABI v1
+
+L'ABI actuellement livrée est strictement limitée aux numéros **0 à 8** du tableau ci-dessus. Les appels suivants ne sont pas implémentés et aucun numéro ne leur est attribué par ce document :
+
+- Processus : `fork`, `exec`, `waitpid`.
+- Mémoire : `mmap`, `munmap`, `brk`.
+- IPC/descripteurs : `pipe`, `dup`, `dup2`, `ioctl`.
+- Temps : `clock_gettime`, `nanosleep` en ABI utilisateur.
+- Répertoires : `chdir`, `getcwd`.
+
+Ne pas utiliser ces noms comme preuve d'un dispatch noyau existant. Toute extension doit fixer les numéros, les registres, les structures, les erreurs et la version de compatibilité avant d'être exposée aux programmes utilisateur.
+
+### Descripteurs et isolation par processus
+
+Le dispatcher actuellement compilé doit être la référence pour l'état des descripteurs. Tant que les chemins `SYS_OPEN`, `SYS_READ`, `SYS_CLOSE` et `SYS_READDIR` n'utilisent pas explicitement la table appartenant au processus courant, ne pas annoncer une isolation complète des descripteurs entre processus sur la seule base du modèle `ProcessFileTable`. La table réellement consultée par chaque syscall doit être vérifiée dans `kernel/src/syscall.rs` et couverte par un test concurrent multi-processus.
