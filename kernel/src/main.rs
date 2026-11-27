@@ -933,7 +933,10 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let migration_deadline = systemes_kernel::clock::ticks().saturating_add(500);
                 while (systemes_kernel::scheduler::migration_count() < 4
                     || systemes_kernel::scheduler::migrated_task_execution_count() < 1
-                    || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4)
+                    || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4
+                    || RING3_AFFINE_COUNTS.iter().any(|count| {
+                        count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS
+                    }))
                     && systemes_kernel::clock::ticks() < migration_deadline
                 {
                     // SAFETY: Local APIC timer is active and wakes this boot task.
