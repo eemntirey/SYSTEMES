@@ -941,7 +941,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let ap1_preemptions = systemes_kernel::scheduler::preemption_count_for_cpu(1);
                 let ap1_preemption_enabled = systemes_kernel::scheduler::preemption_enabled_for_cpu(1);
                 let mut failure_digits = [0u8; 20];
-                if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 {
+                if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 || migrations > 64 {
                     let failure_reason = QEMU_MIGRATION_FAILURE_REASON.load(core::sync::atomic::Ordering::Acquire);
                     let probe_attempts = QEMU_MIGRATION_PROBE_ATTEMPTS.load(core::sync::atomic::Ordering::Acquire);
                     unsafe {
