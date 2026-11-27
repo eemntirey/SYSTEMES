@@ -85,7 +85,7 @@ Les blocages les plus importants pour un usage quotidien sont :
 |---|---|---|---|---|
 | P01 | Exécution en Ring 3 | Transition CPL3, espace utilisateur et ELF de test intégré | `IMPLEMENTED` | Chargement d'exécutables depuis disque manquant |
 | P02 | Création et terminaison de tâches Ring 3 | Propriétaire Process, scheduler, terminaison non-retournante et reaper livrés ; PR #101 fusionnée | `IMPLEMENTED` | Ne signifie pas API processus POSIX complète |
-| P03 | Nettoyage et réclamation mémoire SMP | Pins, masque CPU, reaper différé et protocole TLB documentés | `PARTIAL` | La preuve distante AP de PR #103 doit être fusionnée puis validée sur son SHA |
+| P03 | Nettoyage et réclamation mémoire SMP | Pins, masque CPU, reaper différé et protocole TLB documentés ; PR #103 fusionnée et CI 14/14 verte | `PARTIAL` | L'IPI/ACK distant est prouvé, mais l'invalidation d'une traduction Ring 3 active détenue par un AP reste à démontrer (WP1.1b) |
 | P04 | Processus multiples persistants | Plusieurs tâches Ring 3 de test, tables de fichiers par processus | `PARTIAL` | Gestion de sessions, lancement depuis disque, parent/enfant et cycle de vie utilisateur à finaliser |
 | P05 | `fork` | Aucun syscall `fork` dans le dispatcher 0–8 | `MISSING` | Implémenter sémantique de duplication d'espace et héritage des handles |
 | P06 | `exec` | ELF intégré ; pas de syscall exec ni chargement général depuis VFS | `PARTIAL` | Chargeur ELF depuis fichier, remplacement atomique de l'image |
@@ -182,12 +182,12 @@ Les blocages les plus importants pour un usage quotidien sont :
 
 | PR | Sujet | Traitement dans cet audit |
 |---|---|---|
-| [#103](https://github.com/eemntirey/SYSTEMES/pull/103) | Preuve du shootdown TLB distant avec AP réellement en ligne | En attente. Le contenu de la PR décrit des preuves QEMU 1/2/4 CPU, mais ces résultats ne sont pas attribuables à `main` avant fusion et CI verte sur le SHA final. |
+| [#103](https://github.com/eemntirey/SYSTEMES/pull/103) | Preuve du shootdown TLB distant avec AP réellement en ligne | **Fusionnée** sous `0eea6f4945581c9a47c4b9add70bb8d17988260b` ; CI run `45634843926`, 14/14 contrôles verts. La preuve AP et IPI/ACK distant est acquise sous QEMU 2/4 CPU. Limite restante : pas encore d'invalidation démontrée d'une traduction Ring 3 réellement active sur un AP (WP1.1b). |
 | [#83](https://github.com/eemntirey/SYSTEMES/pull/83) | Fondations écriture virtio, cache, tmpfs et devfs | En attente. La PR précise elle-même que le VFS reste RO, que FAT32 RW et flush durable manquent, et que la persistance après reboot n'est pas démontrée. |
 
 La PR #101 est documentée comme fusionnée dans `docs/STATE.md`, avec 14 contrôles obligatoires verts sur son SHA validé. Elle constitue la preuve de référence pour le cycle de vie Ring 3 et la réclamation différée, sans valider automatiquement les fonctionnalités ultérieures.
 
-## 5. Incohérences documentaires à corriger avant WP1.1
+## 5. Incohérences documentaires à corriger avant les prochains WP
 
 | Document | Constat | Correction requise |
 |---|---|---|
@@ -204,10 +204,10 @@ L'ordre respecte les dépendances techniques. Pas de bureau graphique avant stoc
 | Ordre | Work package | Résultat vérifiable attendu | Dépend de |
 |---|---|---|---|
 | 0 | Audit + réconciliation documentaire | Matrice et documents alignés sur `main` | — |
-| 1.1 | Preuve SMP / TLB distant | AP en ligne prouvés, compteur de travail par AP, ACK shootdown 2/4 CPU | PR #103 |
+| 1.1 | Preuve SMP / TLB distant | AP en ligne, travail réel par AP et ACK IPI distant prouvés sous QEMU 2/4 CPU | PR #103 fusionnée |
 | 1.2 | Migration de tâches | Migration N fois, contexte/stack/CR3/TLB intègres, absence de double exécution | 1.1 |
-| 1.3 | Processus et threads | clone/threads, création, attente, terminaison et reaping | 1.1–1.2 |
-| 1.4 | ABI utilisateur | syscalls documentées et testées, errno et compatibilité versionnée | 1.3 |
+| 1.3a | Threads noyau et Ring 3 | Modèle Thread, espace partagé et pile privée par thread | 1.1–1.2 |
+| 1.3b | Cycle de vie et isolation | join/wait, zombies, reparentage, fautes #PF/#GP/#UD isolées, libération complète | 1.3a |\n| 1.1b | Shootdown TLB Ring 3 sur AP | Invalidation effective d'une traduction d'un espace Ring 3 actif sur AP | 1.3b et WP1.1 |\n| 1.4 | ABI utilisateur | syscalls documentées et testées, errno et compatibilité versionnée | 1.3b + 1.1b |
 | 2.1 | VFS inscriptible | create/write/mkdir/unlink/rename/truncate/stat via VFS | 1.4 |
 | 2.2 | FAT32 RW | création, écriture, reboot et relecture | 2.1 |
 | 2.3 | Durabilité | flush/fsync, barrières et test d'arrêt brutal | 2.2 |
