@@ -956,6 +956,12 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(b" failures=");
                         let length = encode_decimal(integrity_failures as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
+                        debug_write(b" global-migrations=");
+                        let length = encode_decimal(migrations as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" resumed=");
+                        let length = encode_decimal(resumed as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b" ap1-preemptions=");
                         let length = encode_decimal(ap1_preemptions as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
