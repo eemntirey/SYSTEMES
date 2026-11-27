@@ -271,7 +271,7 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
     let stack_address = stack_canary.as_ptr() as usize;
     core::hint::black_box(&stack_canary);
 
-    let mut saved_context = [0usize; 3];
+    let mut saved_context = [0usize; 4];
     let saved_context_ptr = saved_context.as_mut_ptr();
     core::hint::black_box(&mut saved_context);
 
@@ -302,8 +302,8 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
             "mov qword ptr [r15], rsp",
             "mov qword ptr [r15 + 8], rbp",
             "mov qword ptr [r15 + 16], r15",
+            "mov qword ptr [r15 + 24], rbx",
             "mov rax, 0x10203040",
-            "mov rbx, 0x20304050",
             "mov rcx, 0x30405060",
             "mov rdx, 0x40506070",
             "mov rsi, 0x50607011",
@@ -322,9 +322,9 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
             "jne 3f",
             "cmp r15, qword ptr [r15 + 16]",
             "jne 3f",
-            "cmp rax, 0x10203040",
+            "cmp rbx, qword ptr [r15 + 24]",
             "jne 3f",
-            "cmp rbx, 0x20304050",
+            "cmp rax, 0x10203040",
             "jne 3f",
             "cmp rcx, 0x30405060",
             "jne 3f",
@@ -356,7 +356,6 @@ fn qemu_migration_integrity_probe(slot: usize) -> u8 {
             "4:",
             in("r15") saved_context_ptr,
             lateout("rax") register_status,
-            lateout("rbx") _,
             lateout("rcx") _,
             lateout("rdx") _,
             lateout("rsi") _,
