@@ -870,22 +870,13 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
             extern "C" fn smp_worker_b() {
-                let mut observed_migrations = 0usize;
-                // This companion worker is deliberately short-lived: once it
-                // proves one post-migration resumption, it exits so the BSP can
-                // become idle and steal the integrity worker back. That creates
-                // repeated bidirectional CPU-to-CPU migrations in the 2-CPU test.
-                for iteration in 0..100_000usize {
-                    let migrations = systemes_kernel::scheduler::current_task_migration_count();
-                    if migrations > observed_migrations
-                        && systemes_kernel::scheduler::record_migrated_task_execution()
-                    {
-                        // Count this actual post-migration task-body resumption once.
-                        observed_migrations = migrations;
-                    }
-                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 1 { break; }
+                // A bounded companion creates temporary BSP load, then exits
+                // deterministically. The integrity worker itself is the source
+                // of repeated-resumption evidence; this helper must not become
+                // an additional migration prerequisite.
+                for iteration in 0..RING3_AFFINE_ITERATIONS {
                     SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    if iteration & 0xff == 0 { systemes_kernel::scheduler::yield_now(); }
+                    if iteration & 0x0f == 0 { systemes_kernel::scheduler::yield_now(); }
                 }
             }
 
@@ -934,7 +925,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 // finish their bounded no-steal proof before the migration deadline.
                 let migration_deadline = systemes_kernel::clock::ticks().saturating_add(1500);
                 while (systemes_kernel::scheduler::migration_count() < 4
-                    || systemes_kernel::scheduler::migrated_task_execution_count() < 1
                     || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4
                     || RING3_AFFINE_COUNTS.iter().any(|count| {
                         count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS
@@ -945,7 +935,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     unsafe { asm!("hlt", options(nomem, nostack)); }
                 }
                 let migrations = systemes_kernel::scheduler::migration_count();
-                let resumed = systemes_kernel::scheduler::migrated_task_execution_count();
                 let integrity_checks = QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_failures = QEMU_MIGRATION_INTEGRITY_FAILURES.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_migrations = QEMU_MIGRATION_MAX_PER_TASK.load(core::sync::atomic::Ordering::Acquire);
@@ -974,9 +963,6 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                         debug_write(b" global-migrations=");
                         let length = encode_decimal(migrations as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
-                        debug_write(b" companion-resumed=");
-                        let length = encode_decimal(resumed as u64, &mut failure_digits);
-                        debug_write(&failure_digits[..length]);
                         debug_write(b" ap1-preemptions=");
                         let length = encode_decimal(ap1_preemptions as u64, &mut failure_digits);
                         debug_write(&failure_digits[..length]);
@@ -985,7 +971,8 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     }
                     qemu_debug_exit(0x11);
                 }
-                if migrations < 4 || resumed < 1
+                if migrations < 4
+                    || SMP_TASK_B_COUNT.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS
                     || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS)
                     || RING3_AFFINE_MIGRATIONS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != 0)
                 {
