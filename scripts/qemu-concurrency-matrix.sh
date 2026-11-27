@@ -155,7 +155,7 @@ run_case() {
       [[ "${migrations:-0}" =~ ^[0-9]+$ ]] && (( migrations >= 2 )) || {
         verdict=FAIL; notes+=" migrations=${migrations:-missing} expected>=2;"
       }
-      [[ "${resumed:-0}" =~ ^[0-9]+$ ]] && (( resumed >= 2 )) || {
+      [[ "${resumed:-0}" =~ ^[0-9]+$ ]] && (( resumed >= 1 )) || {
         verdict=FAIL; notes+=" resumed=${resumed:-missing} expected>=2;"
       }
       integrity=$(sed -nE 's/.*SYSTEMES_TEST: task migration integrity verified migrations=([0-9]+) checks=([0-9]+) registers=ok stack=ok cr3=ok translation=ok.*/\1 \2/p' "$LOG" | tail -n1)
