@@ -934,13 +934,14 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 let integrity_checks = QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_failures = QEMU_MIGRATION_INTEGRITY_FAILURES.load(core::sync::atomic::Ordering::Acquire);
                 let integrity_migrations = QEMU_MIGRATION_MAX_PER_TASK.load(core::sync::atomic::Ordering::Acquire);
+                let mut failure_digits = [0u8; 20];
                 if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 {
                     let failure_reason = QEMU_MIGRATION_FAILURE_REASON.load(core::sync::atomic::Ordering::Acquire);
                     let probe_attempts = QEMU_MIGRATION_PROBE_ATTEMPTS.load(core::sync::atomic::Ordering::Acquire);
                     unsafe {
                         debug_write(b"SYSTEMES_KERNEL_FAIL: migration integrity reason=");
-                        let length = encode_decimal(failure_reason as u64, &mut digits);
-                        debug_write(&digits[..length]);
+                        let length = encode_decimal(failure_reason as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
                         debug_write(b" attempts=");
                         let length = encode_decimal(probe_attempts as u64, &mut digits);
                         debug_write(&digits[..length]);
