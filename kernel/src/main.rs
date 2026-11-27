@@ -237,6 +237,193 @@ fn report_root_filesystem(allocator: &mut PhysicalFrameAllocator) {
     }
 }
 
+#[cfg(feature = "qemu-smp-scheduler-test")]
+#[repr(align(4096))]
+struct QemuMigrationProbePage([core::sync::atomic::AtomicU64; 512]);
+
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_PROBE_PAGE: QemuMigrationProbePage = QemuMigrationProbePage([
+    const { core::sync::atomic::AtomicU64::new(0) }; 512
+]);
+
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_INTEGRITY_CHECKS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_INTEGRITY_FAILURES: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_MAX_PER_TASK: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_PROBE_ATTEMPTS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "qemu-smp-scheduler-test")]
+static QEMU_MIGRATION_FAILURE_REASON: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Yield a kernel task and validate its complete GPR/stack/CR3/translation
+/// context if that yield resumes on a different CPU.
+#[cfg(feature = "qemu-smp-scheduler-test")]
+fn qemu_migration_integrity_probe(slot: usize) -> u8 {
+    use core::sync::atomic::Ordering;
+
+    QEMU_MIGRATION_PROBE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    if slot >= 512 {
+        QEMU_MIGRATION_INTEGRITY_FAILURES.fetch_add(1, Ordering::AcqRel);
+        return 2;
+    }
+
+    let mut stack_canary = [0x5a5a_c3c3_9696_3c3cu64; 8];
+    let stack_address = stack_canary.as_ptr() as usize;
+
+    let mut saved_context = [0usize; 4];
+    let saved_context_ptr = saved_context.as_mut_ptr();
+    core::hint::black_box(&mut saved_context);
+
+    let before_flags: u64;
+    // SAFETY: This test runs in ring 0. Disable maskable interrupts while
+    // taking a consistent CPU/migration/CR3 snapshot and touching the probe page.
+    unsafe {
+        asm!("pushfq", "pop {}", "cli", out(reg) before_flags);
+    }
+    let before_cpu = systemes_kernel::scheduler::current_cpu_index();
+    let before_migrations = systemes_kernel::scheduler::current_task_migration_count();
+    // SAFETY: The probe executes in ring 0.
+    let cr3_before = unsafe { systemes_kernel::address_space::read_cr3() };
+    let tlb_value = 0x5359_5354_454d_4553u64
+        ^ ((before_cpu as u64) << 32)
+        ^ before_migrations as u64;
+    stack_canary[0] = tlb_value;
+    core::hint::black_box(&mut stack_canary);
+    QEMU_MIGRATION_PROBE_PAGE.0[slot].store(tlb_value, Ordering::Release);
+
+    let register_status: u64;
+    // SAFETY: Vector 0x41 is the installed ring-0 scheduler-yield gate. The
+    // interrupt path saves/restores the interrupted register frame before iretq.
+    unsafe {
+        asm!(
+            "mov qword ptr [r15], rsp",
+            "mov qword ptr [r15 + 8], rbp",
+            "mov qword ptr [r15 + 16], r15",
+            "mov qword ptr [r15 + 24], rbx",
+            "mov rax, 0x10203040",
+            "mov rcx, 0x30405060",
+            "mov rdx, 0x40506070",
+            "mov rsi, 0x50607011",
+            "mov rdi, 0x60701122",
+            "mov r8,  0x70112233",
+            "mov r9,  0x11223344",
+            "mov r10, 0x22334455",
+            "mov r11, 0x33445566",
+            "mov r12, 0x44556677",
+            "mov r13, 0x55667701",
+            "mov r14, 0x66770112",
+            "int 0x41",
+            "cmp rsp, qword ptr [r15]",
+            "jne 2f",
+            "cmp rbp, qword ptr [r15 + 8]",
+            "jne 3f",
+            "cmp r15, qword ptr [r15 + 16]",
+            "jne 3f",
+            "cmp rbx, qword ptr [r15 + 24]",
+            "jne 3f",
+            "cmp rax, 0x10203040",
+            "jne 3f",
+            "cmp rcx, 0x30405060",
+            "jne 3f",
+            "cmp rdx, 0x40506070",
+            "jne 3f",
+            "cmp rsi, 0x50607011",
+            "jne 3f",
+            "cmp rdi, 0x60701122",
+            "jne 3f",
+            "cmp r8, 0x70112233",
+            "jne 3f",
+            "cmp r9, 0x11223344",
+            "jne 3f",
+            "cmp r10, 0x22334455",
+            "jne 3f",
+            "cmp r11, 0x33445566",
+            "jne 3f",
+            "cmp r12, 0x44556677",
+            "jne 3f",
+            "cmp r13, 0x55667701",
+            "jne 3f",
+            "cmp r14, 0x66770112",
+            "jne 3f",
+            "xor eax, eax",
+            "jmp 4f",
+            "2: mov eax, 1",
+            "jmp 4f",
+            "3: mov eax, 2",
+            "4:",
+            in("r15") saved_context_ptr,
+            lateout("rax") register_status,
+            lateout("rcx") _,
+            lateout("rdx") _,
+            lateout("rsi") _,
+            lateout("rdi") _,
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
+            lateout("r11") _,
+            lateout("r12") _,
+            lateout("r13") _,
+            lateout("r14") _,
+        );
+    }
+
+    // IF remains disabled from the baseline snapshot through the software
+    // yield and all post-resume checks, so only this explicit int 0x41 can
+    // migrate the task during the canary window.
+    let after_cpu = systemes_kernel::scheduler::current_cpu_index();
+    let after_migrations = systemes_kernel::scheduler::current_task_migration_count();
+    // SAFETY: The probe executes in ring 0.
+    let cr3_after = unsafe { systemes_kernel::address_space::read_cr3() };
+    let translation_after = QEMU_MIGRATION_PROBE_PAGE.0[slot].load(Ordering::Acquire);
+    let stack_ok = stack_address == stack_canary.as_ptr() as usize
+        && stack_canary[0] == tlb_value
+        && stack_canary[1..].iter().all(|value| *value == 0x5a5a_c3c3_9696_3c3cu64)
+        && saved_context[0] != 0
+        && saved_context[1] != 0
+        && saved_context[2] == saved_context_ptr as usize;
+    let migrated = after_migrations > before_migrations;
+    let failure_reason = if register_status == 1 {
+        1
+    } else if register_status == 2 {
+        2
+    } else if !stack_ok {
+        3
+    } else if cr3_before != cr3_after {
+        4
+    } else if translation_after != tlb_value {
+        5
+    } else if after_cpu != before_cpu && !migrated {
+        6
+    } else {
+        0
+    };
+
+    let mut outcome = 0;
+    if failure_reason != 0 {
+        let _ = QEMU_MIGRATION_FAILURE_REASON.compare_exchange(
+            0, failure_reason, Ordering::AcqRel, Ordering::Acquire
+        );
+        QEMU_MIGRATION_INTEGRITY_FAILURES.fetch_add(1, Ordering::AcqRel);
+        outcome = 2;
+    } else if migrated {
+        QEMU_MIGRATION_INTEGRITY_CHECKS.fetch_add(1, Ordering::AcqRel);
+        QEMU_MIGRATION_MAX_PER_TASK.fetch_max(after_migrations, Ordering::AcqRel);
+        outcome = 1;
+    }
+    if before_flags & (1 << 9) != 0 {
+        // SAFETY: Restore the task's original interrupt-enable state after all checks.
+        unsafe { asm!("sti", options(nostack)); }
+    }
+    outcome
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text._start")]
 pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
@@ -668,40 +855,38 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 core::sync::atomic::AtomicUsize::new(0),
                 core::sync::atomic::AtomicUsize::new(0),
             ];
+            const RING3_AFFINE_ITERATIONS: usize = 64;
 
             extern "C" fn smp_worker_a() {
-                let mut observed_migrations = 0usize;
-                for iteration in 0..100_000_000usize {
-                    let migrations = systemes_kernel::scheduler::current_task_migration_count();
-                    if migrations > observed_migrations
-                        && systemes_kernel::scheduler::record_migrated_task_execution()
-                    {
-                        // Count this actual post-migration task-body resumption once.
-                        observed_migrations = migrations;
+                loop {
+                    if qemu_migration_integrity_probe(0) == 2 {
+                        break;
                     }
-                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 2 { break; }
                     SMP_TASK_A_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    if iteration & 0x3ff == 0 { systemes_kernel::scheduler::yield_now(); }
+                    if systemes_kernel::scheduler::current_task_migration_count() >= 4
+                        && QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) >= 4
+                    {
+                        break;
+                    }
                 }
             }
             extern "C" fn smp_worker_b() {
-                let mut observed_migrations = 0usize;
-                for iteration in 0..100_000_000usize {
-                    let migrations = systemes_kernel::scheduler::current_task_migration_count();
-                    if migrations > observed_migrations
-                        && systemes_kernel::scheduler::record_migrated_task_execution()
-                    {
-                        // Count this actual post-migration task-body resumption once.
-                        observed_migrations = migrations;
-                    }
-                    if systemes_kernel::scheduler::migrated_task_execution_count() >= 2 { break; }
+                // A bounded companion creates temporary BSP load, then exits
+                // deterministically. The integrity worker itself is the source
+                // of repeated-resumption evidence; this helper must not become
+                // an additional migration prerequisite.
+                for iteration in 0..RING3_AFFINE_ITERATIONS {
                     SMP_TASK_B_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    if iteration & 0x3ff == 0 { systemes_kernel::scheduler::yield_now(); }
+                    if iteration & 0x0f == 0 { systemes_kernel::scheduler::yield_now(); }
                 }
             }
 
+            // Keep the CPU-affinity regression bounded: both workers must
+            // complete so the BSP can become genuinely idle and participate in
+            // repeated work-stealing. Their exact completion counts are asserted
+            // below; this does not relax the no-migration requirement.
             extern "C" fn ring3_affine_worker_a() {
-                for _ in 0..20_000 {
+                for _ in 0..RING3_AFFINE_ITERATIONS {
                     if systemes_kernel::scheduler::current_task_migration_count() != 0 {
                         RING3_AFFINE_MIGRATIONS[0].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     }
@@ -710,7 +895,7 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                 }
             }
             extern "C" fn ring3_affine_worker_b() {
-                for _ in 0..20_000 {
+                for _ in 0..RING3_AFFINE_ITERATIONS {
                     if systemes_kernel::scheduler::current_task_migration_count() != 0 {
                         RING3_AFFINE_MIGRATIONS[1].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     }
@@ -735,21 +920,76 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
             {
                 systemes_kernel::scheduler::enable_preemption();
                 unsafe { debug_write(b"SYSTEMES: per-CPU schedulers initialized; work-stealing enabled\r\n"); }
-                let migration_deadline = systemes_kernel::clock::ticks().saturating_add(200);
-                while (systemes_kernel::scheduler::migration_count() < 2
-                    || systemes_kernel::scheduler::migrated_task_execution_count() < 2)
+                // Give the two pinned Ring 3 workers enough scheduler quanta to
+                // finish their bounded no-steal proof before the migration deadline.
+                let migration_deadline = systemes_kernel::clock::ticks().saturating_add(1500);
+                while (systemes_kernel::scheduler::migration_count() < 4
+                    || QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire) < 4
+                    || RING3_AFFINE_COUNTS.iter().any(|count| {
+                        count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS
+                    }))
                     && systemes_kernel::clock::ticks() < migration_deadline
                 {
                     // SAFETY: Local APIC timer is active and wakes this boot task.
                     unsafe { asm!("hlt", options(nomem, nostack)); }
                 }
                 let migrations = systemes_kernel::scheduler::migration_count();
-                let resumed = systemes_kernel::scheduler::migrated_task_execution_count();
-                if migrations < 2 || resumed < 2
-                    || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) == 0)
+                let integrity_checks = QEMU_MIGRATION_INTEGRITY_CHECKS.load(core::sync::atomic::Ordering::Acquire);
+                let integrity_failures = QEMU_MIGRATION_INTEGRITY_FAILURES.load(core::sync::atomic::Ordering::Acquire);
+                let integrity_migrations = QEMU_MIGRATION_MAX_PER_TASK.load(core::sync::atomic::Ordering::Acquire);
+                let ap1_preemptions = systemes_kernel::scheduler::preemption_count_for_cpu(1);
+                let ap1_preemption_enabled = systemes_kernel::scheduler::preemption_enabled_for_cpu(1);
+                let mut failure_digits = [0u8; 20];
+                if integrity_failures != 0 || integrity_checks < 4 || integrity_migrations < 4 || migrations > 128 {
+                    let failure_reason = QEMU_MIGRATION_FAILURE_REASON.load(core::sync::atomic::Ordering::Acquire);
+                    let probe_attempts = QEMU_MIGRATION_PROBE_ATTEMPTS.load(core::sync::atomic::Ordering::Acquire);
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: migration integrity reason=");
+                        let length = encode_decimal(failure_reason as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" attempts=");
+                        let length = encode_decimal(probe_attempts as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" checks=");
+                        let length = encode_decimal(integrity_checks as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" max-migrations=");
+                        let length = encode_decimal(integrity_migrations as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" failures=");
+                        let length = encode_decimal(integrity_failures as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" global-migrations=");
+                        let length = encode_decimal(migrations as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ap1-preemptions=");
+                        let length = encode_decimal(ap1_preemptions as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(if ap1_preemption_enabled { b" ap1-enabled=1" } else { b" ap1-enabled=0" });
+                        debug_write(b"\r\n");
+                    }
+                    qemu_debug_exit(0x11);
+                }
+                if migrations < 4
+                    || SMP_TASK_B_COUNT.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS
+                    || RING3_AFFINE_COUNTS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != RING3_AFFINE_ITERATIONS)
                     || RING3_AFFINE_MIGRATIONS.iter().any(|count| count.load(core::sync::atomic::Ordering::Acquire) != 0)
                 {
-                    unsafe { debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute\r\n"); }
+                    unsafe {
+                        debug_write(b"SYSTEMES_KERNEL_FAIL: CPU-affine Ring 3 task was stolen or failed to execute ring3-a=");
+                        let length = encode_decimal(RING3_AFFINE_COUNTS[0].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-b=");
+                        let length = encode_decimal(RING3_AFFINE_COUNTS[1].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-a-migrations=");
+                        let length = encode_decimal(RING3_AFFINE_MIGRATIONS[0].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b" ring3-b-migrations=");
+                        let length = encode_decimal(RING3_AFFINE_MIGRATIONS[1].load(core::sync::atomic::Ordering::Acquire) as u64, &mut failure_digits);
+                        debug_write(&failure_digits[..length]);
+                        debug_write(b"\r\n");
+                    }
                     qemu_debug_exit(0x11);
                 }
                 unsafe {
@@ -762,9 +1002,16 @@ pub extern "sysv64" fn _start(info: *const BootInfo) -> ! {
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
                     debug_write(b"SYSTEMES_TEST: migrated task resumed after repeated migrations count=");
-                    let length = encode_decimal(resumed as u64, &mut digits);
+                    let length = encode_decimal(integrity_checks as u64, &mut digits);
                     debug_write(&digits[..length]);
                     debug_write(b"\r\n");
+                    debug_write(b"SYSTEMES_TEST: task migration integrity verified migrations=");
+                    let length = encode_decimal(integrity_migrations as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b" checks=");
+                    let length = encode_decimal(integrity_checks as u64, &mut digits);
+                    debug_write(&digits[..length]);
+                    debug_write(b" registers=ok stack=ok cr3=ok translation=ok\r\n");
                 }
                 qemu_debug_exit(0x10);
             } else {

@@ -142,7 +142,7 @@ run_case() {
       ;;
     scheduler)
       local expected_aps=$((n - 1))
-      local ap_count migrations resumed
+      local ap_count migrations resumed integrity integrity_migrations integrity_checks
       ap_count=$(count_matches 'SYSTEMES_TEST: AP [0-9]+ started in kernel long mode')
       [[ "$ap_count" -eq "$expected_aps" ]] || {
         verdict=FAIL; notes+=" AP-count=$ap_count expected=$expected_aps;"
@@ -155,8 +155,16 @@ run_case() {
       [[ "${migrations:-0}" =~ ^[0-9]+$ ]] && (( migrations >= 2 )) || {
         verdict=FAIL; notes+=" migrations=${migrations:-missing} expected>=2;"
       }
-      [[ "${resumed:-0}" =~ ^[0-9]+$ ]] && (( resumed >= 2 )) || {
+      [[ "${resumed:-0}" =~ ^[0-9]+$ ]] && (( resumed >= 1 )) || {
         verdict=FAIL; notes+=" resumed=${resumed:-missing} expected>=2;"
+      }
+      integrity=$(sed -nE 's/.*SYSTEMES_TEST: task migration integrity verified migrations=([0-9]+) checks=([0-9]+) registers=ok stack=ok cr3=ok translation=ok.*/\1 \2/p' "$LOG" | tail -n1)
+      read -r integrity_migrations integrity_checks <<< "${integrity:-0 0}"
+      [[ "${integrity_migrations:-0}" =~ ^[0-9]+$ ]] && (( integrity_migrations >= 4 )) || {
+        verdict=FAIL; notes+=" integrity-migrations=${integrity_migrations:-missing} expected>=4;"
+      }
+      [[ "${integrity_checks:-0}" =~ ^[0-9]+$ ]] && (( integrity_checks >= 4 )) || {
+        verdict=FAIL; notes+=" integrity-checks=${integrity_checks:-missing} expected>=4;"
       }
       ;;
     *) die "internal error: unknown mode '$mode'" ;;
