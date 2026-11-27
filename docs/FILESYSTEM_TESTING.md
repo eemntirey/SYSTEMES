@@ -13,6 +13,14 @@ The new block-cache tests cover write-back visibility, sync to a memory backend,
 dirty-bit retention after an I/O error, LRU eviction write-back, and out-of-range
 LBA rejection.
 
+The VFS write-path tests cover the full create/write/read/truncate/rename/unlink
+roundtrip on the writable layer, EROFS on SYSFS handles and when no writable
+layer is mounted, `stat` across both layers with SYSFS precedence, EEXIST /
+ENOTEMPTY / ENOSPC / EINVAL mapping, and rejection of `mount_writable` while
+handles are open. The syscall bridge maps the new `VfsError` variants to
+EEXIST, ENOTEMPTY, ENOSPC, EROFS and EOPNOTSUPP (covered by
+`syscall::tests::maps_vfs_errors_to_stable_errno_values`).
+
 ## Not yet validated
 
 The virtio OUT path has not yet been exercised under QEMU. No claim is made for

@@ -5,7 +5,8 @@ Status recorded for branch `feature/p2-writable-vfs-storage`.
 | Component | Implemented | Compiled | Tested | Notes |
 |---|---:|---:|---:|---|
 | SYSFS parser | Yes | Existing baseline | Existing tests | Read-only |
-| VFS read/open/readdir/close | Yes | Existing baseline | Existing tests | Single mount, read-only |
+| VFS read/open/read_dir/close | Yes | Yes (cargo check) | Host tests | SYSFS layer, single mount |
+| VFS write path (create/mkdir/write/truncate/unlink/rename/stat) | Yes | Yes (cargo check) | Host tests | Writable tmpfs layer via `mount_writable`; SYSFS handles reject writes with EROFS; `read_dir` on writable handles returns EOPNOTSUPP |
 | virtio-blk sector read | Yes | Existing baseline | Existing tests | Legacy PCI I/O transport |
 | virtio-blk sector write | Yes (single sector) | CI pending | Not QEMU-tested | Synchronous OUT path added |
 | Block device contract | Yes | CI pending | Interface only | Virtio adapter present; flush unsupported |
@@ -13,7 +14,7 @@ Status recorded for branch `feature/p2-writable-vfs-storage`.
 | FAT32 read/write | No | No | No | Not started |
 | Multi-mount VFS | No | No | No | Not started |
 | devfs | Partial | CI pending | Unit tests added | Standalone /dev node semantics; not mounted |
-| tmpfs | Partial | CI pending | Unit tests added | Standalone bounded tree; not mounted |
+| tmpfs | Yes | Yes (cargo check) | Host tests | Mounted as the VFS writable layer through `mount_writable` |
 | Journaled native FS | No | No | No | Not started |
 | Device flush/barrier | No | No | No | Virtio BLK FLUSH not implemented |
 | Reboot persistence | No | No | No | Requires real flush and QEMU validation |
