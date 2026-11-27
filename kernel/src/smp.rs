@@ -708,7 +708,9 @@ unsafe extern "sysv64" fn systemes_ap_main_rust(apic_id: u64) -> ! {
         unsafe { asm!("cli", options(nomem, nostack)); }
         crate::address_space::wait_and_run_qemu_ring3_smp_test(slot);
     }
-    crate::scheduler::enable_preemption();
+    if !crate::scheduler::enable_preemption_for_cpu(slot) {
+        park_forever();
+    }
     AP_STATES[slot].store(SLOT_STATE_PARKED, Ordering::Release);
     crate::scheduler::run_cpu_loop()
 }
