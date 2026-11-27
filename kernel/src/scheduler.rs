@@ -1226,6 +1226,27 @@ pub fn enable_preemption_for_cpu(cpu_index: usize) -> bool {
     true
 }
 
+/// Report whether timer-driven preemption is enabled for a CPU scheduler.
+pub fn preemption_enabled_for_cpu(cpu_index: usize) -> bool {
+    if cpu_index >= MAX_CPUS {
+        return false;
+    }
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe {
+        (*sched).initialized.load(Ordering::Acquire)
+            && (*sched).preemptive_enabled.load(Ordering::Acquire)
+    }
+}
+
+/// Return the number of timer-driven task switches on a CPU scheduler.
+pub fn preemption_count_for_cpu(cpu_index: usize) -> usize {
+    if cpu_index >= MAX_CPUS {
+        return 0;
+    }
+    let sched = unsafe { cpu_scheduler(cpu_index) };
+    unsafe { (*sched).preemption_count.load(Ordering::Acquire) }
+}
+
 /// Number of timer interrupts that switched to a different runnable task on the current CPU.
 pub fn preemption_count() -> usize {
     let cpu_index = current_cpu_index();
