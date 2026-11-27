@@ -1,6 +1,15 @@
-//! Read-only VFS over a mounted SYSFS filesystem.
+//! VFS: a read-only SYSFS mount layered with an optional writable tmpfs.
+//!
+//! The read path (`open`/`read`/`read_dir`) is served by the mounted SYSFS
+//! image; `open` falls back to the writable layer when SYSFS does not hold the
+//! path. The write path (`create`/`mkdir`/`write`/`truncate`/`unlink`/`rename`)
+//! targets the writable layer only and reports [`VfsError::ReadOnly`] when no
+//! writable filesystem is mounted.
+
+use alloc::string::String;
 
 use crate::simple_fs::{Inode, SimpleFs, SimpleFsError};
+use crate::tmpfs::{TmpFs, TmpFsError};
 
 const MAX_OPEN_FILES: usize = 16;
 
@@ -18,31 +27,59 @@ pub enum VfsError {
     Busy,
     IoError,
     BadHandle,
+    /// The path already exists in the writable layer (EEXIST).
+    Exists,
+    /// The directory is not empty (ENOTEMPTY).
+    NotEmpty,
+    /// The writable layer byte budget is exhausted (ENOSPC).
+    NoSpace,
+    /// No writable filesystem is mounted (EROFS).
+    ReadOnly,
+    /// The operation is not supported for this file origin (EOPNOTSUPP).
+    Unsupported,
+}
+
+/// Metadata returned by [`Vfs::stat`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VfsStat {
+    pub is_directory: bool,
+    pub size: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FileHandle(pub u32);
 
-#[derive(Clone, Copy)]
+/// Where an open handle reads from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Origin {
+    /// Inode index inside the mounted SYSFS image.
+    Sysfs(u32),
+    /// Absolute path inside the writable layer.
+    Writable(String),
+}
+
+#[derive(Clone)]
 struct OpenFile {
     handle: FileHandle,
-    inode_index: u32,
+    origin: Origin,
     offset: usize,
 }
 
 pub struct Vfs<'a> {
     fs: Option<SimpleFs<'a>>,
     root_inode: Option<Inode>,
+    writable: Option<TmpFs>,
     handles: [Option<OpenFile>; MAX_OPEN_FILES],
     next_handle: u32,
 }
 
 impl<'a> Vfs<'a> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             fs: None,
             root_inode: None,
-            handles: [None; MAX_OPEN_FILES],
+            writable: None,
+            handles: core::array::from_fn(|_| None),
             next_handle: 1,
         }
     }
@@ -62,11 +99,43 @@ impl<'a> Vfs<'a> {
         Ok(())
     }
 
-    pub fn open(&mut self, path: &str) -> Result<FileHandle, VfsError> {
-        let (inode_index, _) = {
-            let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-            fs.resolve_path(path).map_err(map_fs_error)?
+    /// Attach the writable layer. Rejected while file handles are open so an
+    /// open handle can never silently change filesystem underneath.
+    pub fn mount_writable(&mut self, fs: TmpFs) -> Result<(), VfsError> {
+        if self.handles.iter().any(Option::is_some) {
+            return Err(VfsError::Busy);
+        }
+        self.writable = Some(fs);
+        Ok(())
+    }
+
+    fn writable_fs(&mut self) -> Result<&mut TmpFs, VfsError> {
+        self.writable.as_mut().ok_or(VfsError::ReadOnly)
+    }
+
+    /// Resolve a path to its handle origin: SYSFS first, then the writable layer.
+    fn resolve(&self, path: &str) -> Result<Origin, VfsError> {
+        let sysfs_error = match self.fs.as_ref() {
+            Some(fs) => match fs.resolve_path(path) {
+                Ok((inode_index, _)) => return Ok(Origin::Sysfs(inode_index)),
+                Err(error) => map_fs_error(error),
+            },
+            None => VfsError::NotMounted,
         };
+        match self.writable.as_ref() {
+            Some(writable) => match writable.stat(path) {
+                Ok(_) => Ok(Origin::Writable(String::from(path))),
+                Err(error) if sysfs_error == VfsError::NotMounted => {
+                    Err(map_tmpfs_error(error))
+                }
+                Err(_) => Err(sysfs_error),
+            },
+            None => Err(sysfs_error),
+        }
+    }
+
+    pub fn open(&mut self, path: &str) -> Result<FileHandle, VfsError> {
+        let origin = self.resolve(path)?;
         let slot = self
             .handles
             .iter()
@@ -75,44 +144,142 @@ impl<'a> Vfs<'a> {
         let handle = self.allocate_handle()?;
         self.handles[slot] = Some(OpenFile {
             handle,
-            inode_index,
+            origin,
             offset: 0,
         });
         Ok(handle)
     }
 
-    pub fn read(&mut self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let slot = self
-            .handles
+    fn handle_slot(&self, handle: FileHandle) -> Result<usize, VfsError> {
+        self.handles
             .iter()
-            .position(|open| open.is_some_and(|open| open.handle == handle))
-            .ok_or(VfsError::BadHandle)?;
-        let open = self.handles[slot].ok_or(VfsError::BadHandle)?;
-        let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-        let inode = fs.inode(open.inode_index).map_err(map_fs_error)?;
-        if inode.is_directory() {
-            return Err(VfsError::IsDirectory);
-        }
-        let count = fs
-            .read_file_at(&inode, open.offset, buf)
-            .map_err(map_fs_error)?;
+            .position(|open| open.as_ref().is_some_and(|open| open.handle == handle))
+            .ok_or(VfsError::BadHandle)
+    }
+
+    pub fn read(&mut self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let slot = self.handle_slot(handle)?;
+        let open = self.handles[slot].clone().ok_or(VfsError::BadHandle)?;
+        let count = match &open.origin {
+            Origin::Writable(path) => {
+                let writable = self.writable.as_ref().ok_or(VfsError::NotMounted)?;
+                writable
+                    .read(path, open.offset, buf)
+                    .map_err(map_tmpfs_error)?
+            }
+            Origin::Sysfs(inode_index) => {
+                let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
+                let inode = fs.inode(*inode_index).map_err(map_fs_error)?;
+                if inode.is_directory() {
+                    return Err(VfsError::IsDirectory);
+                }
+                fs.read_file_at(&inode, open.offset, buf)
+                    .map_err(map_fs_error)?
+            }
+        };
         let updated_offset = open.offset.checked_add(count).ok_or(VfsError::IoError)?;
         let open = self.handles[slot].as_mut().ok_or(VfsError::BadHandle)?;
         open.offset = updated_offset;
         Ok(count)
     }
 
+    /// Write at the handle offset. Only writable-layer handles accept writes.
+    pub fn write(&mut self, handle: FileHandle, buf: &[u8]) -> Result<usize, VfsError> {
+        let slot = self.handle_slot(handle)?;
+        let open = self.handles[slot].clone().ok_or(VfsError::BadHandle)?;
+        let path = match &open.origin {
+            Origin::Sysfs(_) => return Err(VfsError::ReadOnly),
+            Origin::Writable(path) => path.clone(),
+        };
+        let writable = self.writable_fs()?;
+        let count = writable
+            .write(&path, open.offset, buf)
+            .map_err(map_tmpfs_error)?;
+        let updated_offset = open.offset.checked_add(count).ok_or(VfsError::IoError)?;
+        let open = self.handles[slot].as_mut().ok_or(VfsError::BadHandle)?;
+        open.offset = updated_offset;
+        Ok(count)
+    }
+
+    pub fn create(&mut self, path: &str) -> Result<(), VfsError> {
+        self.writable_fs()?
+            .create(path)
+            .map_err(map_tmpfs_error)
+    }
+
+    pub fn mkdir(&mut self, path: &str) -> Result<(), VfsError> {
+        self.writable_fs()?.mkdir(path).map_err(map_tmpfs_error)
+    }
+
+    pub fn unlink(&mut self, path: &str) -> Result<(), VfsError> {
+        self.writable_fs()?.unlink(path).map_err(map_tmpfs_error)
+    }
+
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<(), VfsError> {
+        self.writable_fs()?
+            .rename(from, to)
+            .map_err(map_tmpfs_error)
+    }
+
+    pub fn truncate(&mut self, path: &str, new_len: usize) -> Result<(), VfsError> {
+        self.writable_fs()?
+            .truncate(path, new_len)
+            .map_err(map_tmpfs_error)
+    }
+
+    /// Stat a path: SYSFS first (the layer `open` prefers), falling back to
+    /// the writable layer when SYSFS does not hold the path.
+    pub fn stat(&self, path: &str) -> Result<VfsStat, VfsError> {
+        let sysfs_error = match self.fs.as_ref() {
+            Some(fs) => match fs.resolve_path(path) {
+                Ok((inode_index, _)) => match fs.inode(inode_index) {
+                    Ok(inode) if !inode.is_directory() => {
+                        return Ok(VfsStat {
+                            is_directory: false,
+                            size: inode.size as usize,
+                        })
+                    }
+                    Ok(inode) => match fs.list_dir(&inode) {
+                        Ok(iter) => {
+                            return Ok(VfsStat {
+                                is_directory: true,
+                                size: iter.filter(|entry| entry.is_ok()).count(),
+                            })
+                        }
+                        Err(error) => map_fs_error(error),
+                    },
+                    Err(error) => map_fs_error(error),
+                },
+                Err(error) => map_fs_error(error),
+            },
+            None => VfsError::NotMounted,
+        };
+        match self.writable.as_ref() {
+            Some(writable) => match writable.stat(path) {
+                Ok(stat) => Ok(VfsStat {
+                    is_directory: stat.is_directory,
+                    size: stat.size,
+                }),
+                Err(error) if sysfs_error == VfsError::NotMounted => {
+                    Err(map_tmpfs_error(error))
+                }
+                Err(_) => Err(sysfs_error),
+            },
+            None => Err(sysfs_error),
+        }
+    }
+
     /// Read whole directory names separated by newline, advancing the directory handle.
     /// If the next complete name cannot fit in an empty output buffer, return BufferTooSmall.
     pub fn read_dir(&mut self, handle: FileHandle, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let slot = self
-            .handles
-            .iter()
-            .position(|open| open.is_some_and(|open| open.handle == handle))
-            .ok_or(VfsError::BadHandle)?;
-        let open = self.handles[slot].ok_or(VfsError::BadHandle)?;
+        let slot = self.handle_slot(handle)?;
+        let open = self.handles[slot].clone().ok_or(VfsError::BadHandle)?;
+        let inode_index = match &open.origin {
+            Origin::Writable(_) => return Err(VfsError::Unsupported),
+            Origin::Sysfs(inode_index) => *inode_index,
+        };
         let fs = self.fs.as_ref().ok_or(VfsError::NotMounted)?;
-        let directory = fs.inode(open.inode_index).map_err(map_fs_error)?;
+        let directory = fs.inode(inode_index).map_err(map_fs_error)?;
         if !directory.is_directory() {
             return Err(VfsError::NotADirectory);
         }
@@ -149,7 +316,7 @@ impl<'a> Vfs<'a> {
         let slot = self
             .handles
             .iter()
-            .position(|open| open.is_some_and(|open| open.handle == handle))
+            .position(|open| open.as_ref().is_some_and(|open| open.handle == handle))
             .ok_or(VfsError::BadHandle)?;
         self.handles[slot] = None;
         Ok(())
@@ -176,6 +343,19 @@ impl<'a> Vfs<'a> {
 impl Default for Vfs<'_> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn map_tmpfs_error(error: TmpFsError) -> VfsError {
+    match error {
+        TmpFsError::NotFound => VfsError::NotFound,
+        TmpFsError::NotDirectory => VfsError::NotADirectory,
+        TmpFsError::IsDirectory => VfsError::IsDirectory,
+        TmpFsError::AlreadyExists => VfsError::Exists,
+        TmpFsError::NotEmpty => VfsError::NotEmpty,
+        TmpFsError::InvalidPath => VfsError::InvalidPath,
+        TmpFsError::NoSpace => VfsError::NoSpace,
+        TmpFsError::NameTooLong => VfsError::NameTooLong,
     }
 }
 
@@ -373,5 +553,179 @@ mod tests {
         let mut content = [0; 8];
         assert_eq!(vfs.read(second, &mut content), Ok(5));
         assert_eq!(&content[..5], b"hello");
+    }
+
+    #[test]
+    fn writable_layer_create_write_read_and_stat_roundtrip() {
+        let image = make_test_image();
+        let mut vfs = Vfs::new();
+        vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
+        vfs.mount_writable(TmpFs::new(64)).unwrap();
+
+        vfs.create("/draft.txt").unwrap();
+        assert_eq!(vfs.create("/draft.txt"), Err(VfsError::Exists));
+
+        let writer = vfs.open("/draft.txt").unwrap();
+        assert_eq!(vfs.write(writer, b"abc").unwrap(), 3);
+        assert_eq!(vfs.write(writer, b"def").unwrap(), 3);
+        assert_eq!(vfs.read(writer, &mut [0u8; 4]), Ok(0));
+        assert_eq!(
+            vfs.read_dir(writer, &mut [0u8; 16]),
+            Err(VfsError::Unsupported)
+        );
+
+        let reader = vfs.open("/draft.txt").unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(vfs.read(reader, &mut buf).unwrap(), 6);
+        assert_eq!(&buf[..6], b"abcdef");
+        assert_eq!(
+            vfs.stat("/draft.txt"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 6
+            })
+        );
+
+        vfs.truncate("/draft.txt", 2).unwrap();
+        assert_eq!(
+            vfs.stat("/draft.txt"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 2
+            })
+        );
+        vfs.rename("/draft.txt", "/renamed.txt").unwrap();
+        assert_eq!(vfs.stat("/draft.txt"), Err(VfsError::NotFound));
+        assert_eq!(
+            vfs.stat("/renamed.txt"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 2
+            })
+        );
+        vfs.unlink("/renamed.txt").unwrap();
+        assert_eq!(vfs.stat("/renamed.txt"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn write_path_requires_a_writable_layer_and_sysfs_handles_stay_read_only() {
+        let image = make_test_image();
+        let mut vfs = Vfs::new();
+        vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
+
+        assert_eq!(vfs.create("/x.txt"), Err(VfsError::ReadOnly));
+        assert_eq!(vfs.mkdir("/x"), Err(VfsError::ReadOnly));
+        assert_eq!(vfs.unlink("/hello.txt"), Err(VfsError::ReadOnly));
+        assert_eq!(vfs.rename("/a", "/b"), Err(VfsError::ReadOnly));
+        assert_eq!(vfs.truncate("/hello.txt", 0), Err(VfsError::ReadOnly));
+
+        let handle = vfs.open("/hello.txt").unwrap();
+        assert_eq!(vfs.write(handle, b"overwrite"), Err(VfsError::ReadOnly));
+    }
+
+    #[test]
+    fn stat_covers_sysfs_files_directories_and_writable_entries() {
+        let image = make_tree_image();
+        let mut vfs = Vfs::new();
+        vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
+        vfs.mount_writable(TmpFs::new(32)).unwrap();
+
+        assert_eq!(
+            vfs.stat("/hello.txt"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 6
+            })
+        );
+        assert_eq!(
+            vfs.stat("/docs"),
+            Ok(VfsStat {
+                is_directory: true,
+                size: 2
+            })
+        );
+        assert_eq!(
+            vfs.stat("/empty"),
+            Ok(VfsStat {
+                is_directory: true,
+                size: 0
+            })
+        );
+
+        vfs.mkdir("/scratch").unwrap();
+        assert_eq!(
+            vfs.stat("/scratch"),
+            Ok(VfsStat {
+                is_directory: true,
+                size: 0
+            })
+        );
+        vfs.create("/scratch/note").unwrap();
+        let note = vfs.open("/scratch/note").unwrap();
+        assert_eq!(vfs.write(note, b"inline").unwrap(), 6);
+        assert_eq!(
+            vfs.stat("/scratch/note"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 6
+            })
+        );
+
+        assert_eq!(vfs.stat("/absent"), Err(VfsError::NotFound));
+
+        // SYSFS wins over a same-named writable entry for stat and open, so
+        // both stay consistent about which layer owns a path.
+        vfs.create("/hello.txt").unwrap();
+        assert_eq!(
+            vfs.stat("/hello.txt"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 6
+            })
+        );
+        let shadow = vfs.open("/hello.txt").unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(vfs.read(shadow, &mut buf).unwrap(), 6);
+        assert_eq!(&buf[..6], b"hello\n");
+    }
+
+    #[test]
+    fn directory_removal_and_budget_failures_map_to_vfs_errors() {
+        let mut vfs = Vfs::new();
+        vfs.mount_writable(TmpFs::new(4)).unwrap();
+
+        vfs.mkdir("/d").unwrap();
+        vfs.create("/d/f").unwrap();
+        assert_eq!(vfs.unlink("/d"), Err(VfsError::NotEmpty));
+        assert_eq!(
+            vfs.stat("/d/f"),
+            Ok(VfsStat {
+                is_directory: false,
+                size: 0
+            })
+        );
+
+        let handle = vfs.open("/d/f").unwrap();
+        assert_eq!(vfs.write(handle, b"abcd"), Ok(4));
+        assert_eq!(vfs.write(handle, b"e"), Err(VfsError::NoSpace));
+        assert_eq!(vfs.unlink("/d"), Err(VfsError::NotEmpty));
+
+        vfs.unlink("/d/f").unwrap();
+        vfs.unlink("/d").unwrap();
+
+        // Without a SYSFS mount, path validation still maps tmpfs errors.
+        assert_eq!(vfs.open("/missing"), Err(VfsError::NotFound));
+        assert_eq!(vfs.open("relative"), Err(VfsError::InvalidPath));
+    }
+
+    #[test]
+    fn writable_mount_is_rejected_while_handles_are_open() {
+        let image = make_test_image();
+        let mut vfs = Vfs::new();
+        vfs.mount(SimpleFs::parse(&image).unwrap()).unwrap();
+        let handle = vfs.open("/hello.txt").unwrap();
+        assert_eq!(vfs.mount_writable(TmpFs::new(8)), Err(VfsError::Busy));
+        assert_eq!(vfs.close(handle), Ok(()));
+        vfs.mount_writable(TmpFs::new(8)).unwrap();
     }
 }

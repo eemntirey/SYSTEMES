@@ -10,6 +10,7 @@ const DMA_POLL_LIMIT: usize = 100_000_000;
 const DESC_F_NEXT: u16 = 1;
 const DESC_F_WRITE: u16 = 2;
 const REQUEST_IN: u32 = 0;
+const REQUEST_OUT: u32 = 1;
 const STATUS_OK: u8 = 0;
 const STATUS_IOERR: u8 = 1;
 const STATUS_UNSUPP: u8 = 2;
@@ -182,6 +183,8 @@ impl VirtioBlk {
         })
     }
 
+    pub fn capacity_sectors(&self) -> u64 { self.capacity_sectors }
+
     /// Read one 512-byte sector through the device DMA virtqueue.
     ///
     /// # Safety
@@ -224,6 +227,36 @@ impl VirtioBlk {
         allocator
             .free_frame(data_frame)
             .map_err(|_| VirtioBlkError::InvalidFrame)?;
+        result
+    }
+
+
+    /// Write one 512-byte sector through the device DMA virtqueue.
+    ///
+    /// # Safety
+    /// The allocator must be the one used to configure this device.
+    pub unsafe fn write_sector(
+        &mut self,
+        sector: u64,
+        source: &[u8; SECTOR_SIZE],
+        allocator: &mut PhysicalFrameAllocator,
+    ) -> Result<(), VirtioBlkError> {
+        if sector >= self.capacity_sectors {
+            return Err(VirtioBlkError::SectorOutOfRange);
+        }
+        let data_frame = allocator.allocate_frame().ok_or(VirtioBlkError::OutOfFrames)?;
+        if data_frame % PAGE_SIZE != 0
+            || data_frame.checked_add(PAGE_SIZE).is_none_or(|end| end > crate::paging::IDENTITY_MAP_BYTES)
+        {
+            allocator.free_frame(data_frame).map_err(|_| VirtioBlkError::InvalidFrame)?;
+            return Err(VirtioBlkError::InvalidFrame);
+        }
+        unsafe {
+            core::ptr::write_bytes(data_frame as *mut u8, 0, PAGE_SIZE as usize);
+            core::ptr::copy_nonoverlapping(source.as_ptr(), data_frame as *mut u8, SECTOR_SIZE);
+        }
+        let result = unsafe { self.submit_write(sector, data_frame) };
+        allocator.free_frame(data_frame).map_err(|_| VirtioBlkError::InvalidFrame)?;
         result
     }
 
@@ -317,6 +350,140 @@ impl VirtioBlk {
             core::hint::spin_loop();
         }
         Err(VirtioBlkError::DmaTimeout)
+    }
+
+    unsafe fn submit_write(&mut self, sector: u64, data_frame: u64) -> Result<(), VirtioBlkError> {
+        let request = BlkRequest {
+            request_type: REQUEST_OUT,
+            reserved: 0,
+            sector,
+        };
+        unsafe {
+            core::ptr::write_unaligned(self.request_frame as *mut BlkRequest, request);
+            core::ptr::write_volatile(self.status_frame as *mut u8, 0xFF);
+        }
+
+        let descriptors: [VirtqDesc; DESCRIPTOR_COUNT] = [
+            VirtqDesc {
+                address: self.request_frame,
+                length: core::mem::size_of::<BlkRequest>() as u32,
+                flags: DESC_F_NEXT,
+                next: 1,
+            },
+            VirtqDesc {
+                address: data_frame,
+                length: SECTOR_SIZE as u32,
+                flags: DESC_F_NEXT,
+                next: 2,
+            },
+            VirtqDesc {
+                address: self.status_frame,
+                length: 1,
+                flags: DESC_F_WRITE,
+                next: 0,
+            },
+        ];
+        let descriptor_table = self.queue_memory as *mut u8;
+        for (index, descriptor) in descriptors.iter().enumerate() {
+            unsafe {
+                core::ptr::write_unaligned(
+                    descriptor_table
+                        .add(index * core::mem::size_of::<VirtqDesc>())
+                        as *mut VirtqDesc,
+                    *descriptor,
+                );
+            }
+        }
+
+        let avail_offset = core::mem::size_of::<VirtqDesc>() * self.queue_size as usize;
+        let avail_index = self.available_index;
+        let avail_slot = (avail_index % self.queue_size) as usize;
+        unsafe {
+            core::ptr::write_volatile((self.queue_memory + avail_offset as u64 + 4 + (avail_slot * 2) as u64) as *mut u16, 0);
+            core::ptr::write_volatile((self.queue_memory + avail_offset as u64 + 2) as *mut u16, avail_index.wrapping_add(1));
+        }
+        self.available_index = avail_index.wrapping_add(1);
+        compiler_fence(Ordering::Release);
+        unsafe { crate::console::outw(self.io_base + reg::QUEUE_NOTIFY, 0) };
+
+        let used_offset = used_ring_offset(self.queue_size);
+        for _ in 0..DMA_POLL_LIMIT {
+            let current_used = unsafe {
+                core::ptr::read_volatile((self.queue_memory + used_offset as u64 + 2) as *const u16)
+            };
+            if current_used != self.used_index {
+                if current_used != self.used_index.wrapping_add(1) {
+                    return Err(VirtioBlkError::RequestFailed);
+                }
+                compiler_fence(Ordering::Acquire);
+                let used_element_offset = used_offset + 4 + (self.used_index % self.queue_size) as usize * 8;
+                let used_id = unsafe {
+                    core::ptr::read_volatile(
+                        (self.queue_memory + used_element_offset as u64) as *const u32,
+                    )
+                };
+                let used_length = unsafe {
+                    core::ptr::read_volatile(
+                        (self.queue_memory + used_element_offset as u64 + 4) as *const u32,
+                    )
+                };
+                self.used_index = current_used;
+                if used_id != 0 || used_length < 1 {
+                    return Err(VirtioBlkError::RequestFailed);
+                }
+                let status = unsafe { core::ptr::read_volatile(self.status_frame as *const u8) };
+                return match status {
+                    STATUS_OK => Ok(()),
+                    STATUS_IOERR => Err(VirtioBlkError::IoError),
+                    STATUS_UNSUPP => Err(VirtioBlkError::UnsupportedRequest),
+                    _ => Err(VirtioBlkError::RequestFailed),
+                };
+            }
+            core::hint::spin_loop();
+        }
+        Err(VirtioBlkError::DmaTimeout)
+    }
+}
+
+
+/// Exclusive adapter exposing the legacy virtio device through the block layer.
+/// It deliberately reports no durability barrier until VIRTIO_BLK_F_FLUSH is
+/// negotiated and implemented by this driver.
+pub struct VirtioBlockDevice<'a> {
+    pub device: &'a mut VirtioBlk,
+    pub allocator: &'a mut PhysicalFrameAllocator,
+}
+
+impl crate::block::BlockDevice for VirtioBlockDevice<'_> {
+    fn capacity_blocks(&self) -> u64 { self.device.capacity_sectors() }
+
+    fn read_block(
+        &mut self,
+        lba: u64,
+        out: &mut [u8; crate::block::BLOCK_SIZE],
+    ) -> Result<(), crate::block::BlockError> {
+        let mut sector = [0u8; SECTOR_SIZE];
+        // SAFETY: this adapter exclusively borrows the configured device and its allocator.
+        unsafe { self.device.read_sector(lba, &mut sector, self.allocator) }
+            .map_err(|_| crate::block::BlockError::Io)?;
+        out.copy_from_slice(&sector);
+        Ok(())
+    }
+
+    fn write_block(
+        &mut self,
+        lba: u64,
+        data: &[u8; crate::block::BLOCK_SIZE],
+    ) -> Result<(), crate::block::BlockError> {
+        let mut sector = [0u8; SECTOR_SIZE];
+        sector.copy_from_slice(data);
+        // SAFETY: this adapter exclusively borrows the configured device and its allocator.
+        unsafe { self.device.write_sector(lba, &sector, self.allocator) }
+            .map_err(|_| crate::block::BlockError::Io)
+    }
+
+    fn flush(&mut self) -> Result<(), crate::block::BlockError> {
+        Err(crate::block::BlockError::Unsupported)
     }
 }
 
